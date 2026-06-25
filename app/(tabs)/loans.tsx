@@ -141,6 +141,7 @@ function LoanDetailModal({
   onReject,
   isAdmin,
   isPending,
+  actableStep,
 }: {
   visible: boolean;
   loan: Loan | null;
@@ -153,6 +154,7 @@ function LoanDetailModal({
   onReject: () => void;
   isAdmin: boolean;
   isPending: boolean;
+  actableStep: string | null;
 }) {
   if (!loan) return null;
   
@@ -210,7 +212,7 @@ function LoanDetailModal({
               <Text style={styles.disburseBtnText}>Disburse</Text>
             </TouchableOpacity>
           )}
-          {isPending && (
+          {actableStep && isPending && (
             <>
               <TouchableOpacity style={[styles.rejectBtn, { flex: 1 }]} onPress={onReject}>
                 <Text style={styles.rejectBtnText}>Reject</Text>
@@ -1252,6 +1254,7 @@ export default function LoansScreen() {
         visible={showLoanDetail}
         loan={selectedLoan}
         member={selectedLoan ? getMember(selectedLoan.memberId) : null}
+        actableStep={selectedLoan ? getActableStep(selectedLoan.status, role) : null}
         onClose={() => { setShowLoanDetail(false); setSelectedLoan(null); }}
         onSchedule={() => {
           if (selectedLoan) {
@@ -1426,7 +1429,7 @@ function LoanCard({
               </TouchableOpacity>
             )}
             <TouchableOpacity style={[styles.repayBtn, { flex: 1 }]} onPress={onRepayment} activeOpacity={0.8}>
-              <Text style={styles.repayBtnText}>Record Repayment</Text>
+              <Text style={styles.repayBtnText}>Payment</Text>
             </TouchableOpacity>
           </>
         )}
