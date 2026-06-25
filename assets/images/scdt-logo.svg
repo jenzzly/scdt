@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="1024" height="1024" rx="123" ry="123" fill="#0F766E"/>
+  <rect x="82" y="82" width="511" height="369" rx="60" ry="60" fill="#10B981"/>
+  <rect x="448" y="491" width="494" height="452" rx="60" ry="60" fill="#3B82F6"/>
+  <circle cx="819" cy="204" r="171" fill="#EAB308" />
+  <text x="512" y="584" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="260" font-weight="700" fill="#FFFFFF">SCDT</text>
+</svg>

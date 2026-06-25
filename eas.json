@@ -1,0 +1,33 @@
+{
+  "cli": {
+    "version": ">= 20.1.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": { "CLIENT_ID": "scdt" }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": { "CLIENT_ID": "scdt" }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": { "CLIENT_ID": "scdt" }
+    },
+
+    "scdt-preview": {
+      "extends": "preview",
+      "env": { "CLIENT_ID": "scdt" }
+    },
+    "scdt-production": {
+      "extends": "production",
+      "env": { "CLIENT_ID": "scdt" }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

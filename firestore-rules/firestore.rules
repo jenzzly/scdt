@@ -1,0 +1,254 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─────────────────────────────
+    // AUTH
+    // ─────────────────────────────
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    // ─────────────────────────────
+    // MEMBERSHIP HELPERS
+    // ─────────────────────────────
+    function membershipDocId(groupId) {
+      return groupId + "_" + uid();
+    }
+
+    function membershipRef(groupId) {
+      return /databases/$(database)/documents/groupMemberships/$(membershipDocId(groupId));
+    }
+
+    function isMember(groupId) {
+      return isAuth() && exists(membershipRef(groupId));
+    }
+
+    function membershipData(groupId) {
+      return get(membershipRef(groupId)).data;
+    }
+
+    function memberRole(groupId) {
+      return isMember(groupId) ? membershipData(groupId).role : null;
+    }
+
+    function memberStatus(groupId) {
+      return isMember(groupId) ? membershipData(groupId).status : null;
+    }
+
+    function isActiveMember(groupId) {
+      return isMember(groupId) && memberStatus(groupId) == "active";
+    }
+
+    function isAdmin(groupId) {
+      return isActiveMember(groupId) && memberRole(groupId) == "admin";
+    }
+
+    function isAdminOrAccountant(groupId) {
+      return isActiveMember(groupId)
+        && memberRole(groupId) in ["admin", "accountant"];
+    }
+
+    function canManageLoans(groupId) {
+      return isActiveMember(groupId)
+        && memberRole(groupId) in ["admin", "accountant", "loan_officer"];
+    }
+
+    // ─────────────────────────────
+    // GROUPS
+    // ─────────────────────────────
+    match /groups/{groupId} {
+
+      // Any authenticated user can read (needed during initGroupData checks)
+      allow read: if isAuth();
+
+      // Any authenticated user can create a group
+      allow create: if isAuth();
+
+      // Admins/accountants update normally.
+      // Also allow update during initial setup when membership doesn't exist yet
+      // (the founder is setting up the group before their membership doc is created).
+      allow update: if isAdminOrAccountant(groupId)
+        || (isAuth() && !exists(membershipRef(groupId)));
+
+      allow delete: if isAdmin(groupId);
+
+      // ───────── MEMBERS ─────────
+      match /members/{memberId} {
+
+        allow read: if isMember(groupId);
+
+        // (a) Admin/accountant adding someone
+        // (b) User self-registering (their own userId on the doc)
+        // (c) _init placeholder for collection bootstrapping
+        // (d) system=true docs written by initGroupData
+        allow create: if isAuth() && (
+          isAdminOrAccountant(groupId)
+          || request.resource.data.userId == uid()
+          || request.resource.data.id == "_init"
+          || request.resource.data.system == true
+        );
+
+        allow update: if isAdminOrAccountant(groupId)
+          || (isAuth()
+              && resource.data.userId == uid()
+              && !request.resource.data.diff(resource.data)
+                  .affectedKeys()
+                  .hasAny(["role", "status", "userId", "groupId"]));
+
+        allow delete: if isAdmin(groupId);
+      }
+
+      // ───────── CONTRIBUTIONS ─────────
+      match /contributions/{id} {
+        allow read: if isMember(groupId);
+
+        allow create: if isAuth() && (
+          isActiveMember(groupId)
+          || isAdminOrAccountant(groupId)
+          || request.resource.data.id == "_init"
+          || request.resource.data.system == true
+        );
+
+        allow update: if isAdminOrAccountant(groupId);
+        allow delete: if isAdmin(groupId);
+      }
+
+      // ───────── LOANS ─────────
+      match /loans/{id} {
+        allow read: if isMember(groupId);
+
+        allow create: if isAuth() && (
+          isActiveMember(groupId)
+          || request.resource.data.id == "_init"
+          || request.resource.data.system == true
+        );
+
+        allow update: if canManageLoans(groupId);
+        allow delete: if isAdmin(groupId);
+      }
+
+      // ───────── WALLET TRANSACTIONS ─────────
+      match /walletTransactions/{id} {
+        allow read: if isMember(groupId);
+
+        allow create: if isAuth() && (
+          isAdminOrAccountant(groupId)
+          || isActiveMember(groupId)
+          || request.resource.data.id == "_init"
+          || request.resource.data.system == true
+        );
+
+        // Only admins can update (soft-delete sets deletedAt/deletedBy)
+        allow update: if isAdmin(groupId);
+        allow delete: if isAdmin(groupId);
+      }
+
+      // ───────── EXPENSES ─────────
+      match /expenses/{id} {
+        allow read: if isMember(groupId);
+
+        allow create: if isAuth() && (
+          isAdminOrAccountant(groupId)
+          || request.resource.data.id == "_init"
+          || request.resource.data.system == true
+        );
+
+        allow update: if isAdminOrAccountant(groupId);
+        allow delete: if isAdmin(groupId);
+      }
+
+      // ───────── MEETINGS ─────────
+      match /meetings/{id} {
+        allow read: if isMember(groupId);
+
+        allow create: if isAuth() && (
+          isAdminOrAccountant(groupId)
+          || request.resource.data.id == "_init"
+          || request.resource.data.system == true
+        );
+
+        allow update: if isAdminOrAccountant(groupId);
+        allow delete: if isAdmin(groupId);
+      }
+
+      // ───────── INVESTMENTS ─────────
+      match /investments/{id} {
+        allow read: if isMember(groupId);
+
+        allow create: if isAuth() && (
+          isAdminOrAccountant(groupId)
+          || request.resource.data.id == "_init"
+          || request.resource.data.system == true
+        );
+
+        allow update: if isAdminOrAccountant(groupId);
+        allow delete: if isAdmin(groupId);
+      }
+
+      // ───────── AUDIT LOGS ─────────
+      match /auditLogs/{id} {
+        allow read: if isAdminOrAccountant(groupId);
+
+        // Any authenticated user can write their own audit entries.
+        // We don't require isMember() here because during initGroupData
+        // the founder writes an audit log before membership propagates.
+        allow create: if isAuth()
+          && request.resource.data.userId == uid();
+
+        allow update: if false;
+        allow delete: if false;
+      }
+
+      // ───────── DELETIONS ─────────
+      match /deletions/{id} {
+        allow read: if isMember(groupId);
+        allow create: if isAdminOrAccountant(groupId);
+        allow update: if false;
+        allow delete: if isAdmin(groupId);
+      }
+    }
+
+    // ─────────────────────────────
+    // GROUP MEMBERSHIPS
+    // ─────────────────────────────
+    match /groupMemberships/{id} {
+
+      // Read own docs only
+      allow read: if isAuth() && resource.data.userId == uid();
+
+      // Create:
+      // (a) self-registration: the doc belongs to the requesting user
+      // (b) admin adding a member for another user
+      allow create: if isAuth() && (
+        request.resource.data.userId == uid()
+        || isAdmin(request.resource.data.groupId)
+      );
+
+      // Update:
+      // (a) owner can update their own membership (e.g. leaving)
+      // (b) group admin can update any membership (role/status changes)
+      allow update: if isAuth() && (
+        resource.data.userId == uid()
+        || isAdmin(resource.data.groupId)
+      );
+
+      // Only the owner can delete their membership
+      allow delete: if isAuth() && resource.data.userId == uid();
+    }
+
+    // ─────────────────────────────
+    // NOTIFICATIONS
+    // ─────────────────────────────
+    match /users/{userId}/notifications/{id} {
+      allow read:   if isAuth() && uid() == userId;
+      allow create: if isAuth();
+      allow update: if isAuth() && uid() == userId;
+      allow delete: if isAuth() && uid() == userId;
+    }
+  }
+}

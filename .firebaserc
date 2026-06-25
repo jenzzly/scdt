@@ -1,0 +1,6 @@
+{
+  "projects": {
+    "default": "REPLACE_WITH_SCDT_FIREBASE_PROJECT_ID",
+    "scdt": "REPLACE_WITH_SCDT_FIREBASE_PROJECT_ID"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "_comment": "Copy this whole `clients/_template` folder to `clients/<new-client-id>` and fill in every field below. Folder name = the value you'll export as CLIENT_ID when building (e.g. clients/king-faisal -> CLIENT_ID=king-faisal).",
+  "_loanInterestMethod_options": "defaults.loanInterestMethod is 'flat' or 'reducing_balance' — flat is simple interest (SACCO-style), reducing_balance is amortized (bank-style). This is just the day-one default for new groups; each group can change it later in group settings.",
+
+  "clientId": "REPLACE_ME",
+  "appName": "REPLACE_ME Savings",
+  "slug": "replace-me-savings",
+  "scheme": "replacemesavings",
+  "version": "1.0.0",
+  "bundleId": "com.duotech.replaceme",
+  "easProjectId": "REPLACE_ME_AFTER_RUNNING_eas_init",
+
+  "defaultGroupName": "REPLACE_ME Savings Group",
+  "defaultCurrency": "RWF",
+
+  "colors": {
+    "primary": "#10B981",
+    "navy": "#0B1C3D",
+    "splashBackground": "#0A0F1E",
+    "surface": "#FFFFFF"
+  },
+
+  "userInterfaceStyle": "automatic",
+
+  "supportEmail": "support@replaceme.com",
+  "supportPhone": "+250 7XX XXX XXX",
+
+  "defaults": {
+    "contributionAmount": 10000,
+    "contributionFrequency": "monthly",
+    "contributionDay": 1,
+    "loanInterestRate": 2,
+    "loanInterestMethod": "flat",
+    "latePenaltyAmount": 2000,
+    "maxLoanMultiplier": 3,
+    "absencePenaltyMember": 1000,
+    "absencePenaltyOfficer": 2000
+  }
+}

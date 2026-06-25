@@ -1,0 +1,36 @@
+{
+  "clientId": "scdt",
+  "appName": "SCDT Savings",
+  "slug": "scdt-savings",
+  "scheme": "scdtsavings",
+  "version": "1.0.1",
+  "bundleId": "com.duo.tontine",
+  "easProjectId": "497312a2-8f19-4c4e-ac5b-8201ed7a8d6f",
+
+  "defaultGroupName": "SCDT Savings Group",
+  "defaultCurrency": "RWF",
+
+  "colors": {
+    "primary": "#10B981",
+    "navy": "#0B1C3D",
+    "splashBackground": "#0A0F1E",
+    "surface": "#FFFFFF"
+  },
+
+  "userInterfaceStyle": "dark",
+
+  "supportEmail": "support@scdt.rw",
+  "supportPhone": "+250 788 000 000",
+
+  "defaults": {
+    "contributionAmount": 40000,
+    "contributionFrequency": "monthly",
+    "contributionDay": 1,
+    "loanInterestRate": 2,
+    "loanInterestMethod": "flat",
+    "latePenaltyAmount": 5000,
+    "maxLoanMultiplier": 3,
+    "absencePenaltyMember": 2000,
+    "absencePenaltyOfficer": 5000
+  }
+}

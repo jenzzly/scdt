@@ -1,0 +1,161 @@
+// components/ui/Input.tsx
+import React, { forwardRef } from "react";
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, Platform } from "react-native";
+import { Colors, S, R } from "../../utils/theme";
+
+interface InputProps {
+  label?: string;
+  value: string;
+  onChangeText: (text: string) => void;
+  placeholder?: string;
+  secureTextEntry?: boolean;
+  keyboardType?: "default" | "email-address" | "numeric" | "phone-pad";
+  autoCapitalize?: "none" | "sentences" | "words" | "characters";
+  autoComplete?: string;
+  returnKeyType?: "done" | "go" | "next" | "search" | "send";
+  onSubmitEditing?: () => void;
+  onKeyPress?: (e: any) => void;
+  leftIcon?: string;
+  right?: React.ReactNode;
+  editable?: boolean;
+  multiline?: boolean;
+  numberOfLines?: number;
+  hint?: string;
+  error?: string;
+  prefix?: string;
+  containerStyle?: any;
+}
+
+export const Input = forwardRef<TextInput, InputProps>(({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  secureTextEntry = false,
+  keyboardType = "default",
+  autoCapitalize = "none",
+  autoComplete,
+  returnKeyType = "done",
+  onSubmitEditing,
+  onKeyPress,
+  leftIcon,
+  right,
+  editable = true,
+  multiline = false,
+  numberOfLines = 1,
+  hint,
+  error,
+  prefix,
+  containerStyle,
+}, ref) => {
+  return (
+    <View style={[styles.container, containerStyle]}>
+      {label && <Text style={styles.label}>{label}</Text>}
+      <View style={[styles.inputWrapper, error && styles.inputWrapperError, !editable && styles.inputWrapperDisabled]}>
+        {leftIcon && <Text style={styles.leftIcon}>{leftIcon}</Text>}
+        {prefix && <Text style={styles.prefix}>{prefix}</Text>}
+        <TextInput
+          ref={ref}
+          style={[
+            styles.input,
+            leftIcon && styles.inputWithLeftIcon,
+            prefix && styles.inputWithPrefix,
+            multiline && styles.inputMultiline,
+          ]}
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={Colors.text3}
+          secureTextEntry={secureTextEntry}
+          keyboardType={keyboardType}
+          autoCapitalize={autoCapitalize}
+          autoComplete={autoComplete}
+          returnKeyType={returnKeyType}
+          onSubmitEditing={onSubmitEditing}
+          onKeyPress={onKeyPress}
+          editable={editable}
+          multiline={multiline}
+          numberOfLines={multiline ? numberOfLines : 1}
+          textAlignVertical={multiline ? "top" : "center"}
+        />
+        {right && <View style={styles.rightIcon}>{right}</View>}
+      </View>
+      {hint && !error && <Text style={styles.hint}>{hint}</Text>}
+      {error && <Text style={styles.error}>{error}</Text>}
+    </View>
+  );
+});
+
+Input.displayName = "Input";
+
+const styles = StyleSheet.create({
+  container: {
+    marginBottom: S.md,
+  },
+  label: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: Colors.text2,
+    marginBottom: 6,
+    letterSpacing: 0.3,
+  },
+  inputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: R.md,
+    backgroundColor: Colors.surface,
+    overflow: "hidden",
+  },
+  inputWrapperError: {
+    borderColor: Colors.error,
+  },
+  inputWrapperDisabled: {
+    backgroundColor: Colors.elevated,
+    opacity: 0.7,
+  },
+  leftIcon: {
+    fontSize: 16,
+    paddingLeft: 12,
+    color: Colors.text3,
+  },
+  prefix: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: Colors.text,
+    paddingLeft: 12,
+  },
+  input: {
+    flex: 1,
+    fontSize: 15,
+    color: Colors.text,
+    paddingVertical: Platform.OS === "ios" ? 12 : 10,
+    paddingHorizontal: 12,
+  },
+  inputWithLeftIcon: {
+    paddingLeft: 8,
+  },
+  inputWithPrefix: {
+    paddingLeft: 4,
+  },
+  inputMultiline: {
+    minHeight: 80,
+    textAlignVertical: "top",
+  },
+  rightIcon: {
+    paddingRight: 12,
+  },
+  hint: {
+    fontSize: 10,
+    color: Colors.text3,
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  error: {
+    fontSize: 10,
+    color: Colors.error,
+    marginTop: 4,
+    marginLeft: 4,
+  },
+});

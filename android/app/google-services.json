@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "320344527421",
+    "project_id": "tontine-41adb",
+    "storage_bucket": "tontine-41adb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:320344527421:android:ff7878ebd284e1be8b9054",
+        "android_client_info": {
+          "package_name": "com.duo.tontine"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNcpvcSsb1KzrgNDvhujiZXif7sgvokvo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
