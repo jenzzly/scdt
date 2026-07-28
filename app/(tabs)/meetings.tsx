@@ -1,6 +1,6 @@
 // app/(tabs)/meetings.tsx
 import React, { useState, useMemo } from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, useWindowDimensions} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useGroupMeetings, useGroupMembers, useCurrentUserRole } from "../../stores/useStore";
 import { useCurrentMemberPermissions } from "../../stores/selectors";
@@ -20,6 +20,8 @@ function Chip({ label, bg, color }: { label: string; bg: string; color: string }
 
 export default function MeetingsScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 768;
   const meetings = useGroupMeetings();
   const members = useGroupMembers();
   const currentUserRole = useCurrentUserRole();
@@ -43,7 +45,7 @@ export default function MeetingsScreen() {
   const getAttendanceSummary = (meeting: Meeting) => {
     const total = meeting.attendees?.length || 0;
     const present = meeting.attendees?.filter(a => a.attended).length || 0;
-    const penalties = meeting.attendees?.reduce((sum, a) => sum + (a.penaltyAmount || 0), 0) || 0;
+    const penalties = meeting.attendees?.reduce((sum, a) => sum + ((a.penaltyAmount ?? 0) || 0), 0) || 0;
     return { total, present, absent: total - present, penalties };
   };
 
@@ -113,7 +115,7 @@ export default function MeetingsScreen() {
         )}
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100, maxWidth: isWide ? 960 : undefined, alignSelf: isWide ? "center" as any : undefined, width: "100%" as any }} showsVerticalScrollIndicator={false}>
         {sorted.length === 0 ? (
           <View style={st.empty}>
             <Text style={st.emptyIcon}>📅</Text>
@@ -126,7 +128,7 @@ export default function MeetingsScreen() {
           </View>
         ) : (
           <>
-            {upcoming.length > 0 && (
+            {(upcoming.length > 0) && (
               <>
                 <Text style={st.sectionLabel}>Upcoming</Text>
                 <View style={st.card}>
@@ -154,7 +156,7 @@ export default function MeetingsScreen() {
               </>
             )}
 
-            {past.length > 0 && (
+            {(past.length > 0) && (
               <>
                 <Text style={[st.sectionLabel, { marginTop: 20 }]}>Past Meetings</Text>
                 <View style={st.card}>
@@ -192,7 +194,7 @@ export default function MeetingsScreen() {
           <Text style={st.modalName}>{selectedMeeting?.title}</Text>
           <Text style={st.modalSub}>Select a member to clear their penalty</Text>
           <ScrollView style={{ maxHeight: 360 }}>
-            {selectedMeeting?.attendees.filter(a => a.penaltyAmount > 0 && !a.penaltyPaid).map(attendee => {
+            {selectedMeeting?.attendees.filter(a => (a.penaltyAmount ?? 0) > 0 && !a.penaltyPaid).map(attendee => {
               const member = members.find(m => m.id === attendee.memberId);
               return (
                 <View key={attendee.memberId} style={st.penaltyRow}>
@@ -206,7 +208,7 @@ export default function MeetingsScreen() {
                 </View>
               );
             })}
-            {!selectedMeeting?.attendees.some(a => a.penaltyAmount > 0 && !a.penaltyPaid) && (
+            {!selectedMeeting?.attendees.some(a => (a.penaltyAmount ?? 0) > 0 && !a.penaltyPaid) && (
               <Text style={st.noPenalties}>No unpaid penalties for this meeting</Text>
             )}
           </ScrollView>
@@ -267,7 +269,7 @@ function MeetingRow({
 }) {
   const isCancelled = meeting.status === "cancelled";
   const isScheduled = meeting.status === "scheduled";
-  const hasUnpaidPenalties = meeting.attendees.some(a => a.penaltyAmount > 0 && !a.penaltyPaid);
+  const hasUnpaidPenalties = meeting.attendees.some(a => (a.penaltyAmount ?? 0) > 0 && !a.penaltyPaid);
   const isExpired = new Date(meeting.date) < new Date() && !isCancelled;
 
   let statusLabel = "";
@@ -277,7 +279,7 @@ function MeetingRow({
   if (isCancelled) {
     statusLabel = "Cancelled";
     statusBg = C.mutedBg;
-    statusColor = C.mutedText;
+    statusColor = C.text3;
   } else if (isExpired) {
     statusLabel = "Expired";
     statusBg = C.redBg;
@@ -296,10 +298,10 @@ function MeetingRow({
     <View style={[st.meetingRow, isCancelled && { opacity: 0.6 }]}>
       {/* Date badge */}
       <View style={[st.dateBadge, isCancelled && { backgroundColor: C.mutedBg }]}>
-        <Text style={[st.dateBadgeDay, isCancelled && { color: C.mutedText }]}>
+        <Text style={[st.dateBadgeDay, isCancelled && { color: C.text3 }]}>
           {new Date(meeting.date).getDate()}
         </Text>
-        <Text style={[st.dateBadgeMon, isCancelled && { color: C.mutedText }]}>
+        <Text style={[st.dateBadgeMon, isCancelled && { color: C.text3 }]}>
           {new Date(meeting.date).toLocaleDateString("en", { month: "short" }).toUpperCase()}
         </Text>
       </View>

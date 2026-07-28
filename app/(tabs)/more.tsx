@@ -1,6 +1,6 @@
 // app/(tabs)/more.tsx - Complete fixed file
 import React, { useState, useMemo, useCallback } from "react";
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform } from "react-native";
+import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform, useWindowDimensions} from "react-native";
 import { useRouter } from "expo-router";
 import {
   useStore, useGroupMembers, useGroupContributions, useGroupLoans,
@@ -35,6 +35,8 @@ function getDocId(member: Member): string {
 
 export default function MoreScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 768;
   const { signOut } = useAuth();
   const { show, Toast } = useToast();
   
@@ -273,6 +275,22 @@ export default function MoreScreen() {
     );
   };
 
+  const handleReactivateMember = async (member: Member) => {
+    showConfirm(
+      "Reactivate Member",
+      `Reactivate ${member.fullName}? They'll be able to participate in group activities again.`,
+      async () => {
+        try {
+          await updateMember(member.id, { status: "active" });
+          show("Member reactivated");
+          setSelected(null);
+        } catch (e: any) {
+          show(e.message || "Failed to reactivate", "error");
+        }
+      }
+    );
+  };
+
   const groupMeetings = useMemo(
     () => meetings.filter((m) => m.groupId === activeGroupId),
     [meetings, activeGroupId],
@@ -333,7 +351,7 @@ export default function MoreScreen() {
       {/* Profile Tab */}
       {activeTab === "profile" && (
         <ScrollView
-          contentContainerStyle={{ padding: S.lg, paddingBottom: 120 }}
+          contentContainerStyle={{ padding: S.lg, paddingBottom: 120, maxWidth: isWide ? 800 : undefined, alignSelf: isWide ? "center" as any : undefined, width: "100%" as any }}
           showsVerticalScrollIndicator={false}
         >
           {/* User card */}
@@ -390,8 +408,11 @@ export default function MoreScreen() {
             <View style={{ paddingHorizontal: S.lg, paddingBottom: S.md }}>
               <InfoRow label="Currency" value={group?.currency ?? "RWF"} />
               <InfoRow label="Contribution" value={fmtCurrency(group?.contributionAmount ?? 0)} accent />
-              <InfoRow label="Loan Rate" value={`${group?.loanInterestRate ?? 2}% / month`} />
-              <InfoRow label="Late Penalty" value={fmtCurrency(group?.latePenaltyAmount ?? 0)} />
+              <InfoRow label="Loan Rate" value={`${group?.loanInterestRate ?? 2}% / ${group?.loanInterestRatePeriod === "annual" ? "year" : "month"}`} />
+              <InfoRow
+                label="Late Penalty"
+                value={`${group?.latePenaltyRatePct ?? 5}% ≈ ${fmtCurrency(round2((group?.contributionAmount ?? 0) * (group?.latePenaltyRatePct ?? 5) / 100))} per 15min`}
+              />
             </View>
           </Card>
 
@@ -424,12 +445,11 @@ export default function MoreScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.settingsRowText}>
-                    Sync Status:{" "}
+                    {`Sync Status: `}
                     <Text style={{ textTransform: "capitalize" }}>{syncStatus}</Text>
                   </Text>
                   <Text style={{ fontSize: 11, color: Colors.text3 }}>
-                    Last synced:{" "}
-                    {lastSyncTimestamp
+                    Last synced: {lastSyncTimestamp
                       ? new Date(lastSyncTimestamp).toLocaleString()
                       : "Never"}
                   </Text>
@@ -513,23 +533,24 @@ export default function MoreScreen() {
                   const stats = getMemberStats(m);
                   const isMe = m.userId === authUid;
                   return (
-                    <CardRow
-                      key={m.id}
-                      onPress={() => setSelected(m)}
-                      left={<Avatar name={m.fullName} size={44} color={ROLE_BADGE[m.role] ?? "teal"} />}
-                      title={`${m.fullName}${isMe ? " (You)" : ""}`}
-                      subtitle={`${stats.payments} payments · ${stats.activeLoans} active loan${stats.activeLoans !== 1 ? "s" : ""} · ${stats.meetings} meetings`}
-                      right={
-                        <View style={{ alignItems: "flex-end", gap: 4 }}>
-                          <Text style={styles.memberSavings}>{fmtCurrency(m.totalContributions)}</Text>
-                          <View style={{ flexDirection: "row", gap: 4 }}>
-                            <Badge label={m.role.replace("_", " ")} color={ROLE_BADGE[m.role] ?? "teal"} />
-                            <Badge label={m.status} color={STATUS_BADGE[m.status] ?? "muted"} />
+                    <React.Fragment key={m.id}>
+                      <CardRow
+                        onPress={() => setSelected(m)}
+                        left={<Avatar name={m.fullName} size={44} color={ROLE_BADGE[m.role] ?? "teal"} />}
+                        title={`${m.fullName}${isMe ? " (You)" : ""}`}
+                        subtitle={`${stats.payments} payments · ${stats.activeLoans} active loan${stats.activeLoans !== 1 ? "s" : ""} · ${stats.meetings} meetings`}
+                        right={
+                          <View style={{ alignItems: "flex-end", gap: 4 }}>
+                            <Text style={styles.memberSavings}>{fmtCurrency(m.totalContributions)}</Text>
+                            <View style={{ flexDirection: "row", gap: 4 }}>
+                              <Badge label={m.role.replace("_", " ")} color={ROLE_BADGE[m.role] ?? "teal"} />
+                              <Badge label={m.status} color={STATUS_BADGE[m.status] ?? "muted"} />
+                            </View>
                           </View>
-                        </View>
-                      }
-                      showBorder={i < filteredMembers.length - 1}
-                    />
+                        }
+                        showBorder={i < filteredMembers.length - 1}
+                      />
+                    </React.Fragment>
                   );
                 })}
               </Card>
@@ -565,6 +586,7 @@ export default function MoreScreen() {
             onEditProfile={() => openEditMember(selected)}
             onDelete={() => handleDeleteMember(selected)}
             onDeactivate={() => handleDeactivateMember(selected)}
+            onReactivate={() => handleReactivateMember(selected)}
           />
         )}
       </BottomModal>
@@ -733,13 +755,13 @@ export default function MoreScreen() {
 // ─────────────────────────────────────────────────────────────────────────────
 function MemberDetail({
   member, isAdmin, isMe, contributions, loans, meetings, wallet,
-  onApprove, onEditProfile, onDelete, onDeactivate,
+  onApprove, onEditProfile, onDelete, onDeactivate, onReactivate,
 }: {
   member: Member; isAdmin: boolean; isMe: boolean;
   contributions: Contribution[]; loans: Loan[]; meetings: Meeting[];
   wallet: WalletTransaction[];
   onApprove: () => void; onEditProfile: () => void;
-  onDelete: () => void; onDeactivate: () => void;
+  onDelete: () => void; onDeactivate: () => void; onReactivate: () => void;
 }) {
   const mc = contributions.filter((c) => c.memberId === member.id && c.status === "approved");
   const ml = loans.filter((l) => l.memberId === member.id);
@@ -801,17 +823,18 @@ function MemberDetail({
       {member.physicalAddress && <InfoRow label="Address" value={member.physicalAddress} />}
       <InfoRow label="Joined" value={fmtDate(member.dateJoined)} />
 
-      {mm.length > 0 && (
+      {(mm.length > 0) && (
         <View style={{ marginTop: S.lg }}>
           <Text style={styles.sectionLabel}>Recent meetings</Text>
           {mm.slice(0, 3).map((meeting) => (
-            <CardRow
-              key={meeting.id}
-              left={<Text style={styles.meetingBullet}>•</Text>}
-              title={meeting.title}
-              subtitle={`${fmtDate(meeting.date)} · ${meeting.status}`}
-              showBorder={false}
-            />
+            <React.Fragment key={meeting.id}>
+              <CardRow
+                left={<Text style={styles.meetingBullet}>•</Text>}
+                title={meeting.title}
+                subtitle={`${fmtDate(meeting.date)} · ${meeting.status}`}
+                showBorder={false}
+              />
+            </React.Fragment>
           ))}
         </View>
       )}
@@ -832,6 +855,12 @@ function MemberDetail({
           {member.status === "active" && (
             <>
               <Button label="Deactivate Member" onPress={onDeactivate} fullWidth size="lg" variant="secondary" />
+              <View style={{ height: 10 }} />
+            </>
+          )}
+          {member.status === "inactive" && (
+            <>
+              <Button label="Reactivate Member" onPress={onReactivate} fullWidth size="lg" variant="success" />
               <View style={{ height: 10 }} />
             </>
           )}

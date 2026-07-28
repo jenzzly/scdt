@@ -37,7 +37,9 @@ export default function MeetingsScreen() {
           <>
             <Text style={styles.sectionLbl}>Upcoming</Text>
             {upcoming.map((m) => (
-              <MeetingCard key={m.id} meeting={m} onPress={() => setSelected(m)} onComplete={() => completeMeeting(m.id)} />
+              <React.Fragment key={m.id}>
+                <MeetingCard meeting={m} onPress={() => setSelected(m)} onComplete={() => completeMeeting(m.id)} />
+              </React.Fragment>
             ))}
           </>
         )}
@@ -46,7 +48,9 @@ export default function MeetingsScreen() {
           <>
             <Text style={[styles.sectionLbl, { marginTop: 16 }]}>Past Meetings</Text>
             {past.map((m) => (
-              <MeetingCard key={m.id} meeting={m} onPress={() => setSelected(m)} />
+              <React.Fragment key={m.id}>
+                <MeetingCard meeting={m} onPress={() => setSelected(m)} />
+              </React.Fragment>
             ))}
           </>
         )}

@@ -28,10 +28,10 @@ export interface BrandDefaults {
   contributionDay: number;
   loanInterestRate: number;
   loanInterestMethod: "flat" | "reducing_balance";
-  latePenaltyAmount: number;
-  maxLoanMultiplier: number;
-  absencePenaltyMember: number;
-  absencePenaltyOfficer: number;
+  loanInterestRatePeriod: "monthly" | "annual";
+  latePenaltyRatePct: number;
+  absencePenaltyMemberRatePct: number;
+  absencePenaltyOfficerRatePct: number;
 }
 
 export interface BrandConfig {
@@ -68,10 +68,10 @@ const FALLBACK_BRAND: BrandConfig = {
     contributionDay: 1,
     loanInterestRate: 2,
     loanInterestMethod: "flat",
-    latePenaltyAmount: 2000,
-    maxLoanMultiplier: 3,
-    absencePenaltyMember: 1000,
-    absencePenaltyOfficer: 2000,
+    loanInterestRatePeriod: "monthly" as const,
+    latePenaltyRatePct: 5,
+    absencePenaltyMemberRatePct: 10,
+    absencePenaltyOfficerRatePct: 25,
   },
 };
 

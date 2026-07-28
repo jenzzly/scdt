@@ -1,14 +1,14 @@
 // stores/slices/meetingSlice.ts
 import type { SetFn, GetFn, StoreState } from "../storeTypes";
-import type { ID, Meeting, MeetingAttendee, WalletTransaction } from "../../types";
+import type { ID, Meeting, MeetingAttendee, WalletTransaction, Member } from "../../types";
 import * as FS from "../../lib/firestore";
-import { uid } from "../../utils/theme";
+import { uid, round2 } from "../../utils/theme";
 import { recalcGroupTotals } from "../recalcGroupTotals";
 
 export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addMeetingLocal" | "cancelMeeting" | "clearAllMemberPenalties" | "clearMeetingPenalty" | "deleteMeeting" | "deleteMeetingLocal" | "recordAttendance" | "scheduleMeeting" | "setMeetings" | "updateMeeting" | "updateMeetingLocal"> => ({
       setMeetings: (ms) => set({ meetings: ms }),
-      addMeetingLocal: (m) => set((s) => ({ meetings: [m, ...s.meetings] })),
-      updateMeetingLocal: (id, data) => set((s) => {
+      addMeetingLocal: (m) => set((s: StoreState) => ({ meetings: [m, ...s.meetings] })),
+      updateMeetingLocal: (id, data) => set((s: StoreState) => {
         const cleanData: Partial<Meeting> = {};
         for (const [key, value] of Object.entries(data)) {
           if (value !== undefined) {
@@ -16,10 +16,10 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
           }
         }
         return {
-          meetings: s.meetings.map((m) => (m.id === id ? { ...m, ...cleanData } : m)),
+          meetings: s.meetings.map((m: Meeting) => (m.id === id ? { ...m, ...cleanData } : m)),
         };
       }),
-      deleteMeetingLocal: (id) => set((s) => ({ meetings: s.meetings.filter((m) => m.id !== id) })),
+      deleteMeetingLocal: (id) => set((s: StoreState) => ({ meetings: s.meetings.filter((m: Meeting) => m.id !== id) })),
 
       cancelMeeting: async (meetingId: ID) => {
         const { activeGroupId } = get();
@@ -145,7 +145,7 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
         get().addMeetingLocal(meeting);
         FS.addMeeting(activeGroupId, meeting).catch(console.warn);
         members
-          .filter((m) => m.groupId === activeGroupId && m.status === "active" && m.userId)
+          .filter((m: Member) => m.groupId === activeGroupId && m.status === "active" && m.userId)
           .forEach((member) => {
             FS.addNotification(member.userId!, {
               userId: member.userId!,
@@ -165,22 +165,44 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
         const { activeGroupId, meetings, members, groups } = get();
         if (!activeGroupId) return;
         
-        const meeting = meetings.find((m) => m.id === meetingId);
+        const meeting = meetings.find((m: Meeting) => m.id === meetingId);
         if (!meeting) return;
         
-        const member = members.find((m) => m.id === memberId);
+        const member = members.find((m: Meeting) => m.id === memberId);
         const group = groups.find((g) => g.id === activeGroupId);
-        const pMember = group?.absencePenaltyMember ?? 2000;
-        const pOfficer = group?.absencePenaltyOfficer ?? 5000;
-        
+
+        // Interest-based penalties: a percentage of the group's standard
+        // contribution amount, configured in Group Settings → Meeting
+        // Penalties. Falls back to the legacy fixed-amount fields only if
+        // the group hasn't been migrated to percentage-based penalties yet.
+        const contributionBase = group?.contributionAmount ?? 0;
+        const pctToAmount = (pct: number | undefined, legacyFixed: number | undefined, legacyDefault: number) => {
+          if (pct !== undefined && pct > 0 && contributionBase > 0) {
+            return round2(contributionBase * (pct / 100));
+          }
+          return legacyFixed ?? legacyDefault;
+        };
+
+        const pMember  = pctToAmount(group?.absencePenaltyMemberRatePct,  group?.absencePenaltyMember,  2000);
+        const pOfficer = pctToAmount(group?.absencePenaltyOfficerRatePct, group?.absencePenaltyOfficer, 5000);
+        const lateRatePct = group?.latePenaltyRatePct;
+
         let penaltyAmount = 0;
         let status: MeetingAttendee["status"] = "present";
-        
+
         if (!attended) {
           penaltyAmount = member?.role === "member" ? pMember : pOfficer;
           status = "absent";
         } else if (lateMinutes && lateMinutes > 0) {
-          penaltyAmount = Math.floor(lateMinutes / 15) * 500;
+          // Late penalty: percentage-per-15-minutes-late of the contribution
+          // amount, if a rate is configured; otherwise fall back to the old
+          // fixed RWF 500 per 15 minutes.
+          const lateBlocks = Math.floor(lateMinutes / 15);
+          if (lateRatePct !== undefined && lateRatePct > 0 && contributionBase > 0) {
+            penaltyAmount = round2(contributionBase * (lateRatePct / 100) * lateBlocks);
+          } else {
+            penaltyAmount = lateBlocks * (group?.latePenaltyAmount ?? 500);
+          }
           status = "late";
         }
 
@@ -225,6 +247,8 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
               id: penaltyTxId,
               groupId: activeGroupId,
               type: "late_fee",
+              sourceType: "manual",
+              sourceId: meetingId,
               amount: penaltyAmount,
               description: `Meeting absence penalty for ${member?.fullName ?? "member"} - ${meeting.title}`,
               date: meeting.date,

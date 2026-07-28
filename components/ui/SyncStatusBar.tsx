@@ -14,7 +14,7 @@ const STATUS_CONFIG = {
 export function SyncStatusPill() {
   const { syncStatus } = useStore();
   const pulse = useRef(new Animated.Value(1)).current;
-  const cfg = STATUS_CONFIG[syncStatus];
+  const cfg = STATUS_CONFIG[syncStatus as keyof typeof STATUS_CONFIG];
 
   useEffect(() => {
     if (syncStatus === "syncing" || syncStatus === "pending") {

@@ -2,8 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Platform, ActivityIndicator, TextInput,
-} from "react-native";
+  Platform, ActivityIndicator, TextInput, useWindowDimensions} from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useStore, useGroupMembers, useActiveGroup, useGroupMeetings } from "../../stores/useStore";
 import { Colors, S, R, fmtCurrency, showConfirm } from "../../utils/theme";
@@ -22,6 +21,8 @@ interface AttendeeWithStatus {
 
 export default function MeetingAttendanceModal() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 768;
   const { meetingId } = useLocalSearchParams<{ meetingId: string }>();
   const { show, Toast } = useToast();
   
@@ -40,8 +41,18 @@ export default function MeetingAttendanceModal() {
   const initializedRef = useRef(false);
   const meetingIdRef = useRef(meetingId);
 
-  const pMember = group?.absencePenaltyMember ?? 2000;
-  const pOfficer = group?.absencePenaltyOfficer ?? 5000;
+  // Interest-based penalties: percentage of the group's standard contribution
+  // amount, configured in Group Settings → Meeting Penalties. Falls back to
+  // legacy fixed amounts only if the group hasn't set a percentage rate.
+  const contributionBase = group?.contributionAmount ?? 0;
+  const pctToAmount = (pct: number | undefined, legacyFixed: number | undefined, legacyDefault: number) => {
+    if (pct !== undefined && pct > 0 && contributionBase > 0) {
+      return Math.round(contributionBase * (pct / 100) * 100) / 100;
+    }
+    return legacyFixed ?? legacyDefault;
+  };
+  const pMember  = pctToAmount(group?.absencePenaltyMemberRatePct,  group?.absencePenaltyMember,  2000);
+  const pOfficer = pctToAmount(group?.absencePenaltyOfficerRatePct, group?.absencePenaltyOfficer, 5000);
 
   // Memoize the initialize function to prevent recreation
   const initializeAttendees = useCallback((meetingData: any) => {
@@ -172,7 +183,7 @@ export default function MeetingAttendanceModal() {
 
   const handleSave = async () => {
     if (!hasChanges()) {
-      show("No changes to save", "info");
+      show("No changes to save");
       router.back();
       return;
     }

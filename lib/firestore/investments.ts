@@ -174,7 +174,6 @@ export async function deleteInvestment(gId: string, id: string, reason: string):
     if (!currentSnap.exists()) throw new Error("Investment not found");
 
     const investment = fromSnap<Investment>(currentSnap);
-    console.log("[deleteInvestment] Investment status:", investment.status);
 
     if (!["open", "pending", "pending_committee", "matured", "closed"].includes(investment.status)) {
         throw new Error(`Cannot delete investment with status: ${investment.status}`);

@@ -30,7 +30,6 @@ export default function RootLayout() {
   useEffect(() => {
     if (fontsLoaded) {
       SplashScreen.hideAsync();
-      // Safely call recalcTotals if it exists
       if (recalcTotals && typeof recalcTotals === 'function') {
         recalcTotals();
       }

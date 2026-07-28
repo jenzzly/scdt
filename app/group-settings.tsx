@@ -2,14 +2,14 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform,
-  ActivityIndicator, RefreshControl, Modal, useWindowDimensions, Switch,
+  ActivityIndicator, RefreshControl, Modal, useWindowDimensions, Switch, TextInput,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup, useGroupAuditLogs } from "../stores/useStore";
 import { useGroupMembers } from "../stores/selectors";
 import { useAuth } from "../hooks/useAuth";
 import { Input, Select, Button, useToast, Card } from "../components/ui";
-import { Colors, C, T, fmtDate, showConfirm } from "../utils/theme";
+import { Colors, C, T, fmtDate, fmtCurrency, showConfirm, round2 } from "../utils/theme";
 import { exportFullData, importFullData } from "../utils/importExport";
 import * as FS from "../lib/firestore";
 import type { AuditLog, MemberPermissions, Member } from "../types";
@@ -36,15 +36,21 @@ const INTEREST_METHODS = [
   { label: "Reducing balance (amortized)",  value: "reducing_balance" },
 ];
 
-type AuditTab = "all" | "contributions" | "loans" | "members" | "investments" | "deletions";
+const RATE_PERIODS = [
+  { label: "Per Month",  value: "monthly" },
+  { label: "Per Year",   value: "annual"  },
+];
 
-const AUDIT_TABS: { key: AuditTab; label: string }[] = [
-  { key: "all",           label: "All"          },
-  { key: "contributions", label: "Contributions" },
-  { key: "loans",         label: "Loans"        },
-  { key: "members",       label: "Members"      },
-  { key: "investments",   label: "Investments"  },
-  { key: "deletions",     label: "Deletions"    },
+type AuditTab = "all" | "contributions" | "loans" | "members" | "investments" | "deletions" | "failed";
+
+const AUDIT_TABS: { key: AuditTab; label: string; icon: string }[] = [
+  { key: "all",           label: "All",           icon: "📋" },
+  { key: "contributions", label: "Contributions", icon: "💰" },
+  { key: "loans",         label: "Loans",         icon: "🏦" },
+  { key: "members",       label: "Members",       icon: "👥" },
+  { key: "investments",   label: "Investments",   icon: "📈" },
+  { key: "deletions",     label: "Deletions",     icon: "🗑" },
+  { key: "failed",        label: "Failed",        icon: "⚠️"  },
 ];
 
 const AUDIT_TAB_ENTITY: Partial<Record<AuditTab, string>> = {
@@ -75,6 +81,9 @@ const ACTION_CONFIG: Record<string, { bg: string; text: string; label: string }>
   deleted:  { bg: "#fee2e2", text: "#b91c1c", label: "Deleted"  },
   updated:  { bg: "#fef9c3", text: "#92400e", label: "Updated"  },
   disbursed:{ bg: "#f3e8ff", text: "#6b21a8", label: "Disbursed"},
+  failed:   { bg: "#fee2e2", text: "#b91c1c", label: "Failed"   },
+  repaid:   { bg: "#dcfce7", text: "#15803d", label: "Repaid"   },
+  reverted: { bg: "#e0e7ff", text: "#4338ca", label: "Reverted"  },
 };
 
 function getActionConfig(action: string) {
@@ -201,132 +210,130 @@ const fm = StyleSheet.create({
   row: { flexDirection: "row", gap: 10 },
 });
 
-// ─────────────────────────────────────────────
-// AuditRow — mobile card view
-// ─────────────────────────────────────────────
-function AuditRowMobile({ log }: { log: AuditLog }) {
-  const [expanded, setExpanded] = useState(false);
-  const cfg = getActionConfig(log.action);
+// ─────────────────────────────────────────────────────────────────────────────
+// CategoryDropdown — replaces the horizontal scrolling chip-tab row.
+// A single tap opens a simple list; each option shows its live count.
+// ─────────────────────────────────────────────────────────────────────────────
+function CategoryDropdown({
+  options, value, onChange, counts,
+}: {
+  options: { key: string; label: string; icon: string }[];
+  value: string;
+  onChange: (v: string) => void;
+  counts: Record<string, number>;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = options.find(o => o.key === value) ?? options[0];
+
   return (
-    <TouchableOpacity onPress={() => setExpanded(!expanded)} activeOpacity={0.7} style={ar.card}>
-      <View style={[ar.accent, { backgroundColor: cfg.text }]} />
-      <View style={ar.content}>
-        <View style={ar.topRow}>
-          <Text style={ar.entity}>{entityLabel(log.entityType)}</Text>
-          <View style={[ar.badge, { backgroundColor: cfg.bg }]}>
-            <Text style={[ar.badgeText, { color: cfg.text }]}>{cfg.label}</Text>
-          </View>
+    <View style={{ position: "relative" }}>
+      <TouchableOpacity
+        style={aw.dropdownBtn}
+        onPress={() => setOpen(!open)}
+        activeOpacity={0.8}
+      >
+        <Text style={aw.dropdownBtnIcon}>{current.icon}</Text>
+        <Text style={aw.dropdownBtnText}>{current.label}</Text>
+        <View style={aw.dropdownBadge}>
+          <Text style={aw.dropdownBadgeText}>{counts[current.key] ?? 0}</Text>
         </View>
-        <View style={ar.metaRow}>
-          <Text style={ar.metaUser}>{log.userName ?? log.userId}</Text>
-          <Text style={ar.metaDot}>·</Text>
-          <Text style={ar.metaDate}>{fmtDate(log.timestamp)}</Text>
-        </View>
-        {!!log.reason && (
-          <Text style={ar.reason} numberOfLines={expanded ? undefined : 2}>{log.reason}</Text>
-        )}
-        {expanded && (log.before || log.after) && (
-          <View style={ar.diff}>
-            {log.before && (
-              <View style={ar.diffBlock}>
-                <Text style={[ar.diffLabel, { color: "#b91c1c" }]}>Before</Text>
-                <Text style={ar.diffCode} numberOfLines={6}>{JSON.stringify(log.before, null, 2)}</Text>
-              </View>
-            )}
-            {log.after && (
-              <View style={[ar.diffBlock, { marginTop: 8 }]}>
-                <Text style={[ar.diffLabel, { color: "#15803d" }]}>After</Text>
-                <Text style={ar.diffCode} numberOfLines={6}>{JSON.stringify(log.after, null, 2)}</Text>
-              </View>
-            )}
+        <Text style={aw.dropdownChevron}>{open ? "▲" : "▼"}</Text>
+      </TouchableOpacity>
+
+      {open && (
+        <>
+          <TouchableOpacity
+            style={aw.dropdownBackdrop}
+            activeOpacity={1}
+            onPress={() => setOpen(false)}
+          />
+          <View style={aw.dropdownMenu}>
+            {options.map(opt => {
+              const isActive = opt.key === value;
+              const isAlert = opt.key === "failed" && (counts[opt.key] ?? 0) > 0;
+              return (
+                <TouchableOpacity
+                  key={opt.key}
+                  style={[aw.dropdownItem, isActive && aw.dropdownItemActive]}
+                  onPress={() => { onChange(opt.key); setOpen(false); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={aw.dropdownItemIcon}>{opt.icon}</Text>
+                  <Text style={[aw.dropdownItemText, isActive && aw.dropdownItemTextActive]}>{opt.label}</Text>
+                  <View style={[aw.dropdownItemBadge, isAlert && aw.dropdownItemBadgeAlert]}>
+                    <Text style={[aw.dropdownItemBadgeText, isAlert && aw.dropdownItemBadgeTextAlert]}>
+                      {counts[opt.key] ?? 0}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
           </View>
-        )}
-        <Text style={ar.hint}>{expanded ? "Collapse" : "Expand details"}</Text>
-      </View>
-    </TouchableOpacity>
+        </>
+      )}
+    </View>
   );
 }
 
-const ar = StyleSheet.create({
-  card: {
-    flexDirection: "row", backgroundColor: C.surface,
-    borderWidth: 1, borderColor: C.border,
-    borderRadius: 14, marginBottom: 8, overflow: "hidden",
-  },
-  accent:  { width: 3 },
-  content: { flex: 1, padding: 14, gap: 4 },
-  topRow:  { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  entity:  { fontSize: 13, fontWeight: "700", color: C.text, flex: 1, marginRight: 8 },
-  badge:   { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
-  badgeText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.4 },
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  metaUser:{ fontSize: 11, color: C.text2, fontWeight: "500" },
-  metaDot: { fontSize: 11, color: C.text3 },
-  metaDate:{ fontSize: 11, color: C.text3 },
-  reason:  { fontSize: 12, color: C.text2, lineHeight: 17 },
-  diff:    { backgroundColor: C.bg, borderRadius: 6, padding: 10, marginTop: 6 },
-  diffBlock: {},
-  diffLabel: { fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 },
-  diffCode:  { fontSize: 10, color: C.text2, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
-  hint: { fontSize: 10, color: C.text3, marginTop: 2 },
-});
-
-// ─────────────────────────────────────────────
-// AuditTableRow — web table row
-// ─────────────────────────────────────────────
-function AuditTableRow({ log, colWidths }: { log: AuditLog; colWidths: number[] }) {
+// ─────────────────────────────────────────────────────────────────────────────
+// White-theme table row (desktop) — includes a Revert action
+// ─────────────────────────────────────────────────────────────────────────────
+function AuditTableRowWhite({ log, idx, onRevert }: { log: AuditLog; idx: number; onRevert: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const cfg = getActionConfig(log.action);
+  const ts  = new Date(log.timestamp);
+  const tsStr = isNaN(ts.getTime())
+    ? log.timestamp
+    : `${ts.toLocaleDateString("en-US",{ year:"numeric", month:"2-digit", day:"2-digit" })} ${ts.toLocaleTimeString("en-US",{ hour:"2-digit", minute:"2-digit", second:"2-digit" })}`;
+  const canRevert = log.action !== "reverted" && (log.action === "deleted" || log.action === "created" || !!log.before);
 
   return (
     <>
       <TouchableOpacity
         onPress={() => setExpanded(!expanded)}
-        activeOpacity={0.6}
-        style={[at.row, expanded && at.rowExpanded]}
+        activeOpacity={0.7}
+        style={[awr.row, idx % 2 === 1 && awr.rowAlt, expanded && awr.rowExp]}
       >
-        <View style={[at.cell, { width: colWidths[0] }]}>
-          <Text style={at.cellMain}>{entityLabel(log.entityType)}</Text>
-        </View>
-        <View style={[at.cell, { width: colWidths[1] }]}>
-          <View style={[at.badge, { backgroundColor: cfg.bg }]}>
-            <Text style={[at.badgeText, { color: cfg.text }]}>{cfg.label}</Text>
+        <Text style={[awr.cell, { width: 170 }]} numberOfLines={1}>{tsStr}</Text>
+        <Text style={[awr.catText, { width: 120 }]} numberOfLines={1}>{entityLabel(log.entityType)}</Text>
+        <View style={{ width: 110, paddingHorizontal: 4, justifyContent: "center" }}>
+          <View style={[awr.actBadge, { backgroundColor: cfg.bg, borderColor: cfg.text + "33" }]}>
+            <Text style={[awr.actBadgeText, { color: cfg.text }]}>{cfg.label}</Text>
           </View>
         </View>
-        <View style={[at.cell, { width: colWidths[2] }]}>
-          <Text style={at.cellText}>{log.userName ?? log.userId ?? "—"}</Text>
-        </View>
-        <View style={[at.cell, { width: colWidths[3] }]}>
-          <Text style={at.cellText}>{fmtDate(log.timestamp)}</Text>
-        </View>
-        <View style={[at.cell, { flex: 1 }]}>
-          <Text style={at.cellReason} numberOfLines={1}>{log.reason || "—"}</Text>
-        </View>
-        <View style={[at.cell, { width: 28, alignItems: "center" }]}>
-          <Text style={at.chevron}>{expanded ? "▲" : "▼"}</Text>
+        <Text style={[awr.cell, { width: 130 }]} numberOfLines={1}>{log.userName ?? log.userId ?? "—"}</Text>
+        <Text style={[awr.changeLog, { flex: 1 }]} numberOfLines={expanded ? undefined : 1}>
+          {log.reason || `${entityLabel(log.entityType)} ${log.action}`}
+        </Text>
+        <View style={{ width: 90, alignItems: "flex-end" }}>
+          {canRevert && (
+            <TouchableOpacity onPress={onRevert} hitSlop={{ top:6,bottom:6,left:6,right:6 }}>
+              <Text style={awr.revertText}>↺ Revert</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </TouchableOpacity>
-
-      {expanded && (log.before || log.after || log.reason) && (
-        <View style={at.expandedRow}>
-          {!!log.reason && (
-            <View style={at.expandSection}>
-              <Text style={at.expandLabel}>Note</Text>
-              <Text style={at.expandValue}>{log.reason}</Text>
+      {expanded && (
+        <View style={awr.expandWrap}>
+          {!!log.errorMessage && (
+            <View style={awr.errorBox}>
+              <Text style={awr.errorLabel}>ERROR</Text>
+              <Text style={awr.errorText}>{log.errorMessage}</Text>
             </View>
           )}
+          {!!log.reason && <Text style={awr.expandNote}>{log.reason}</Text>}
           {(log.before || log.after) && (
-            <View style={at.diffGrid}>
+            <View style={awr.diffRow}>
               {log.before && (
-                <View style={at.diffBlock}>
-                  <Text style={[at.diffLabel, { color: "#b91c1c" }]}>Before</Text>
-                  <Text style={at.diffCode}>{JSON.stringify(log.before, null, 2)}</Text>
+                <View style={awr.diffBlock}>
+                  <Text style={[awr.diffLabel, { color: "#dc2626" }]}>← Before</Text>
+                  <Text style={awr.diffCode}>{JSON.stringify(log.before, null, 2)}</Text>
                 </View>
               )}
               {log.after && (
-                <View style={at.diffBlock}>
-                  <Text style={[at.diffLabel, { color: "#15803d" }]}>After</Text>
-                  <Text style={at.diffCode}>{JSON.stringify(log.after, null, 2)}</Text>
+                <View style={awr.diffBlock}>
+                  <Text style={[awr.diffLabel, { color: "#16a34a" }]}>→ After</Text>
+                  <Text style={awr.diffCode}>{JSON.stringify(log.after, null, 2)}</Text>
                 </View>
               )}
             </View>
@@ -337,34 +344,186 @@ function AuditTableRow({ log, colWidths }: { log: AuditLog; colWidths: number[] 
   );
 }
 
-const at = StyleSheet.create({
+// ─────────────────────────────────────────────────────────────────────────────
+// White-theme mobile card — includes a Revert action
+// ─────────────────────────────────────────────────────────────────────────────
+function AuditRowWhite({ log, onRevert }: { log: AuditLog; onRevert: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const cfg = getActionConfig(log.action);
+  const ts  = new Date(log.timestamp);
+  const tsStr = isNaN(ts.getTime()) ? log.timestamp
+    : ts.toLocaleDateString("en-US",{ month:"short", day:"2-digit" }) + " " + ts.toLocaleTimeString("en-US",{ hour:"2-digit", minute:"2-digit" });
+  const canRevert = log.action !== "reverted" && (log.action === "deleted" || log.action === "created" || !!log.before);
+
+  return (
+    <TouchableOpacity onPress={() => setExpanded(!expanded)} activeOpacity={0.75} style={awr.mCard}>
+      <View style={awr.mCardTop}>
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 3 }}>
+            <Text style={awr.mCat}>{entityLabel(log.entityType)}</Text>
+            <View style={[awr.actBadge, { backgroundColor: cfg.bg, borderColor: cfg.text + "33" }]}>
+              <Text style={[awr.actBadgeText, { color: cfg.text }]}>{cfg.label}</Text>
+            </View>
+          </View>
+          <Text style={awr.mChangeLog} numberOfLines={expanded ? undefined : 2}>
+            {log.reason || `${entityLabel(log.entityType)} ${log.action}`}
+          </Text>
+        </View>
+        <Text style={awr.chevron}>{expanded ? "▲" : "▼"}</Text>
+      </View>
+      <View style={awr.mCardBottom}>
+        <Text style={awr.mUser}>{log.userName ?? log.userId ?? "—"}</Text>
+        <Text style={awr.mTs}>{tsStr}</Text>
+      </View>
+      {canRevert && (
+        <TouchableOpacity onPress={onRevert} style={awr.mRevertBtn} hitSlop={{ top:6,bottom:6,left:6,right:6 }}>
+          <Text style={awr.revertText}>↺ Revert this action</Text>
+        </TouchableOpacity>
+      )}
+      {expanded && (log.before || log.after || log.errorMessage) && (
+        <View style={awr.mExpand}>
+          {!!log.errorMessage && (
+            <View style={awr.errorBox}>
+              <Text style={awr.errorLabel}>ERROR</Text>
+              <Text style={awr.errorText}>{log.errorMessage}</Text>
+            </View>
+          )}
+          {log.before && (
+            <View style={[awr.diffBlock, { marginBottom: 8 }]}>
+              <Text style={[awr.diffLabel, { color: "#dc2626" }]}>← Before</Text>
+              <Text style={awr.diffCode}>{JSON.stringify(log.before, null, 2)}</Text>
+            </View>
+          )}
+          {log.after && (
+            <View style={awr.diffBlock}>
+              <Text style={[awr.diffLabel, { color: "#16a34a" }]}>→ After</Text>
+              <Text style={awr.diffCode}>{JSON.stringify(log.after, null, 2)}</Text>
+            </View>
+          )}
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// White audit theme styles
+// ─────────────────────────────────────────────────────────────────────────────
+const aw = StyleSheet.create({
+  root: { flex: 1, backgroundColor: "#ffffff" },
+  toolbar: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingVertical: 12,
+    backgroundColor: "#ffffff", borderBottomWidth: 1, borderBottomColor: C.border,
+    flexWrap: "wrap", gap: 8,
+  },
+  toolbarCount: { fontSize: 13, fontWeight: "600", color: C.text2 },
+  toolbarRight: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1, flexWrap: "wrap" },
+  searchBox: {
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: "#f8fafc", borderWidth: 1, borderColor: C.border,
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, minWidth: 160, maxWidth: 240,
+  },
+  searchIcon: { fontSize: 14, color: C.text3, marginRight: 6 },
+  searchInput: { flex: 1, fontSize: 13, color: C.text, minHeight: 18 },
+  filterBtn: {
+    paddingHorizontal: 12, paddingVertical: 7,
+    borderRadius: 8, borderWidth: 1, borderColor: C.border, backgroundColor: "#f8fafc",
+  },
+  filterBtnActive: { borderColor: C.primary, backgroundColor: C.primary + "10" },
+  filterBtnText: { fontSize: 12, fontWeight: "600", color: C.text2 },
+  filterBtnTextActive: { color: C.primary },
+  clearText: { fontSize: 12, color: "#dc2626", fontWeight: "600" },
+
+  dropdownBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 12, paddingVertical: 7,
+    borderRadius: 8, borderWidth: 1, borderColor: C.border, backgroundColor: "#f8fafc",
+  },
+  dropdownBtnIcon: { fontSize: 13 },
+  dropdownBtnText: { fontSize: 12, fontWeight: "600", color: C.text },
+  dropdownBadge: {
+    backgroundColor: C.elevated, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1, minWidth: 20, alignItems: "center",
+  },
+  dropdownBadgeText: { fontSize: 10, fontWeight: "700", color: C.text3 },
+  dropdownChevron: { fontSize: 9, color: C.text3 },
+  dropdownBackdrop: {
+    position: "absolute", top: -1000, left: -1000, right: -1000, bottom: -1000,
+    zIndex: 10,
+  },
+  dropdownMenu: {
+    position: "absolute", top: 40, right: 0, zIndex: 20,
+    backgroundColor: "#ffffff", borderRadius: 12, borderWidth: 1, borderColor: C.border,
+    minWidth: 220, paddingVertical: 6,
+    ...(Platform.OS === "web" ? { boxShadow: "0 8px 24px rgba(0,0,0,0.12)" } as any : {
+      shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8,
+    }),
+  },
+  dropdownItem: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingHorizontal: 14, paddingVertical: 9,
+  },
+  dropdownItemActive: { backgroundColor: C.primary + "0d" },
+  dropdownItemIcon: { fontSize: 14, width: 20 },
+  dropdownItemText: { flex: 1, fontSize: 13, color: C.text2, fontWeight: "500" },
+  dropdownItemTextActive: { color: C.primary, fontWeight: "700" },
+  dropdownItemBadge: { backgroundColor: C.elevated, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1, minWidth: 22, alignItems: "center" },
+  dropdownItemBadgeAlert: { backgroundColor: "#fee2e2" },
+  dropdownItemBadgeText: { fontSize: 10, fontWeight: "700", color: C.text3 },
+  dropdownItemBadgeTextAlert: { color: "#dc2626" },
+
+  tableHead: {
+    flexDirection: "row", alignItems: "center", backgroundColor: "#f8fafc",
+    paddingVertical: 10, paddingHorizontal: 20,
+    borderBottomWidth: 1, borderBottomColor: C.border,
+    borderTopWidth: 1, borderTopColor: C.border,
+  },
+  thCell: {
+    fontSize: 10, fontWeight: "700", color: C.text3,
+    letterSpacing: 0.6, textTransform: "uppercase", paddingHorizontal: 4,
+  },
+  mobileCount: { fontSize: 11, color: C.text3, marginBottom: 10, textAlign: "right" },
+});
+
+const awr = StyleSheet.create({
   row: {
     flexDirection: "row", alignItems: "center",
-    borderBottomWidth: 1, borderBottomColor: C.borderLight ?? C.border,
     paddingVertical: 11, paddingHorizontal: 20,
-    backgroundColor: C.surface,
-  },
-  rowExpanded: { backgroundColor: C.elevated },
-  cell: { paddingHorizontal: 4 },
-  cellMain:  { fontSize: 13, fontWeight: "600", color: C.text },
-  cellText:  { fontSize: 12, color: C.text2 },
-  cellReason:{ fontSize: 12, color: C.text3 },
-  badge:     { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 5, alignSelf: "flex-start" },
-  badgeText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.4 },
-  chevron:   { fontSize: 9, color: C.text3 },
-
-  expandedRow: {
-    backgroundColor: C.bg,
+    backgroundColor: "#ffffff",
     borderBottomWidth: 1, borderBottomColor: C.border,
+  },
+  rowAlt: { backgroundColor: "#fafbfc" },
+  rowExp: { backgroundColor: "#f8fafc" },
+  cell: { fontSize: 12, color: C.text2, paddingHorizontal: 4 },
+  catText: { fontSize: 12, color: C.text, fontWeight: "600", paddingHorizontal: 4 },
+  actBadge: { borderWidth: 1, borderRadius: 6, alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 2 },
+  actBadgeText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.2 },
+  changeLog: { fontSize: 12, color: C.text, paddingHorizontal: 4, lineHeight: 16 },
+  revertText: { fontSize: 11, fontWeight: "700", color: C.primary },
+
+  expandWrap: {
+    backgroundColor: "#f8fafc", borderBottomWidth: 1, borderBottomColor: C.border,
     paddingHorizontal: 20, paddingVertical: 14,
   },
-  expandSection: { marginBottom: 12 },
-  expandLabel: { fontSize: 10, fontWeight: "700", color: C.text3, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 },
-  expandValue: { fontSize: 13, color: C.text2, lineHeight: 20 },
-  diffGrid: { flexDirection: "row", gap: 16 },
-  diffBlock: { flex: 1, backgroundColor: C.surface, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: C.border },
-  diffLabel: { fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 },
-  diffCode:  { fontSize: 11, color: C.text2, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", lineHeight: 16 },
+  expandNote: { fontSize: 12, color: C.text2, lineHeight: 18, marginBottom: 10 },
+  errorBox: { backgroundColor: "#fef2f2", borderRadius: 6, padding: 10, borderWidth: 1, borderColor: "#fecaca", marginBottom: 10 },
+  errorLabel: { fontSize: 9, fontWeight: "800", color: "#dc2626", letterSpacing: 1, marginBottom: 3 },
+  errorText: { fontSize: 11, color: "#b91c1c", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
+  diffRow: { flexDirection: "row", gap: 12 },
+  diffBlock: { flex: 1, backgroundColor: "#ffffff", borderRadius: 6, padding: 10, borderWidth: 1, borderColor: C.border },
+  diffLabel: { fontSize: 10, fontWeight: "700", letterSpacing: 0.4, marginBottom: 4, textTransform: "uppercase" },
+  diffCode: { fontSize: 10, color: C.text2, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", lineHeight: 15 },
+
+  mCard: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: C.border, borderRadius: 10, marginBottom: 8, overflow: "hidden", padding: 12 },
+  mCardTop: { flexDirection: "row", alignItems: "flex-start", marginBottom: 8 },
+  mCat: { fontSize: 12, fontWeight: "700", color: C.text },
+  mChangeLog: { fontSize: 12, color: C.text2, lineHeight: 17, marginTop: 2 },
+  mCardBottom: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  mUser: { fontSize: 11, color: C.text3 },
+  mTs: { fontSize: 11, color: C.text3 },
+  mRevertBtn: { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.border },
+  mExpand: { marginTop: 12, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 10 },
+  chevron: { fontSize: 9, color: C.text3 },
 });
 
 // ─────────────────────────────────────────────
@@ -407,10 +566,21 @@ export default function GroupSettingsScreen() {
   const [freq,           setFreq]           = useState(group?.contributionFrequency      ?? "monthly");
   const [loanRate,       setLoanRate]       = useState(String(group?.loanInterestRate   ?? 2));
   const [loanMethod,     setLoanMethod]     = useState(group?.loanInterestMethod         ?? "flat");
-  const [penalty,        setPenalty]        = useState(String(group?.latePenaltyAmount  ?? 5000));
-  const [absenceMember,  setAbsenceMember]  = useState(String(group?.absencePenaltyMember  ?? 2000));
-  const [absenceOfficer, setAbsenceOfficer] = useState(String(group?.absencePenaltyOfficer ?? 5000));
-  const [multiplier,     setMultiplier]     = useState(String(group?.maxLoanMultiplier  ?? 3));
+  const [ratePeriod,     setRatePeriod]     = useState<"monthly" | "annual">(group?.loanInterestRatePeriod ?? "monthly");
+  // Interest-based penalty rates (% of the group's standard contribution amount)
+  const [lateRatePct,      setLateRatePct]      = useState(String(group?.latePenaltyRatePct ?? 5));
+  const [absenceMemberPct, setAbsenceMemberPct] = useState(String(group?.absencePenaltyMemberRatePct ?? 10));
+  const [absenceOfficerPct,setAbsenceOfficerPct]= useState(String(group?.absencePenaltyOfficerRatePct ?? 25));
+  // Late-PAYMENT fees — separate from meeting-attendance penalties above.
+  // Calculated on the amount actually due (missed contribution / overdue
+  // installment), not a flat figure.
+  const [contribLateFeePct,   setContribLateFeePct]   = useState(String(group?.contributionLateFeeRatePct ?? 5));
+  const [contribLateFeeGrace, setContribLateFeeGrace] = useState(String(group?.contributionLateFeeGraceDays ?? 3));
+  // Contribution late fees only apply to periods on/after this date — never
+  // retroactively across a member's whole history. Empty = feature is off.
+  const [contribLateFeeStart, setContribLateFeeStart] = useState(group?.contributionLateFeeStartDate ?? "");
+  const [loanLateFeePct,      setLoanLateFeePct]       = useState(String(group?.loanLateFeeRatePct ?? 5));
+  const [loanLateFeeGrace,    setLoanLateFeeGrace]     = useState(String(group?.loanLateFeeGraceDays ?? 3));
   const [saving,         setSaving]         = useState(false);
   const [refreshing,     setRefreshing]     = useState(false);
 
@@ -433,6 +603,8 @@ export default function GroupSettingsScreen() {
   const activeMembers = useMemo(() => allMembers.filter(m => m.status === "active" && m.role !== "admin"), [allMembers]);
   const [permSaving, setPermSaving] = useState<string | null>(null);
   const [pendingPerms, setPendingPerms] = useState<Record<string, MemberPermissions>>({});
+  const [permSearch, setPermSearch] = useState("");
+  const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
 
   const getMemberPerms = useCallback((m: Member): MemberPermissions => {
     return pendingPerms[m.id] ?? m.permissions ?? { ...DEFAULT_MEMBER_PERMISSIONS };
@@ -463,11 +635,13 @@ export default function GroupSettingsScreen() {
 
   const filteredLogs = useMemo(() => {
     let logs = allAuditLogs;
-    if (activeTab !== "all") {
+    if (activeTab === "failed") {
+      logs = logs.filter((l) => l.action === "failed" || l.status === "failed");
+    } else if (activeTab !== "all") {
       if (activeTab === "deletions") {
         logs = logs.filter((l) => l.action === "deleted");
       } else {
-        const et = AUDIT_TAB_ENTITY[activeTab];
+        const et = (AUDIT_TAB_ENTITY as any)[activeTab];
         if (et) logs = logs.filter((l) => l.entityType === et);
       }
     }
@@ -509,28 +683,72 @@ export default function GroupSettingsScreen() {
     setShowFilter(false);
   };
 
+  // Revert a logged action — restores the entity to its pre-action state.
+  const handleRevertLog = (log: AuditLog) => {
+    if (log.action === "reverted") { show("This entry is already a revert — nothing to undo", "error"); return; }
+    if (log.action !== "deleted" && log.action !== "created" && !log.before) {
+      show("No prior state was recorded for this action, so it can't be reverted", "error");
+      return;
+    }
+    const actionLabel = getActionConfig(log.action).label.toLowerCase();
+    showConfirm(
+      "Revert this action?",
+      `This will undo the "${actionLabel}" action on this ${entityLabel(log.entityType).toLowerCase()} and restore its previous state. This itself will be recorded in the audit trail.`,
+      async () => {
+        if (!activeGroupId) return;
+        try {
+          await FS.revertAuditLog(activeGroupId, log);
+          show("Action reverted successfully");
+        } catch (e: any) {
+          show(e?.message || "Failed to revert this action", "error");
+        }
+      },
+    );
+  };
+
   const handleSave = async () => {
     if (!activeGroupId) { show("No active group", "error"); return; }
-    const contributionAmount    = parseNum(contribAmount);
-    const loanInterestRate      = parseNum(loanRate);
-    const latePenaltyAmount     = parseNum(penalty);
-    const absencePenaltyMember  = parseNum(absenceMember);
-    const absencePenaltyOfficer = parseNum(absenceOfficer);
-    const maxLoanMultiplier     = parseNum(multiplier);
+    const contributionAmount     = parseNum(contribAmount);
+    const loanInterestRate       = parseNum(loanRate);
+    const latePenaltyRatePct           = parseNum(lateRatePct);
+    const absencePenaltyMemberRatePct  = parseNum(absenceMemberPct);
+    const absencePenaltyOfficerRatePct = parseNum(absenceOfficerPct);
+    const contributionLateFeeRatePct   = parseNum(contribLateFeePct);
+    const contributionLateFeeGraceDays = parseNum(contribLateFeeGrace);
+    const loanLateFeeRatePct           = parseNum(loanLateFeePct);
+    const loanLateFeeGraceDays         = parseNum(loanLateFeeGrace);
 
     if (contributionAmount !== undefined && contributionAmount < 0)  { show("Contribution amount cannot be negative", "error"); return; }
     if (loanInterestRate   !== undefined && (loanInterestRate < 0 || loanInterestRate > 100)) { show("Loan interest rate must be 0–100", "error"); return; }
+    if (latePenaltyRatePct !== undefined && (latePenaltyRatePct < 0 || latePenaltyRatePct > 100)) { show("Late penalty rate must be 0–100%", "error"); return; }
+    if (absencePenaltyMemberRatePct !== undefined && (absencePenaltyMemberRatePct < 0 || absencePenaltyMemberRatePct > 100)) { show("Absence penalty rate must be 0–100%", "error"); return; }
+    if (absencePenaltyOfficerRatePct !== undefined && (absencePenaltyOfficerRatePct < 0 || absencePenaltyOfficerRatePct > 100)) { show("Absence penalty rate must be 0–100%", "error"); return; }
+    if (contributionLateFeeRatePct !== undefined && (contributionLateFeeRatePct < 0 || contributionLateFeeRatePct > 100)) { show("Contribution late fee rate must be 0–100%", "error"); return; }
+    if (loanLateFeeRatePct !== undefined && (loanLateFeeRatePct < 0 || loanLateFeeRatePct > 100)) { show("Loan late fee rate must be 0–100%", "error"); return; }
+    if (contributionLateFeeGraceDays !== undefined && contributionLateFeeGraceDays < 0) { show("Grace days cannot be negative", "error"); return; }
+    if (loanLateFeeGraceDays !== undefined && loanLateFeeGraceDays < 0) { show("Grace days cannot be negative", "error"); return; }
+
+    const trimmedStartDate = contribLateFeeStart.trim();
+    if (trimmedStartDate && isNaN(new Date(trimmedStartDate).getTime())) {
+      show("Contribution late fee start date is invalid — use YYYY-MM-DD", "error");
+      return;
+    }
 
     const patch: Parameters<typeof updateGroup>[1] = {
       currency,
       contributionFrequency: freq as any,
       loanInterestMethod: loanMethod as any,
-      ...(contributionAmount    !== undefined && { contributionAmount }),
-      ...(loanInterestRate      !== undefined && { loanInterestRate }),
-      ...(latePenaltyAmount     !== undefined && { latePenaltyAmount }),
-      ...(absencePenaltyMember  !== undefined && { absencePenaltyMember }),
-      ...(absencePenaltyOfficer !== undefined && { absencePenaltyOfficer }),
-      ...(maxLoanMultiplier     !== undefined && { maxLoanMultiplier }),
+      loanInterestRatePeriod: ratePeriod,
+      ...(contributionAmount              !== undefined && { contributionAmount }),
+      ...(loanInterestRate                !== undefined && { loanInterestRate }),
+      ...(latePenaltyRatePct              !== undefined && { latePenaltyRatePct }),
+      ...(absencePenaltyMemberRatePct     !== undefined && { absencePenaltyMemberRatePct }),
+      ...(absencePenaltyOfficerRatePct    !== undefined && { absencePenaltyOfficerRatePct }),
+      ...(contributionLateFeeRatePct      !== undefined && { contributionLateFeeRatePct }),
+      ...(contributionLateFeeGraceDays    !== undefined && { contributionLateFeeGraceDays }),
+      contributionLateFeeStartDate: trimmedStartDate || undefined,
+      ...(loanLateFeeRatePct              !== undefined && { loanLateFeeRatePct }),
+      ...(loanLateFeeGraceDays            !== undefined && { loanLateFeeGraceDays }),
     };
 
     setSaving(true);
@@ -625,14 +843,10 @@ export default function GroupSettingsScreen() {
                 ? <ActivityIndicator size="small" color="#fff" />
                 : <Text style={s.headerBtnPrimaryText}>Save</Text>}
             </TouchableOpacity>
-          ) : activeSection === "permissions" ? (
-            <View style={{ width: 60 }} />
           ) : (
-            <TouchableOpacity onPress={openFilter} style={[s.headerBtn, hasFilters && s.headerBtnActive]}>
-              <Text style={[s.headerBtnText, hasFilters && s.headerBtnActiveText]}>
-                {hasFilters ? "Filtered" : "Filter"}
-              </Text>
-            </TouchableOpacity>
+            // Audit section has its own single Filter control inside the
+            // toolbar below — no duplicate button needed here.
+            <View style={{ width: 60 }} />
           )}
         </View>
       </View>
@@ -703,30 +917,34 @@ export default function GroupSettingsScreen() {
                   onChange={(v) => setLoanMethod(v as any)}
                   hint={
                     loanMethod === "reducing_balance"
-                      ? "Interest recalculated each month on the remaining balance (bank-style amortization)"
+                      ? "Interest accrues daily on the outstanding balance — no fixed monthly/30-day assumptions (bank-style amortization)"
                       : "Interest charged up front on the full principal for the whole term (SACCO-style flat rate)"
                   }
                 />
                 <Divider />
-                <Input
-                  label="Interest rate (% per month)"
-                  value={loanRate}
-                  onChangeText={setLoanRate}
-                  keyboardType="numeric"
-                  hint={
-                    loanMethod === "reducing_balance"
-                      ? "Applied monthly to the outstanding balance"
-                      : "Applied monthly to the original loan amount"
-                  }
-                />
-                <Divider />
-                <Input
-                  label="Max loan multiplier"
-                  value={multiplier}
-                  onChangeText={setMultiplier}
-                  keyboardType="numeric"
-                  hint={`Loan ceiling = savings × ${multiplier || "3"}`}
-                />
+                <View style={s.row}>
+                  <View style={{ flex: 1.4 }}>
+                    <Input
+                      label="Interest rate (%)"
+                      value={loanRate}
+                      onChangeText={setLoanRate}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Select
+                      label="Rate period"
+                      value={ratePeriod}
+                      options={RATE_PERIODS}
+                      onChange={(v) => setRatePeriod(v as "monthly" | "annual")}
+                    />
+                  </View>
+                </View>
+                <Text style={{ fontSize: 11, color: C.text3, paddingHorizontal: 4, marginTop: -8, marginBottom: 4 }}>
+                  {ratePeriod === "annual"
+                    ? `${loanRate || "0"}% per year ≈ ${round2((parseFloat(loanRate) || 0) / 12)}% per month — applied to the ${loanMethod === "reducing_balance" ? "outstanding balance" : "original loan amount"}`
+                    : `${loanRate || "0"}% per month ≈ ${round2((parseFloat(loanRate) || 0) * 12)}% per year — applied to the ${loanMethod === "reducing_balance" ? "outstanding balance" : "original loan amount"}`}
+                </Text>
               </View>
             </View>
 
@@ -734,14 +952,113 @@ export default function GroupSettingsScreen() {
             <View style={isWide ? s.wideCol : undefined}>
               <SectionHeading label="Meeting Penalties" />
               <View style={s.formCard}>
-                <Input label="Late penalty (per meeting)" value={penalty} onChangeText={setPenalty} keyboardType="numeric" prefix={currency} />
+                <Text style={{ fontSize: 12, color: C.text3, paddingHorizontal: 4, marginBottom: 12, lineHeight: 17 }}>
+                  Penalties are interest-based — a percentage of the group's standard
+                  contribution ({fmtCurrency(parseFloat(contribAmount) || 0)}), not a fixed amount.
+                  As the contribution changes, penalties scale automatically.
+                </Text>
+
+                <Input
+                  label="Late arrival — per 15 min (%)"
+                  value={lateRatePct}
+                  onChangeText={setLateRatePct}
+                  keyboardType="numeric"
+                  hint={`≈ ${fmtCurrency(round2((parseFloat(contribAmount) || 0) * (parseFloat(lateRatePct) || 0) / 100))} per 15 minutes late`}
+                />
                 <Divider />
                 <View style={s.row}>
                   <View style={{ flex: 1 }}>
-                    <Input label="Absence — member"  value={absenceMember}  onChangeText={setAbsenceMember}  keyboardType="numeric" prefix={currency} />
+                    <Input
+                      label="Absence — member (%)"
+                      value={absenceMemberPct}
+                      onChangeText={setAbsenceMemberPct}
+                      keyboardType="numeric"
+                      hint={`≈ ${fmtCurrency(round2((parseFloat(contribAmount) || 0) * (parseFloat(absenceMemberPct) || 0) / 100))}`}
+                    />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Input label="Absence — officer" value={absenceOfficer} onChangeText={setAbsenceOfficer} keyboardType="numeric" prefix={currency} />
+                    <Input
+                      label="Absence — officer (%)"
+                      value={absenceOfficerPct}
+                      onChangeText={setAbsenceOfficerPct}
+                      keyboardType="numeric"
+                      hint={`≈ ${fmtCurrency(round2((parseFloat(contribAmount) || 0) * (parseFloat(absenceOfficerPct) || 0) / 100))}`}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              <SectionHeading label="Late Payment Fees" />
+              <View style={s.formCard}>
+                <Text style={{ fontSize: 12, color: C.text3, paddingHorizontal: 4, marginBottom: 12, lineHeight: 17 }}>
+                  Separate from meeting-attendance penalties above. These fees are
+                  calculated on the AMOUNT DUE — the missed contribution, or the
+                  specific overdue loan installment — not a flat figure. A grace
+                  period delays eligibility after the due date passes. Contribution
+                  fees also require a start date below, so enabling them never
+                  reaches back into a member's full history. Fees are surfaced under
+                  Reports → Earnings for an officer to apply with one tap; nothing
+                  charges automatically in the background.
+                </Text>
+
+                <Text style={{ fontSize: 11, fontWeight: "700", color: C.text2, paddingHorizontal: 4, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Contributions
+                </Text>
+                <View style={s.row}>
+                  <View style={{ flex: 1 }}>
+                    <Input
+                      label="Fee rate (%)"
+                      value={contribLateFeePct}
+                      onChangeText={setContribLateFeePct}
+                      keyboardType="numeric"
+                      hint={`≈ ${fmtCurrency(round2((parseFloat(contribAmount) || 0) * (parseFloat(contribLateFeePct) || 0) / 100))} per missed contribution`}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Input
+                      label="Grace period (days)"
+                      value={contribLateFeeGrace}
+                      onChangeText={setContribLateFeeGrace}
+                      keyboardType="numeric"
+                      hint="Days after due date before a fee applies"
+                    />
+                  </View>
+                </View>
+                <Input
+                  label="Start calculating from"
+                  value={contribLateFeeStart}
+                  onChangeText={setContribLateFeeStart}
+                  placeholder="YYYY-MM-DD"
+                  hint={
+                    contribLateFeeStart.trim()
+                      ? "Missed contributions before this date are ignored — fees only apply from here forward"
+                      : "Required to activate contribution late fees. Leave blank to keep them off, even with a rate set above."
+                  }
+                />
+
+                <Divider />
+
+                <Text style={{ fontSize: 11, fontWeight: "700", color: C.text2, paddingHorizontal: 4, marginTop: 4, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Loan Repayments
+                </Text>
+                <View style={s.row}>
+                  <View style={{ flex: 1 }}>
+                    <Input
+                      label="Fee rate (%)"
+                      value={loanLateFeePct}
+                      onChangeText={setLoanLateFeePct}
+                      keyboardType="numeric"
+                      hint="Applied to the overdue installment amount"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Input
+                      label="Grace period (days)"
+                      value={loanLateFeeGrace}
+                      onChangeText={setLoanLateFeeGrace}
+                      keyboardType="numeric"
+                      hint="Days after due date before a fee applies"
+                    />
                   </View>
                 </View>
               </View>
@@ -791,199 +1108,244 @@ export default function GroupSettingsScreen() {
       )}
 
 
-      {/* Permissions Section */}
+      {/* Permissions Section — search + click-to-expand */}
       {activeSection === "permissions" && (
-        <ScrollView
-          contentContainerStyle={{ padding: 20, paddingBottom: 80 }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
-        >
-          <Text style={[s.sectionLabel, { marginBottom: 4 }]}>Member Access Control</Text>
-          <Text style={{ fontSize: 13, color: C.text3, marginBottom: 20 }}>
-            Enable or disable actions for each member. Admin roles always have full access.
-          </Text>
-
-          {activeMembers.length === 0 && (
-            <View style={{ alignItems: "center", paddingVertical: 40 }}>
-              <Text style={{ fontSize: 32 }}>👥</Text>
-              <Text style={{ fontSize: 14, color: C.text3, marginTop: 8 }}>No active non-admin members</Text>
+        <View style={{ flex: 1 }}>
+          {/* Search bar */}
+          <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8 }}>
+            <View style={ps.searchBox}>
+              <Text style={ps.searchIcon}>🔍</Text>
+              <TextInput
+                style={ps.searchInput}
+                placeholder="Search members..."
+                placeholderTextColor={C.text3}
+                value={permSearch}
+                onChangeText={setPermSearch}
+                clearButtonMode="while-editing"
+              />
             </View>
-          )}
+            <Text style={{ fontSize: 12, color: C.text3, marginTop: 6 }}>
+              Tap a member to manage their permissions. Admins always have full access.
+            </Text>
+          </View>
 
-          {activeMembers.map((member) => {
-            const perms = getMemberPerms(member);
-            const isDirty = !!pendingPerms[member.id];
-            const isSaving = permSaving === member.id;
-            const PERM_KEYS: (keyof MemberPermissions)[] = [
-              "addContribution", "addLoan", "addInvestment",
-              "downloadReports", "updateMeetings",
-              "approveContributions", "approveLoans", "approveInvestments",
-            ];
-            const PERM_LABELS: Record<keyof MemberPermissions, string> = {
-              addContribution: "Add Contribution",
-              addLoan: "Apply for Loan",
-              addInvestment: "Add Investment",
-              downloadReports: "Download Reports",
-              updateMeetings: "Update Meetings",
-              approveContributions: "Approve Contributions",
-              approveLoans: "Approve Loans",
-              approveInvestments: "Approve Investments",
-            };
-            return (
-              <View key={member.id} style={ps.memberCard}>
-                <View style={ps.memberHeader}>
-                  <View style={ps.memberAvatar}>
-                    <Text style={ps.memberAvatarText}>
-                      {member.fullName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={ps.memberName}>{member.fullName}</Text>
-                    <Text style={ps.memberRole}>{member.role.replace("_", " ")}</Text>
-                  </View>
-                  {isDirty && (
+          <ScrollView
+            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 80 }}
+            showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
+          >
+            {(() => {
+              const filtered = activeMembers.filter(m =>
+                m.fullName.toLowerCase().includes(permSearch.toLowerCase()) ||
+                m.role.toLowerCase().includes(permSearch.toLowerCase())
+              );
+              if (filtered.length === 0) return (
+                <View style={{ alignItems: "center", paddingVertical: 40 }}>
+                  <Text style={{ fontSize: 32 }}>👥</Text>
+                  <Text style={{ fontSize: 14, color: C.text3, marginTop: 8 }}>
+                    {permSearch ? "No members match your search" : "No active non-admin members"}
+                  </Text>
+                </View>
+              );
+
+              const PERM_KEYS: (keyof MemberPermissions)[] = [
+                "addContribution", "addLoan", "addInvestment",
+                "downloadReports", "updateMeetings", "viewAllReports",
+                "approveContributions", "approveLoans", "approveInvestments",
+              ];
+              const PERM_LABELS: Record<keyof MemberPermissions, string> = {
+                addContribution:    "Add Contribution",
+                addLoan:            "Apply for Loan",
+                addInvestment:      "Add Investment",
+                downloadReports:    "Download Reports",
+                updateMeetings:     "Update Meetings",
+                viewAllReports:     "View All Members' Reports",
+                approveContributions: "Approve Contributions",
+                approveLoans:       "Approve Loans",
+                approveInvestments: "Approve Investments",
+              };
+              const PERM_GROUPS = [
+                { label: "ACTIONS", keys: ["addContribution","addLoan","addInvestment"] as (keyof MemberPermissions)[] },
+                { label: "APPROVALS", keys: ["approveContributions","approveLoans","approveInvestments"] as (keyof MemberPermissions)[] },
+                { label: "ACCESS", keys: ["downloadReports","updateMeetings","viewAllReports"] as (keyof MemberPermissions)[] },
+              ];
+
+              return filtered.map((member) => {
+                const perms = getMemberPerms(member);
+                const isDirty = !!pendingPerms[member.id];
+                const isSaving = permSaving === member.id;
+                const isExpanded = expandedMemberId === member.id;
+                const enabledCount = PERM_KEYS.filter(k => perms[k]).length;
+
+                return (
+                  <View key={member.id} style={ps.memberCard}>
+                    {/* Collapsed header — always visible, tap to expand */}
                     <TouchableOpacity
-                      style={[ps.saveBtn, isSaving && ps.saveBtnDisabled]}
-                      onPress={() => savePermissions(member)}
-                      disabled={isSaving}
+                      style={ps.memberHeader}
+                      onPress={() => setExpandedMemberId(isExpanded ? null : member.id)}
+                      activeOpacity={0.7}
                     >
-                      {isSaving
-                        ? <ActivityIndicator size="small" color="#fff" />
-                        : <Text style={ps.saveBtnText}>Save</Text>
-                      }
+                      <View style={ps.memberAvatar}>
+                        <Text style={ps.memberAvatarText}>
+                          {member.fullName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={ps.memberName}>{member.fullName}</Text>
+                        <Text style={ps.memberRole}>
+                          {member.role.replace(/_/g, " ")} · {enabledCount}/{PERM_KEYS.length} permissions
+                        </Text>
+                      </View>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        {isDirty && (
+                          <TouchableOpacity
+                            style={[ps.saveBtn, isSaving && ps.saveBtnDisabled]}
+                            onPress={() => savePermissions(member)}
+                            disabled={isSaving}
+                          >
+                            {isSaving
+                              ? <ActivityIndicator size="small" color="#fff" />
+                              : <Text style={ps.saveBtnText}>Save</Text>
+                            }
+                          </TouchableOpacity>
+                        )}
+                        <Text style={{ fontSize: 18, color: C.text3, paddingHorizontal: 4 }}>
+                          {isExpanded ? "▲" : "▼"}
+                        </Text>
+                      </View>
                     </TouchableOpacity>
-                  )}
-                </View>
 
-                <View style={ps.permGrid}>
-                  {PERM_KEYS.map((key) => (
-                    <View key={key} style={ps.permRow}>
-                      <Text style={ps.permLabel}>{PERM_LABELS[key]}</Text>
-                      <Switch
-                        value={perms[key]}
-                        onValueChange={() => togglePerm(member.id, key, perms)}
-                        trackColor={{ false: C.border, true: C.primary + "66" }}
-                        thumbColor={perms[key] ? C.primary : C.text3}
-                        ios_backgroundColor={C.border}
-                      />
-                    </View>
-                  ))}
-                </View>
-              </View>
-            );
-          })}
-        </ScrollView>
+                    {/* Expanded permissions — grouped */}
+                    {isExpanded && (
+                      <View style={ps.permGrid}>
+                        {PERM_GROUPS.map((group) => (
+                          <View key={group.label}>
+                            <Text style={ps.permGroupLabel}>{group.label}</Text>
+                            {group.keys.map((key) => (
+                              <View key={key} style={ps.permRow}>
+                                <Text style={ps.permLabel}>{PERM_LABELS[key]}</Text>
+                                <Switch
+                                  value={perms[key]}
+                                  onValueChange={() => togglePerm(member.id, key, perms)}
+                                  trackColor={{ false: C.border, true: C.primary + "66" }}
+                                  thumbColor={perms[key] ? C.primary : C.text3}
+                                  ios_backgroundColor={C.border}
+                                />
+                              </View>
+                            ))}
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                );
+              });
+            })()}
+          </ScrollView>
+        </View>
       )}
 
-      {/* Audit Log Section */}
+      {/* Audit Log Section — dark professional UI */}
       {activeSection === "audit" && (
-        <View style={{ flex: 1 }}>
+        <View style={aw.root}>
 
-          {/* Tab strip */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={[s.tabStrip, isWide && s.tabStripWide]}
-          >
-            {AUDIT_TABS.map((t) => {
-              const isActive = activeTab === t.key;
-              return (
-                <TouchableOpacity
-                  key={t.key}
-                  style={[s.tabChip, isActive && s.tabChipActive]}
-                  onPress={() => setActiveTab(t.key)}
-                >
-                  <Text style={[s.tabChipText, isActive && s.tabChipTextActive]}>{t.label}</Text>
-                  {isActive && filteredLogs.length > 0 && (
-                    <View style={s.tabChipCount}>
-                      <Text style={s.tabChipCountText}>{filteredLogs.length}</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+          {/* ── Toolbar: count + search + category dropdown + single filter ── */}
+          <View style={aw.toolbar}>
+            <Text style={aw.toolbarCount}>
+              {filteredLogs.length.toLocaleString()} record{filteredLogs.length !== 1 ? "s" : ""}
+              {hasFilters ? " (filtered)" : ""}
+            </Text>
+            <View style={aw.toolbarRight}>
+              <View style={aw.searchBox}>
+                <Text style={aw.searchIcon}>⌕</Text>
+                <TextInput
+                  style={aw.searchInput}
+                  placeholder="Search logs…"
+                  placeholderTextColor={C.text3}
+                  value={searchTerm}
+                  onChangeText={(v) => { setSearchTerm(v); setCurrentPage(1); }}
+                />
+                {!!searchTerm && (
+                  <TouchableOpacity onPress={() => { setSearchTerm(""); setCurrentPage(1); }} hitSlop={{ top:6,bottom:6,left:6,right:6 }}>
+                    <Text style={{ color: C.text3, fontSize: 14, paddingHorizontal: 4 }}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
 
-          {/* Active filter bar */}
-          {hasFilters && (
-            <View style={s.filterBar}>
-              <Text style={s.filterBarText} numberOfLines={1}>
-                {[
-                  searchTerm && `"${searchTerm}"`,
-                  selectedYear && String(selectedYear),
-                  selectedMonth && MONTHS.find((m) => m.value === selectedMonth)?.label,
-                  selectedDay && `Day ${selectedDay}`,
-                ].filter(Boolean).join("  ·  ")}
-              </Text>
-              <TouchableOpacity onPress={clearFilters} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                <Text style={s.filterBarClear}>Clear filters</Text>
+              {/* Category dropdown — replaces the old horizontal chip-tab row */}
+              <CategoryDropdown
+                options={AUDIT_TABS}
+                value={activeTab}
+                onChange={(v) => { setActiveTab(v as AuditTab); setCurrentPage(1); }}
+                counts={{
+                  all: allAuditLogs.length,
+                  failed: allAuditLogs.filter(l => l.action === "failed" || l.status === "failed").length,
+                  deletions: allAuditLogs.filter(l => l.action === "deleted").length,
+                  contributions: allAuditLogs.filter(l => l.entityType === "contribution").length,
+                  loans: allAuditLogs.filter(l => l.entityType === "loan").length,
+                  members: allAuditLogs.filter(l => l.entityType === "member").length,
+                  investments: allAuditLogs.filter(l => l.entityType === "investment").length,
+                }}
+              />
+
+              {/* Single date filter — opens the existing FilterModal (year/month/day/search) */}
+              <TouchableOpacity style={[aw.filterBtn, hasFilters && aw.filterBtnActive]} onPress={openFilter} activeOpacity={0.8}>
+                <Text style={[aw.filterBtnText, hasFilters && aw.filterBtnTextActive]}>
+                  {hasFilters ? "Filtered ✕" : "Date Filter"}
+                </Text>
               </TouchableOpacity>
+              {hasFilters && (
+                <TouchableOpacity onPress={clearFilters} activeOpacity={0.7}>
+                  <Text style={aw.clearText}>Clear</Text>
+                </TouchableOpacity>
+              )}
             </View>
-          )}
+          </View>
 
-          {/* Results count */}
-          {filteredLogs.length > 0 && (
-            <View style={[s.resultsRow, isWide && s.resultsRowWide]}>
-              <Text style={s.resultsText}>
-                {startIndex}–{endIndex} of {filteredLogs.length} records
-              </Text>
-            </View>
-          )}
-
-          {/* Desktop: Table layout */}
+          {/* ── Table (desktop) / Cards (mobile) — white theme, revert action ── */}
           {isWide ? (
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
-            >
-              {filteredLogs.length === 0 ? (
-                <EmptyState hasFilters={hasFilters} />
-              ) : (
-                <>
-                  {/* Table header */}
-                  <View style={at_th.header}>
-                    {[
-                      { label: "Entity",    w: COL_WIDTHS[0] },
-                      { label: "Action",    w: COL_WIDTHS[1] },
-                      { label: "User",      w: COL_WIDTHS[2] },
-                      { label: "Date",      w: COL_WIDTHS[3] },
-                      { label: "Note",      w: undefined     },
-                    ].map(({ label, w }, i) => (
-                      <View key={i} style={[at_th.cell, w ? { width: w } : { flex: 1 }]}>
-                        <Text style={at_th.label}>{label}</Text>
-                      </View>
-                    ))}
-                    <View style={{ width: 28 }} />
-                  </View>
+            <View style={{ flex: 1 }}>
+              <View style={aw.tableHead}>
+                <Text style={[aw.thCell, { width: 170 }]}>TIMESTAMP</Text>
+                <Text style={[aw.thCell, { width: 120 }]}>CATEGORY</Text>
+                <Text style={[aw.thCell, { width: 110 }]}>ACTIVITY</Text>
+                <Text style={[aw.thCell, { width: 130 }]}>USER</Text>
+                <Text style={[aw.thCell, { flex: 1 }]}>CHANGE LOG</Text>
+                <Text style={[aw.thCell, { width: 90, textAlign: "right" }]}>ACTIONS</Text>
+              </View>
 
-                  {paginatedLogs.map((log) => (
-                    <AuditTableRow key={log.id} log={log} colWidths={COL_WIDTHS} />
-                  ))}
-
-                  <Pagination
-                    currentPage={currentPage}
-                    totalPages={totalPages}
-                    onChange={setCurrentPage}
-                    wide
-                  />
-                </>
-              )}
-            </ScrollView>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
+              >
+                {filteredLogs.length === 0
+                  ? <EmptyState hasFilters={hasFilters} />
+                  : paginatedLogs.map((log, idx) => (
+                      <React.Fragment key={log.id}>
+                        <AuditTableRowWhite log={log} idx={idx} onRevert={() => handleRevertLog(log)} />
+                      </React.Fragment>
+                    ))
+                }
+                <Pagination currentPage={currentPage} totalPages={totalPages} onChange={setCurrentPage} wide />
+              </ScrollView>
+            </View>
           ) : (
-            /* Mobile: Card layout */
-            <ScrollView
-              contentContainerStyle={s.auditBody}
+            <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
               showsVerticalScrollIndicator={false}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
             >
-              {filteredLogs.length === 0 ? (
-                <EmptyState hasFilters={hasFilters} />
-              ) : (
-                <>
-                  {paginatedLogs.map((log) => <AuditRowMobile key={log.id} log={log} />)}
-                  <Pagination currentPage={currentPage} totalPages={totalPages} onChange={setCurrentPage} />
-                </>
-              )}
+              {filteredLogs.length === 0
+                ? <EmptyState hasFilters={hasFilters} />
+                : <>
+                    <Text style={aw.mobileCount}>{startIndex}–{endIndex} of {filteredLogs.length}</Text>
+                    {paginatedLogs.map((log) => (
+                      <React.Fragment key={log.id}>
+                        <AuditRowWhite log={log} onRevert={() => handleRevertLog(log)} />
+                      </React.Fragment>
+                    ))}
+                    <Pagination currentPage={currentPage} totalPages={totalPages} onChange={setCurrentPage} />
+                  </>
+              }
             </ScrollView>
           )}
         </View>
@@ -1181,7 +1543,7 @@ const s = StyleSheet.create({
   segmentPillText: { fontSize: 10, fontWeight: "700", color: "#fff" },
 
   // Settings body
-  body:     { padding: 20, paddingBottom: 60, maxWidth: 860, alignSelf: "center", width: "100%" },
+  body:     { padding: 20, paddingBottom: 60, maxWidth: 860, alignSelf: "center", width: "100%" as any },
   bodyWide: { paddingHorizontal: 32, paddingTop: 24 },
 
   // Group card
@@ -1269,6 +1631,28 @@ const s = StyleSheet.create({
   auditBody: { padding: 20, paddingBottom: 60 },
 });
 
+// ─── Audit tab card styles ────────────────────────────────────────────────────
+const at = StyleSheet.create({
+  card: {
+    alignItems: "center", paddingVertical: 10, paddingHorizontal: 14,
+    borderRadius: 12, borderWidth: 1, borderColor: C.border,
+    backgroundColor: C.elevated, minWidth: 80,
+  },
+  cardActive: { backgroundColor: C.primary, borderColor: C.primary },
+  cardAlert:  { borderColor: "#f87171", backgroundColor: "#fef2f2" },
+  cardIcon:   { fontSize: 16, marginBottom: 4 },
+  cardLabel:  { fontSize: 11, fontWeight: "600", color: C.text2, marginBottom: 4 },
+  cardLabelActive: { color: "#fff" },
+  cardBadge:  {
+    backgroundColor: C.bg, borderRadius: 10,
+    paddingHorizontal: 6, paddingVertical: 1, minWidth: 22, alignItems: "center",
+  },
+  cardBadgeActive: { backgroundColor: "rgba(255,255,255,0.25)" },
+  cardBadgeAlert: { backgroundColor: "#fee2e2" },
+  cardBadgeText:  { fontSize: 10, fontWeight: "700", color: C.text3 },
+  cardBadgeTextActive: { color: "#fff" },
+});
+
 // ─── Permission section styles ────────────────────────────────────────────────
 const ps = StyleSheet.create({
   memberCard: {
@@ -1289,7 +1673,7 @@ const ps = StyleSheet.create({
   },
   memberAvatar: {
     width: 40, height: 40, borderRadius: 20,
-    backgroundColor: (C as any).primaryFaint ?? (C as any).accentFaint ?? C.primary + "22",
+    backgroundColor: C.primary + "22",
     alignItems: "center", justifyContent: "center", marginRight: 12,
   },
   memberAvatarText: { fontSize: 14, fontWeight: "700", color: C.primary },
@@ -1309,4 +1693,16 @@ const ps = StyleSheet.create({
   saveBtnDisabled: { opacity: 0.6 },
   saveBtnText: { fontSize: 13, fontWeight: "700", color: "#fff" },
   sectionLabel: { fontSize: 11, fontWeight: "700", color: C.text2, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 12 },
+  searchBox: {
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
+  },
+  searchIcon: { fontSize: 14, marginRight: 8 },
+  searchInput: { flex: 1, fontSize: 14, color: C.text, minHeight: 20 },
+  permGroupLabel: {
+    fontSize: 9, fontWeight: "800", color: C.text3, letterSpacing: 1.2,
+    textTransform: "uppercase", paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4,
+    backgroundColor: C.elevated,
+  },
 });

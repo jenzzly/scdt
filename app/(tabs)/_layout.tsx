@@ -1,12 +1,12 @@
 // app/(tabs)/_layout.tsx — REDESIGNED
-import React from "react";
+import React, { useEffect } from "react";
 import { Tabs, useRouter, usePathname } from "expo-router";
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
   useWindowDimensions, ScrollView, Alert,
 } from "react-native";
 import { Home, CreditCard, Wallet, BarChart3, Settings, Calendar, LogOut } from "lucide-react-native";
-import { useStore, useCurrentUserRole } from "../../stores/useStore";
+import { useStore, useCurrentUserRole, useCurrentMember } from "../../stores/useStore";
 import { useAuth } from "../../hooks/useAuth";
 import { useFirebaseSync, useNotificationSync } from "../../hooks/useFirebaseSync";
 import { useNetworkStatus } from "../../hooks/useNetworkStatus";
@@ -68,6 +68,74 @@ function TabItem({ label, focused }: { label: string; focused: boolean }) {
 }
 
 // ─────────────────────────────────────────────
+// Pending-approval / suspended gate
+//
+// Rendered instead of the entire tab bar + screen content whenever the
+// signed-in user's member record is not yet approved (status "pending")
+// or has been suspended. No app data, no navigation — just this screen
+// and a sign-out option, until an admin changes their status.
+// ─────────────────────────────────────────────
+function PendingApprovalScreen({
+  onSignOut, memberName, suspended,
+}: { onSignOut: () => void; memberName: string; suspended?: boolean }) {
+  return (
+    <View style={pa.root}>
+      <View style={pa.card}>
+        <View style={[pa.iconCircle, suspended && pa.iconCircleSuspended]}>
+          <Text style={pa.icon}>{suspended ? "⛔" : "⏳"}</Text>
+        </View>
+        <Text style={pa.title}>
+          {suspended ? "Account Suspended" : "Awaiting Approval"}
+        </Text>
+        <Text style={pa.body}>
+          {suspended
+            ? `Hi ${memberName}, your account has been suspended by a group admin. Contact them for more information.`
+            : `Hi ${memberName}, your account has been created but hasn't been approved by a group admin yet. You'll get full access as soon as they approve your membership.`}
+        </Text>
+        <View style={pa.divider} />
+        <Text style={pa.hint}>
+          {suspended
+            ? "This isn't something you can resolve yourself — please reach out to your group's administrator."
+            : "This usually only takes a short while. Feel free to check back later, or contact your group admin directly."}
+        </Text>
+        <TouchableOpacity style={pa.signOutBtn} onPress={onSignOut} activeOpacity={0.8}>
+          <Text style={pa.signOutText}>Sign Out</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+const pa = StyleSheet.create({
+  root: {
+    flex: 1, backgroundColor: Colors.bg,
+    alignItems: "center", justifyContent: "center", padding: 24,
+  },
+  card: {
+    width: "100%", maxWidth: 400,
+    backgroundColor: Colors.surface, borderRadius: 20,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: 32, alignItems: "center",
+  },
+  iconCircle: {
+    width: 72, height: 72, borderRadius: 36,
+    backgroundColor: "#FEF3C7", alignItems: "center", justifyContent: "center",
+    marginBottom: 20,
+  },
+  iconCircleSuspended: { backgroundColor: "#FEE2E2" },
+  icon: { fontSize: 32 },
+  title: { fontSize: 19, fontWeight: "800", color: Colors.text, marginBottom: 10, textAlign: "center" },
+  body: { fontSize: 14, color: Colors.text2, textAlign: "center", lineHeight: 21, marginBottom: 20 },
+  divider: { width: "100%" as any, height: 1, backgroundColor: Colors.border, marginBottom: 16 },
+  hint: { fontSize: 12, color: Colors.text3, textAlign: "center", lineHeight: 18, marginBottom: 24 },
+  signOutBtn: {
+    width: "100%" as any, paddingVertical: 13, borderRadius: 12,
+    borderWidth: 1, borderColor: Colors.border, alignItems: "center",
+  },
+  signOutText: { fontSize: 14, fontWeight: "700", color: Colors.text2 },
+});
+
+// ─────────────────────────────────────────────
 // Root layout
 // ─────────────────────────────────────────────
 export default function TabsLayout() {
@@ -76,21 +144,45 @@ export default function TabsLayout() {
 
   const { authUid, activeGroupId, authName, reset } = useStore();
   const currentUserRole = useCurrentUserRole();
+  const currentMember = useCurrentMember();
   const isOnline = useNetworkStatus();
   const pathname = usePathname();
-  const router = useRouter();
   const { signOut } = useAuth();
+
+  // ── Auth guard — redirect to login if no session ──────────────────────────
+  const router = useRouter();
+  useEffect(() => {
+    if (!authUid) {
+      router.replace("/(auth)/login");
+    }
+  }, [authUid]);
 
   useFirebaseSync(activeGroupId, isOnline);
   useNotificationSync(authUid);
+
+  // Don't render anything while redirecting
+  if (!authUid) return null;
 
   const handleSignOut = () => {
     showConfirm("Sign Out", "Are you sure?", async () => {
       await signOut().catch(() => {});
       reset();
-      router.replace("/(auth)/welcome");
+      router.replace("/(auth)/login");
     }, undefined, true);
   };
+
+  // ── Pending-approval gate ───────────────────────────────────────────────
+  // A member record with status "pending" means an admin hasn't approved
+  // this person yet. They must not see ANY app content — not the dashboard,
+  // not the tab bar, nothing — until an admin approves them. Admins
+  // themselves are never gated (an admin account, by definition, doesn't
+  // wait on another admin's approval).
+  if (currentMember && currentMember.status === "pending" && currentUserRole !== "admin") {
+    return <PendingApprovalScreen onSignOut={handleSignOut} memberName={currentMember.fullName} />;
+  }
+  if (currentMember && currentMember.status === "suspended") {
+    return <PendingApprovalScreen onSignOut={handleSignOut} memberName={currentMember.fullName} suspended />;
+  }
 
   const offlineBanner = !isOnline ? (
     <View style={shared.offlineBanner}>
@@ -121,12 +213,13 @@ export default function TabsLayout() {
           <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={sb.navList}>
             <Text style={sb.navSection}>Navigation</Text>
             {NAV_ITEMS.map((item) => (
-              <SidebarItem
-                key={item.route}
-                label={item.label}
-                isActive={!!(pathname?.includes(item.route.replace("/(tabs)/", "")))}
-                onPress={() => router.push(item.route as any)}
-              />
+              <React.Fragment key={item.route}>
+                <SidebarItem
+                  label={item.label}
+                  isActive={!!(pathname?.includes(item.route.replace("/(tabs)/", "")))}
+                  onPress={() => { router.push(item.route as any); }}
+                />
+              </React.Fragment>
             ))}
           </ScrollView>
 
@@ -180,7 +273,7 @@ export default function TabsLayout() {
             key={item.route}
             name={item.route.replace("/(tabs)/", "")}
             options={{
-              tabBarIcon: ({ focused }) => <TabItem label={item.label} focused={focused} />,
+              tabBarIcon: ({ focused }: { focused: boolean }) => <TabItem label={item.label} focused={focused} />,
             }}
           />
         ))}

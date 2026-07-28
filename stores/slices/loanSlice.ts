@@ -1,21 +1,21 @@
 // stores/slices/loanSlice.ts
 import type { SetFn, GetFn, StoreState } from "../storeTypes";
-import type { ID, Loan, LoanApprovals } from "../../types";
+import type {ID, Loan, LoanApprovals, Group, Member} from "../../types";
 import * as FS from "../../lib/firestore";
-import { uid, loanSchedule } from "../../utils/theme";
+import { uid, loanSchedule, round2 } from "../../utils/theme";
 import { recalcGroupTotals } from "../recalcGroupTotals";
 
 export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLoanLocal" | "approveLoanStep" | "deleteLoan" | "deleteLoanLocal" | "disburseLoan" | "recordRepayment" | "rejectLoan" | "setLoans" | "submitLoan" | "updateLoan" | "updateLoanLocal"> => ({
       setLoans: (loans) => set({ loans }),
-      addLoanLocal: (loan) => set((s) => ({ loans: [loan, ...s.loans] })),
+      addLoanLocal: (loan) => set((s: StoreState) => ({ loans: [loan, ...s.loans] })),
       updateLoanLocal: (id, data) => set((s) => ({
-        loans: s.loans.map((l) => (l.id === id ? { ...l, ...data } : l)),
+        loans: s.loans.map((l: Loan) => (l.id === id ? { ...l, ...data } : l)),
       })),
-      deleteLoanLocal: (id) => set((s) => ({ loans: s.loans.filter((l) => l.id !== id) })),
+      deleteLoanLocal: (id) => set((s: StoreState) => ({ loans: s.loans.filter((l: Loan) => l.id !== id) })),
 
       deleteLoan: async (loanId: ID, reason: string) => {
         const { activeGroupId, loans, walletTransactions } = get();
-        const loan = loans.find((l) => l.id === loanId);
+        const loan = loans.find((l: Loan) => l.id === loanId);
         if (!loan) throw new Error("Loan not found");
         if (!activeGroupId) throw new Error("No active group");
 
@@ -50,14 +50,19 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
         const { activeGroupId, members, groups } = get();
         if (!activeGroupId) throw new Error("No active group");
         const now = new Date().toISOString();
-        const group = groups.find((g) => g.id === activeGroupId);
+        const group = groups.find((g: Group) => g.id === activeGroupId);
         const interestMethod = group?.loanInterestMethod || "flat";
-        const { schedule, monthlyPayment, totalInterest, totalRepayable } = loanSchedule({
+        // Snapshot the group's rate period at submission time — changing the
+        // group setting later must NOT retroactively change existing loans.
+        const interestRatePeriod = (data as any).interestRatePeriod ?? group?.loanInterestRatePeriod ?? "monthly";
+        const { schedule, monthlyPayment, totalInterest: rawTI, totalRepayable: rawTR } = loanSchedule({
           amount: data.amount,
           interestRate: data.interestRate,
           repaymentMonths: data.repaymentMonths,
           firstPaymentDate: data.firstPaymentDate,
-        }, interestMethod);
+        }, interestMethod, interestRatePeriod);
+        const totalInterest = round2(rawTI);
+        const totalRepayable = round2(rawTR);
 
         const defaultApprovals: LoanApprovals = {
           loanOfficer: { approved: false },
@@ -69,12 +74,16 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
           ...data,
           id: uid(),
           interestMethod,
+          interestRatePeriod,
           schedule,
           monthlyPayment,
           totalInterest,
           totalRepayable,
           amountRepaid: 0,
           balance: data.amount,
+          accruedInterest: 0,
+          totalInterestPaid: 0,
+          lastAccrualDate: now.slice(0, 10),
           lateFees: 0,
           status: "pending_loan_officer",
           approvals: defaultApprovals,
@@ -106,7 +115,7 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
       approveLoanStep: async (loanId, step, approved, comment) => {
         const { activeGroupId, loans, members, authUid } = get();
         if (!activeGroupId) throw new Error("No active group");
-        const loan = loans.find((l) => l.id === loanId);
+        const loan = loans.find((l: Loan) => l.id === loanId);
         if (!loan) throw new Error("Loan not found");
 
         const approvalKey = step === "loan_officer" ? "loanOfficer" : step;
@@ -146,7 +155,7 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
 
         // Send rejection notification to the loan applicant
         if (newStatus === "rejected") {
-          const loanMember = members.find((m) => m.id === loan.memberId);
+          const loanMember = members.find((m: Member) => m.id === loan.memberId);
           if (loanMember?.userId) {
             FS.addNotification(loanMember.userId, {
               userId: loanMember.userId,
@@ -207,7 +216,7 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
 
       rejectLoan: async (loanId, reason) => {
         const { activeGroupId, loans, members } = get();
-        const loan = loans.find((l) => l.id === loanId);
+        const loan = loans.find((l: Loan) => l.id === loanId);
         const now = new Date().toISOString();
         get().updateLoanLocal(loanId, { status: "rejected", rejectionReason: reason, updatedAt: now });
         if (activeGroupId) {
@@ -215,7 +224,7 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
             status: "rejected",
             rejectionReason: reason,
           }).catch(console.warn);
-          const loanMember = members.find((m) => m.id === loan?.memberId);
+          const loanMember = members.find((m: Member) => m.id === loan?.memberId);
           if (loanMember?.userId) {
             FS.addNotification(loanMember.userId, {
               userId: loanMember.userId,
@@ -247,7 +256,7 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
           const result = await FS.disburseLoanServer(activeGroupId, loanId);
           get().updateLoanLocal(loanId, result.loan);
           get().addWalletTxLocal(result.walletTx);
-          set((s) => recalcGroupTotals(s));
+          set((s: StoreState) => recalcGroupTotals(s));
           get().setSyncStatus("synced");
         } catch (e) {
           get().setSyncStatus("failed", e instanceof Error ? e.message : String(e));
@@ -256,18 +265,34 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
       },
 
       recordRepayment: async (loanId, amount, date) => {
-        const { activeGroupId } = get();
+        const { activeGroupId, authUid, members } = get();
         if (!activeGroupId) return;
         try {
           get().setSyncStatus("pending");
           const result = await FS.recordRepaymentServer(activeGroupId, loanId, amount, date);
           get().updateLoanLocal(loanId, result.loan);
-          get().addWalletTxLocal(result.repaymentTx);
+          // Two separate wallet txs: interest income + principal recovery
+          get().addWalletTxLocal(result.interestTx);
+          get().addWalletTxLocal(result.principalTx);
           if (result.creditTx) get().addWalletTxLocal(result.creditTx);
-          set((s) => recalcGroupTotals(s));
+          set((s: StoreState) => recalcGroupTotals(s));
           get().setSyncStatus("synced");
         } catch (e) {
-          get().setSyncStatus("failed", e instanceof Error ? e.message : String(e));
+          const msg = e instanceof Error ? e.message : String(e);
+          get().setSyncStatus("failed", msg);
+          // Write failed transaction to audit log for admin visibility
+          const currentUser = members.find((m: Member) => m.userId === authUid);
+          FS.writeFailedAuditLog(activeGroupId, {
+            groupId: activeGroupId,
+            userId: authUid ?? "unknown",
+            userName: currentUser?.fullName ?? "Unknown",
+            action: "failed",
+            entityType: "loan",
+            entityId: loanId,
+            reason: `Repayment of ${amount} failed: ${msg}`,
+            errorMessage: msg,
+            status: "failed",
+          }).catch(() => {});
           throw e;
         }
       },

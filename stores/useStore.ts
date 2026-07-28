@@ -18,7 +18,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { StoreState } from "./storeTypes";
+import type { StoreState , SetFn, GetFn } from "./storeTypes";
 import { recalcGroupTotals } from "./recalcGroupTotals";
 
 import { createAuthSlice } from "./slices/authSlice";
@@ -36,7 +36,7 @@ import { createSyncSlice } from "./slices/syncSlice";
 
 export const useStore = create<StoreState>()(
   persist(
-    (set, get) => ({
+    (set: SetFn, get: GetFn) => ({
       // ── Initial state ──────────────────────────────────────────────────
       authUid: null, authName: null, authEmail: null,
       groups: [], activeGroupId: null,
@@ -72,7 +72,7 @@ export const useStore = create<StoreState>()(
     {
       name: "scdt-v2",
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (s) => ({
+      partialize: (s: StoreState) => ({
         authUid: s.authUid,
         authName: s.authName,
         authEmail: s.authEmail,
@@ -86,7 +86,7 @@ export const useStore = create<StoreState>()(
         expenses: s.expenses,
         meetings: s.meetings,
       }),
-      onRehydrateStorage: () => (state, error) => {
+      onRehydrateStorage: () => (state: StoreState | undefined, error: unknown) => {
         if (error) {
           console.error("Failed to rehydrate store:", error);
         } else if (state) {

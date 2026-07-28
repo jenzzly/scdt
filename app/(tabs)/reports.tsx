@@ -2,9 +2,8 @@
 import React, { useMemo, useState } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Dimensions, Platform, StatusBar,
+  Platform, StatusBar, useWindowDimensions,
 } from "react-native";
-import { BarChart, PieChart } from "react-native-chart-kit";
 import { useRouter } from "expo-router";
 import {
   useStore,
@@ -16,9 +15,7 @@ import { useCurrentMemberPermissions } from "../../stores/selectors";
 import { Card, Badge, Empty, useToast, Input, BottomModal } from "../../components/ui";
 import { Colors, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
 import { exportCsv, exportPdf } from "../../utils/export";
-
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
-const CHART_WIDTH = SCREEN_WIDTH - 32;
+import { findOverdueContributions, findOverdueInstallments } from "../../utils/lateFees";
 
 // ─── Tiny components ──────────────────────────────────────────────
 const Chip = ({ label, bg, color }: { label: string; bg: string; color: string }) => (
@@ -47,6 +44,73 @@ const KpiCard = ({ label, value, color, subtext }: { label: string; value: strin
     {subtext && <Text style={styles.kpiSubtext}>{subtext}</Text>}
   </View>
 );
+
+// ─── Safe hand-built charts ──────────────────────────────────────────────────
+// react-native-chart-kit renders raw SVG <text>/<tspan> nodes that are not
+// valid React Native Web children — this is the root cause of the
+// "Unexpected text node" crash on this screen. It also computed its width
+// once from Dimensions.get("window") at module load time, which never
+// updates on rotation/resize (the "chart is off on mobile" report). These
+// replacements use only View/Text and size themselves from the parent's
+// actual rendered width.
+function CashflowBarChart({
+  months, income, expenses,
+}: { months: string[]; income: number[]; expenses: number[] }) {
+  const max = Math.max(1, ...income, ...expenses);
+  return (
+    <View style={{ marginTop: 8 }}>
+      <View style={{ flexDirection: "row", gap: 14, marginBottom: 10 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+          <View style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: C.success }} />
+          <Text style={{ fontSize: 11, color: C.text3 }}>Income</Text>
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+          <View style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: C.error }} />
+          <Text style={{ fontSize: 11, color: C.text3 }}>Expenses</Text>
+        </View>
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", height: 150 }}>
+        {months.map((m, i) => {
+          const incH = Math.max(2, (income[i] / max) * 120);
+          const expH = Math.max(2, (expenses[i] / max) * 120);
+          return (
+            <View key={i} style={{ flex: 1, alignItems: "center", justifyContent: "flex-end" }}>
+              <View style={{ flexDirection: "row", alignItems: "flex-end", height: 120 }}>
+                <View style={{ width: 12, height: incH, borderRadius: 3, backgroundColor: C.success }} />
+                <View style={{ width: 12, height: expH, borderRadius: 3, backgroundColor: C.error, marginLeft: 3 }} />
+              </View>
+              <Text style={{ fontSize: 9, color: C.text3, marginTop: 6 }} numberOfLines={1}>{m}</Text>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function MemberSharesChart({
+  data,
+}: { data: { name: string; population: number; color: string }[] }) {
+  const total = data.reduce((s, d) => s + d.population, 0) || 1;
+  return (
+    <View style={{ gap: 10 }}>
+      {data.map((d, i) => {
+        const pct = (d.population / total) * 100;
+        return (
+          <View key={i}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+              <Text style={{ fontSize: 12, fontWeight: "600", color: C.text2 }}>{d.name}</Text>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: d.color }}>{pct.toFixed(0)}%</Text>
+            </View>
+            <View style={{ height: 8, borderRadius: 4, backgroundColor: C.border, overflow: "hidden" }}>
+              <View style={{ height: "100%" as any, width: `${pct}%` as any, backgroundColor: d.color, borderRadius: 4 }} />
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
 
 // Filter Modal Component
 function FilterModal({
@@ -190,19 +254,10 @@ function FilterModal({
   );
 }
 
-const chartConfig = {
-  backgroundColor: C.surface,
-  backgroundGradientFrom: C.surface,
-  backgroundGradientTo: C.surface,
-  decimalPlaces: 0,
-  color: (opacity = 1) => `rgba(13,148,136,${opacity})`,
-  labelColor: () => C.text3,
-  style: { borderRadius: 12 },
-  propsForBackgroundLines: { stroke: C.border },
-};
-
 export default function ReportsScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 768;
   const group = useActiveGroup();
   const allMembers = useGroupMembers();
   const allLoans = useGroupLoans();
@@ -214,8 +269,14 @@ export default function ReportsScreen() {
   const currentMember = useCurrentMember();
   const { show, Toast } = useToast();
 
-  const canSeeAll = ["admin", "loan_officer", "committee", "accountant"].includes(role);
-  const [activeTab, setActiveTab] = useState<"overview" | "members" | "loans">("overview");
+  // Officers/admins always see all reports. A regular "member" role only
+  // sees group-wide data when explicitly granted the viewAllReports
+  // permission from Group Settings → Permissions — otherwise they only ever
+  // see their own report (enforced below on every data slice).
+  const canSeeAll =
+    ["admin", "loan_officer", "committee", "accountant"].includes(role) ||
+    permissions.viewAllReports;
+  const [activeTab, setActiveTab] = useState<"overview" | "members" | "earnings">("overview");
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
@@ -315,9 +376,20 @@ export default function ReportsScreen() {
     }));
   }, [allMembers]);
 
-  const totalInterest = useMemo(() =>
-    loans.reduce((s, l) => s + Math.max(0, l.amountRepaid - l.amount), 0), [loans]
-  );
+  // Interest earned: read from wallet ledger (loan_interest_income txs) + legacy loan_repayment
+  const totalInterest = useMemo(() => {
+    const fromLedger = wallet
+      .filter(t => t.type === "loan_interest_income" && t.amount > 0)
+      .reduce((s, t) => s + t.amount, 0);
+    const legacy = wallet
+      .filter(t => t.type === "loan_repayment" && t.amount > 0)
+      .reduce((s, t) => {
+        const loan = loans.find(l => l.id === t.loanId);
+        if (!loan || !loan.totalRepayable) return s;
+        return s + round2(t.amount * (loan.totalInterest / loan.totalRepayable));
+      }, 0);
+    return round2(fromLedger + legacy);
+  }, [wallet, loans]);
   const totalExpenses = useMemo(() =>
     wallet.filter(t => ["bank_fee", "other_debit"].includes(t.type)).reduce((s, t) => s + Math.abs(t.amount), 0), [wallet]
   );
@@ -400,14 +472,15 @@ export default function ReportsScreen() {
     return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   };
 
-  const TABS = canSeeAll ? ["overview", "members", "loans"] as const : ["overview", "loans"] as const;
+  // All roles can see Members tab — non-admins see only their own data within it
+  const TABS = ["overview", "members", "earnings"] as const;
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
 
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, isWide && { paddingHorizontal: 32 }]}>
         <View>
           <Text style={styles.headerSub}>Analytics & Insights</Text>
           <Text style={styles.headerTitle}>Reports</Text>
@@ -450,7 +523,13 @@ export default function ReportsScreen() {
         ))}
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[
+          { paddingBottom: 100 },
+          isWide && { maxWidth: 960, alignSelf: "center" as any, width: "100%" as any },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Overview Tab */}
         {activeTab === "overview" && (
           <View style={styles.content}>
@@ -475,44 +554,19 @@ export default function ReportsScreen() {
             <View style={styles.chartCard}>
               <Text style={styles.chartTitle}>Cash Flow (Last 6 Months)</Text>
               {cashflow.months.length > 0 && (
-                <BarChart
-                  data={{
-                    labels: cashflow.months,
-                    datasets: [
-                      { data: cashflow.income, color: () => C.success, label: "Income" },
-                      { data: cashflow.expenses, color: () => C.error, label: "Expenses" },
-                    ],
-                  }}
-                  width={CHART_WIDTH}
-                  height={200}
-                  chartConfig={chartConfig}
-                  yAxisLabel=""
-                  yAxisSuffix=""
-                  style={{ borderRadius: 12, marginTop: 8 }}
-                  showValuesOnTopOfBars={false}
-                  fromZero
+                <CashflowBarChart
+                  months={cashflow.months}
+                  income={cashflow.income}
+                  expenses={cashflow.expenses}
                 />
               )}
-              <View style={styles.chartLegend}>
-                <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: C.success }]} /><Text style={styles.legendText}>Income</Text></View>
-                <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: C.error }]} /><Text style={styles.legendText}>Expenses</Text></View>
-              </View>
             </View>
 
             {/* Savings by Member - Admin only */}
             {canSeeAll && memberPie.length > 0 && (
               <View style={styles.chartCard}>
                 <Text style={styles.chartTitle}>Savings by Member (Top 5)</Text>
-                <PieChart
-                  data={memberPie}
-                  width={CHART_WIDTH}
-                  height={180}
-                  chartConfig={chartConfig}
-                  accessor="population"
-                  backgroundColor="transparent"
-                  paddingLeft="15"
-                  absolute
-                />
+                <MemberSharesChart data={memberPie} />
               </View>
             )}
 
@@ -567,24 +621,31 @@ export default function ReportsScreen() {
           </View>
         )}
 
-        {/* Members Tab */}
-        {activeTab === "members" && canSeeAll && (
-          <MembersTab 
-            members={allMembers} 
-            contributions={allContributions} 
-            loans={allLoans} 
-            investments={allInvestments} 
-            wallet={allWallet} 
+        {/* Members Tab — scoped by role */}
+        {activeTab === "members" && (
+          <MembersTab
+            members={canSeeAll ? allMembers : allMembers.filter(m => m.id === currentMember?.id)}
+            contributions={canSeeAll ? allContributions : allContributions.filter(c => c.memberId === currentMember?.id)}
+            loans={canSeeAll ? allLoans : allLoans.filter(l => l.memberId === currentMember?.id)}
+            wallet={canSeeAll ? allWallet : allWallet.filter(t => t.memberId === currentMember?.id)}
+            canSeeAll={canSeeAll}
+            currentMember={currentMember}
           />
         )}
 
-        {/* Loans Tab */}
-        {activeTab === "loans" && (
-          <LoansTab 
-            loans={loans} 
-            members={allMembers} 
-            canSeeAll={canSeeAll} 
-            onViewLoan={(loanId) => router.push(`/(tabs)/loans`)}
+        {/* Earnings Tab — replaces the old Loans tab */}
+        {activeTab === "earnings" && (
+          <EarningsTab
+            wallet={canSeeAll ? allWallet : allWallet.filter(t => t.memberId === currentMember?.id)}
+            members={canSeeAll ? allMembers : allMembers.filter(m => m.id === currentMember?.id)}
+            canSeeAll={canSeeAll}
+            currency={group?.currency ?? "RWF"}
+            group={group}
+            allMembers={allMembers}
+            allContributions={allContributions}
+            allLoans={allLoans}
+            allWallet={allWallet}
+            permissions={permissions}
           />
         )}
       </ScrollView>
@@ -613,69 +674,33 @@ export default function ReportsScreen() {
   );
 }
 
-// Members Tab Component
-function MembersTab({ members, contributions, loans, wallet }: any) {
-  const [search, setSearch] = useState("");
-  const [selectedMember, setSelectedMember] = useState<any>(null);
+// ─── MembersTab ──────────────────────────────────────────────────────────────
+// Shows member directory for admins/officers; shows own report for regular members.
+// ─────────────────────────────────────────────────────────────────────────────
+function MembersTab({ members, contributions, loans, wallet, canSeeAll, currentMember }: any) {
+  const [search, setSearch] = useState<string>("");
+  const [selectedMember, setSelectedMember] = useState<any>(
+    // Non-admins land directly on their own detail
+    !canSeeAll && members.length === 1 ? members[0] : null
+  );
 
-  const filteredMembers = members.filter((m: any) =>
-    m.fullName.toLowerCase().includes(search.toLowerCase()) ||
-    m.phone?.includes(search) ||
-    m.email?.toLowerCase().includes(search.toLowerCase())
-  ).sort((a: any, b: any) => b.totalContributions - a.totalContributions);
-
-  const memberLoans = loans.filter((l: any) => l.memberId === selectedMember?.id);
-  const memberContributions = contributions.filter((c: any) => c.memberId === selectedMember?.id && c.status === "approved");
-  const memberWallet = wallet.filter((w: any) => w.memberId === selectedMember?.id);
-  
-  const totalPaid = memberContributions.reduce((s: number, c: any) => s + c.amount, 0);
-  const loanBalance = memberLoans.filter((l: any) => l.status === "disbursed").reduce((s: number, l: any) => s + l.balance, 0);
+  const filteredMembers = members
+    .filter((m: any) =>
+      m.fullName.toLowerCase().includes(search.toLowerCase()) ||
+      m.phone?.includes(search) ||
+      m.email?.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a: any, b: any) => b.totalContributions - a.totalContributions);
 
   if (selectedMember) {
-    return (
-      <View style={styles.content}>
-        <TouchableOpacity onPress={() => setSelectedMember(null)} style={styles.backButton}>
-          <Text style={styles.backButtonText}>← Back to Directory</Text>
-        </TouchableOpacity>
-        
-        <View style={styles.memberDetailCard}>
-          <Text style={styles.memberDetailName}>{selectedMember.fullName}</Text>
-          <Text style={styles.memberDetailRole}>{selectedMember.role} • {selectedMember.status}</Text>
-          <View style={styles.memberDetailInfo}>
-            <Text style={styles.memberDetailText}>📞 {selectedMember.phone || "N/A"}</Text>
-            <Text style={styles.memberDetailText}>✉️ {selectedMember.email || "N/A"}</Text>
-            <Text style={styles.memberDetailText}>📅 Joined {fmtDate(selectedMember.dateJoined)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.statsGrid}>
-          <KpiCard label="Total Contributions" value={fmtCurrency(totalPaid)} color={C.accent} />
-          <KpiCard label="Loan Balance" value={fmtCurrency(loanBalance)} color={C.error} />
-        </View>
-
-        <SectionHeader title="Recent Activity" />
-        <Card style={styles.card}>
-          {memberWallet.slice(0, 5).map((w: any, i: number) => (
-            <React.Fragment key={w.id}>
-              <View style={styles.txRow}>
-                <View style={[styles.txDot, { backgroundColor: w.amount > 0 ? C.greenBg : C.redBg }]}>
-                  <Text style={{ fontSize: 13, color: w.amount > 0 ? C.success : C.error }}>{w.amount > 0 ? "↓" : "↑"}</Text>
-                </View>
-                <View style={styles.txMid}>
-                  <Text style={styles.txDesc}>{w.type.replace(/_/g, " ").toUpperCase()}</Text>
-                  <Text style={T.small}>{fmtDate(w.date || w.createdAt)}</Text>
-                </View>
-                <Text style={[styles.txAmount, { color: w.amount > 0 ? C.success : C.error }]}>
-                  {w.amount > 0 ? "+" : "-"}{fmtCurrency(Math.abs(w.amount))}
-                </Text>
-              </View>
-              {i < Math.min(memberWallet.length, 5) - 1 && <Divider />}
-            </React.Fragment>
-          ))}
-          {memberWallet.length === 0 && <Text style={styles.emptyText}>No transactions yet</Text>}
-        </Card>
-      </View>
-    );
+    return <MemberDetail
+      member={selectedMember}
+      loans={loans.filter((l: any) => l.memberId === selectedMember.id)}
+      contributions={contributions.filter((c: any) => c.memberId === selectedMember.id && c.status === "approved")}
+      wallet={wallet.filter((w: any) => w.memberId === selectedMember.id)}
+      canGoBack={canSeeAll}
+      onBack={() => setSelectedMember(null)}
+    />;
   }
 
   return (
@@ -686,13 +711,13 @@ function MembersTab({ members, contributions, loans, wallet }: any) {
         onChangeText={setSearch}
         leftIcon="🔍"
       />
-      <Text style={styles.resultsCount}>{filteredMembers.length} members found</Text>
+      <Text style={styles.resultsCount}>{filteredMembers.length} member{filteredMembers.length !== 1 ? "s" : ""}</Text>
       <Card>
         {filteredMembers.length === 0 ? (
           <Empty message="No members found" icon="👥" />
         ) : (
           filteredMembers.map((m: any, i: number) => (
-            <TouchableOpacity key={m.id} onPress={() => setSelectedMember(m)}>
+            <TouchableOpacity key={m.id} onPress={() => setSelectedMember(m)} activeOpacity={0.7}>
               <View style={styles.memberRow}>
                 <View style={styles.memberAvatar}>
                   <Text style={styles.memberAvatarText}>
@@ -718,88 +743,495 @@ function MembersTab({ members, contributions, loans, wallet }: any) {
   );
 }
 
-// Loans Tab Component
-function LoansTab({ loans, members, canSeeAll, onViewLoan }: any) {
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "repaid" | "pending">("all");
-  
-  const filtered = loans.filter((l: any) => {
-    if (statusFilter === "active") return l.status === "disbursed";
-    if (statusFilter === "repaid") return l.status === "repaid";
-    if (statusFilter === "pending") return l.status.startsWith("pending_");
-    return true;
+// ─── MemberDetail ─────────────────────────────────────────────────────────────
+// Full per-member report: contributions, loans, interest earned projection
+// ─────────────────────────────────────────────────────────────────────────────
+function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack }: any) {
+  const totalContributions = contributions.reduce((s: number, c: any) => s + c.amount, 0);
+  const loanBalance = loans.filter((l: any) => l.status === "disbursed").reduce((s: number, l: any) => s + l.balance, 0);
+  const totalLoansAmount = loans.reduce((s: number, l: any) => s + l.amount, 0);
+  const totalRepaid = loans.reduce((s: number, l: any) => s + (l.amountRepaid || 0), 0);
+
+  // Interest earned: from ledger loan_interest_income txs
+  const interestFromLedger = wallet
+    .filter((t: any) => t.type === "loan_interest_income" && t.amount > 0)
+    .reduce((s: number, t: any) => s + t.amount, 0);
+  // Legacy loan_repayment combined tx fallback
+  const interestLegacy = wallet
+    .filter((t: any) => t.type === "loan_repayment" && t.amount > 0)
+    .reduce((s: number, t: any) => {
+      const loan = loans.find((l: any) => l.id === t.loanId);
+      if (!loan || !loan.totalRepayable) return s;
+      return s + round2(t.amount * (loan.totalInterest / loan.totalRepayable));
+    }, 0);
+  const interestEarned = round2(interestFromLedger + interestLegacy);
+
+  // ── Interest projection ─────────────────────────────────────────────────
+  // Project how much interest this member will earn over remaining loan terms
+  const projectedInterest = loans
+    .filter((l: any) => l.status === "disbursed")
+    .reduce((s: number, l: any) => {
+      const remaining = round2(l.totalRepayable - (l.amountRepaid || 0));
+      const ratio = l.totalRepayable > 0 ? l.totalInterest / l.totalRepayable : 0;
+      return s + round2(remaining * ratio);
+    }, 0);
+
+  // ── Monthly contribution trend (last 6 months) ──────────────────────────
+  const trend = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - (5 - i));
+    const month = d.toLocaleDateString("en", { month: "short" });
+    const total = contributions
+      .filter((c: any) => {
+        const cd = new Date(c.date);
+        return cd.getFullYear() === d.getFullYear() && cd.getMonth() === d.getMonth();
+      })
+      .reduce((s: number, c: any) => s + c.amount, 0);
+    return { month, total };
   });
 
-  const getMember = (id: string) => members.find((m: any) => m.id === id);
-  const totalOutstanding = loans.filter((l: any) => l.status === "disbursed").reduce((s: number, l: any) => s + l.balance, 0);
-  const totalInterest = loans.reduce((s: number, l: any) => s + Math.max(0, l.amountRepaid - l.amount), 0);
+  const recentWallet = [...wallet]
+    .sort((a: any, b: any) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime())
+    .slice(0, 8);
+
+  return (
+    <View style={styles.content}>
+      {canGoBack && (
+        <TouchableOpacity onPress={onBack} style={styles.backButton}>
+          <Text style={styles.backButtonText}>← Back to Directory</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Member identity card */}
+      <View style={styles.memberDetailCard}>
+        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}>
+          <View style={[styles.memberAvatar, { marginRight: 14 }]}>
+            <Text style={styles.memberAvatarText}>
+              {member.fullName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
+            </Text>
+          </View>
+          <View>
+            <Text style={styles.memberDetailName}>{member.fullName}</Text>
+            <Text style={styles.memberDetailRole}>{member.role.replace(/_/g," ")} · {member.status}</Text>
+          </View>
+        </View>
+        <View style={styles.memberDetailInfo}>
+          {member.phone ? <Text style={styles.memberDetailText}>📞 {member.phone}</Text> : null}
+          {member.email ? <Text style={styles.memberDetailText}>✉️ {member.email}</Text> : null}
+          <Text style={styles.memberDetailText}>📅 Joined {fmtDate(member.dateJoined)}</Text>
+        </View>
+      </View>
+
+      {/* KPI grid */}
+      <View style={styles.kpiGrid}>
+        <KpiCard label="CONTRIBUTIONS" value={fmtCurrency(totalContributions)} color={C.accent} subtext="total saved" />
+        <KpiCard label="LOAN BALANCE" value={fmtCurrency(loanBalance)} color={C.error} subtext="outstanding" />
+        <KpiCard label="INTEREST EARNED" value={fmtCurrency(interestEarned)} color={C.gold} subtext="from repayments" />
+        <KpiCard label="PROJECTED INTEREST" value={fmtCurrency(projectedInterest)} color={"#7C3AED"} subtext="remaining loans" />
+      </View>
+
+      {/* Interest breakdown card */}
+      <View style={[styles.chartCard, { marginBottom: 16 }]}>
+        <Text style={styles.chartTitle}>Interest Earned Overview</Text>
+        <Text style={{ fontSize: 11, color: C.text3, marginBottom: 12 }}>
+          Based on all repayments recorded against your loans
+        </Text>
+        <View style={{ gap: 10 }}>
+          {/* Interest already earned */}
+          <View>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+              <Text style={{ fontSize: 12, color: C.text2, fontWeight: "600" }}>Already earned</Text>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: C.gold }}>{fmtCurrency(interestEarned)}</Text>
+            </View>
+            <View style={{ height: 6, borderRadius: 3, backgroundColor: C.border, overflow: "hidden" }}>
+              <View style={{
+                height: "100%" as any, borderRadius: 3, backgroundColor: C.gold,
+                width: `${Math.min(100, (interestEarned / Math.max(1, interestEarned + projectedInterest)) * 100)}%` as any,
+              }} />
+            </View>
+          </View>
+          {/* Still projected */}
+          {projectedInterest > 0 && (
+            <View>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+                <Text style={{ fontSize: 12, color: C.text2, fontWeight: "600" }}>Projected (remaining)</Text>
+                <Text style={{ fontSize: 13, fontWeight: "700", color: "#7C3AED" }}>{fmtCurrency(projectedInterest)}</Text>
+              </View>
+              <View style={{ height: 6, borderRadius: 3, backgroundColor: C.border, overflow: "hidden" }}>
+                <View style={{
+                  height: "100%" as any, borderRadius: 3, backgroundColor: "#7C3AED",
+                  width: `${Math.min(100, (projectedInterest / Math.max(1, interestEarned + projectedInterest)) * 100)}%` as any,
+                }} />
+              </View>
+              <Text style={{ fontSize: 10, color: C.text3, marginTop: 4 }}>
+                Total interest pool: {fmtCurrency(interestEarned + projectedInterest)}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+
+      {/* 6-month contribution trend */}
+      {trend.some(t => t.total > 0) && (
+        <View style={styles.chartCard}>
+          <Text style={styles.chartTitle}>Contributions (Last 6 Months)</Text>
+          <View style={{ flexDirection: "row", alignItems: "flex-end", height: 80, gap: 6, marginTop: 8 }}>
+            {trend.map((t, i) => {
+              const max = Math.max(...trend.map(x => x.total), 1);
+              const h = Math.max(4, (t.total / max) * 72);
+              return (
+                <View key={i} style={{ flex: 1, alignItems: "center" }}>
+                  <View style={{ width: "100%" as any, height: h, backgroundColor: C.primary, borderRadius: 3, marginBottom: 4 }} />
+                  <Text style={{ fontSize: 9, color: C.text3 }}>{t.month}</Text>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      )}
+
+      {/* Loan summary */}
+      {(loans.length > 0) && (
+        <>
+          <SectionHeader title={`Loans (${loans.length})`} />
+          <Card style={styles.card}>
+            {loans.slice(0, 5).map((l: any, i: number) => {
+              const pct = l.totalRepayable > 0 ? Math.min(100, (l.amountRepaid / l.totalRepayable) * 100) : 0;
+              return (
+                <React.Fragment key={l.id}>
+                  <View style={{ paddingVertical: 10 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, fontWeight: "600", color: C.text }}>{fmtCurrency(l.amount)}</Text>
+                      <View style={[styles.chip, {
+                        backgroundColor: l.status === "repaid" ? C.greenBg : l.status === "disbursed" ? C.infoBg : C.elevated,
+                      }]}>
+                        <Text style={[styles.chipText, {
+                          color: l.status === "repaid" ? C.success : l.status === "disbursed" ? C.info : C.text3,
+                        }]}>{l.status}</Text>
+                      </View>
+                    </View>
+                    {l.purpose ? <Text style={{ fontSize: 11, color: C.text3, marginBottom: 6 }}>{l.purpose}</Text> : null}
+                    <View style={{ height: 4, borderRadius: 2, backgroundColor: C.border, overflow: "hidden" }}>
+                      <View style={{ height: "100%" as any, width: `${pct}%` as any, backgroundColor: C.accent, borderRadius: 2 }} />
+                    </View>
+                    <Text style={{ fontSize: 10, color: C.text3, marginTop: 3 }}>
+                      {pct.toFixed(0)}% repaid · {fmtCurrency(l.amountRepaid || 0)} of {fmtCurrency(l.totalRepayable)}
+                    </Text>
+                  </View>
+                  {i < Math.min(loans.length, 5) - 1 && <Divider />}
+                </React.Fragment>
+              );
+            })}
+          </Card>
+        </>
+      )}
+
+      {/* Recent wallet activity */}
+      <SectionHeader title="Recent Transactions" />
+      <Card style={styles.card}>
+        {recentWallet.length === 0 ? (
+          <Text style={styles.emptyText}>No transactions yet</Text>
+        ) : recentWallet.map((w: any, i: number) => (
+          <React.Fragment key={`${w.id}_${i}`}>
+            <View style={styles.txRow}>
+              <View style={[styles.txDot, { backgroundColor: w.amount > 0 ? C.greenBg : C.redBg }]}>
+                <Text style={{ fontSize: 13, color: w.amount > 0 ? C.success : C.error }}>{w.amount > 0 ? "↓" : "↑"}</Text>
+              </View>
+              <View style={styles.txMid}>
+                <Text style={styles.txDesc}>{w.type.replace(/_/g, " ")}</Text>
+                <Text style={T.small}>{fmtDate(w.date || w.createdAt)}</Text>
+              </View>
+              <Text style={[styles.txAmount, { color: w.amount > 0 ? C.success : C.error }]}>
+                {w.amount > 0 ? "+" : ""}{fmtCurrency(w.amount)}
+              </Text>
+            </View>
+            {i < recentWallet.length - 1 && <Divider />}
+          </React.Fragment>
+        ))}
+      </Card>
+    </View>
+  );
+}
+
+// Loans Tab Component
+// ─── EarningsTab ──────────────────────────────────────────────────────────────
+// "Earnings" = every wallet credit that is NOT a regular member contribution:
+// loan interest income, investment returns, late fees, and any other manual
+// credit. Every figure here is derived directly from the wallet ledger
+// (never estimated from loan objects), so it always matches the money that
+// actually moved. Downloadable as CSV/PDF and shows a per-member breakdown.
+function earningsHtmlTable(headers: string[], rows: any[][]) {
+  return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+const EARNING_TYPES = ["loan_interest_income", "interest", "investment_return", "late_fee", "other_credit", "bank_fee"];
+const EARNING_TYPE_LABEL: Record<string, string> = {
+  loan_interest_income: "Loan Interest",
+  interest:             "Interest",
+  investment_return:    "Investment Return",
+  late_fee:             "Late Fee / Penalty",
+  other_credit:         "Other Credit",
+  bank_fee:             "Bank Fee",
+};
+
+function EarningsTab({
+  wallet, members, canSeeAll, currency,
+  group, allMembers, allContributions, allLoans, allWallet, permissions,
+}: any) {
+  const { applyContributionLateFee, applyLoanLateFee } = useStore();
+  const { show } = useToast();
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [applyingFeeId, setApplyingFeeId] = useState<string | null>(null);
+
+  // ── Overdue detection — admins/officers only, calculated on demand ──────
+  const canManageFees = canSeeAll && (permissions?.approveContributions || permissions?.approveLoans);
+  const overdueContributions = useMemo(() => {
+    if (!canManageFees || !group) return [];
+    return findOverdueContributions(group, allMembers ?? [], allContributions ?? [], allWallet ?? []);
+  }, [canManageFees, group, allMembers, allContributions, allWallet]);
+  const overdueInstallments = useMemo(() => {
+    if (!canManageFees || !group) return [];
+    return findOverdueInstallments(group, allMembers ?? [], allLoans ?? [], allWallet ?? []);
+  }, [canManageFees, group, allMembers, allLoans, allWallet]);
+
+  const handleApplyContributionFee = async (item: any) => {
+    setApplyingFeeId(item.feeTxId);
+    try {
+      await applyContributionLateFee(item);
+      show(`Late fee of ${fmtCurrency(item.feeAmount)} applied to ${item.memberName}`);
+    } catch (e: any) {
+      show(e?.message || "Failed to apply late fee", "error");
+    } finally {
+      setApplyingFeeId(null);
+    }
+  };
+
+  const handleApplyLoanFee = async (item: any) => {
+    setApplyingFeeId(item.feeTxId);
+    try {
+      await applyLoanLateFee(item);
+      show(`Late fee of ${fmtCurrency(item.feeAmount)} applied to ${item.memberName}`);
+    } catch (e: any) {
+      show(e?.message || "Failed to apply late fee", "error");
+    } finally {
+      setApplyingFeeId(null);
+    }
+  };
+
+  const earningsTxs = useMemo(
+    () => wallet.filter((t: any) => EARNING_TYPES.includes(t.type) && t.amount > 0),
+    [wallet]
+  );
+
+  const filtered = typeFilter === "all"
+    ? earningsTxs
+    : earningsTxs.filter((t: any) => t.type === typeFilter);
+
+  const totalEarnings = useMemo(
+    () => earningsTxs.reduce((s: number, t: any) => s + t.amount, 0),
+    [earningsTxs]
+  );
+
+  const byType = useMemo(() => {
+    const map: Record<string, number> = {};
+    earningsTxs.forEach((t: any) => { map[t.type] = (map[t.type] || 0) + t.amount; });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]);
+  }, [earningsTxs]);
+
+  // Per-member breakdown — only meaningful for admins/officers viewing the group
+  const byMember = useMemo(() => {
+    if (!canSeeAll) return [];
+    const map: Record<string, number> = {};
+    earningsTxs.forEach((t: any) => {
+      if (!t.memberId) return; // group-level earnings with no specific member (e.g. investment returns)
+      map[t.memberId] = (map[t.memberId] || 0) + t.amount;
+    });
+    return Object.entries(map)
+      .map(([memberId, total]) => ({
+        member: members.find((m: any) => m.id === memberId),
+        total: total as number,
+      }))
+      .filter(r => r.member)
+      .sort((a, b) => b.total - a.total);
+  }, [earningsTxs, members, canSeeAll]);
+
+  const getMember = (id?: string) => members.find((m: any) => m.id === id);
+
+  const handleDownload = async (format: "csv" | "pdf") => {
+    const headers = ["Date", "Member", "Type", "Description", "Amount"];
+    const rows = filtered.map((t: any) => [
+      fmtDate(t.date),
+      getMember(t.memberId)?.fullName ?? "—",
+      EARNING_TYPE_LABEL[t.type] ?? t.type,
+      t.description ?? "",
+      fmtCurrency(t.amount),
+    ]);
+    if (format === "csv") await exportCsv(`Earnings_Report`, headers, rows);
+    else await exportPdf(`Earnings_Report`, "Earnings Report", earningsHtmlTable(headers, rows));
+  };
 
   return (
     <View style={styles.content}>
       <View style={styles.statsGrid}>
-        <KpiCard label="Outstanding" value={fmtCurrency(totalOutstanding)} color={C.error} />
-        <KpiCard label="Interest Earned" value={fmtCurrency(totalInterest)} color={C.gold} />
+        <KpiCard label={canSeeAll ? "Total Group Earnings" : "My Total Earnings"} value={fmtCurrency(totalEarnings)} color={C.gold} />
+        <KpiCard label="Transactions" value={String(earningsTxs.length)} color={C.teal} />
       </View>
 
+      {/* Overdue late fees — admins/officers only. Calculated on the amount
+          due (missed contribution / overdue installment), surfaced here so
+          an officer can apply them with one tap. Nothing charges silently
+          in the background. */}
+      {canManageFees && (overdueContributions.length > 0 || overdueInstallments.length > 0) && (
+        <View style={[styles.chartCard, { borderColor: "#fca5a5", borderWidth: 1 }]}>
+          <Text style={[styles.chartTitle, { color: "#b91c1c" }]}>
+            ⚠ Overdue — Late Fees Available
+          </Text>
+          <Text style={{ fontSize: 11, color: C.text3, marginTop: 2, marginBottom: 12 }}>
+            Calculated on the amount due. Tap to apply a fee.
+          </Text>
+
+          {overdueContributions.map((item) => (
+            <View key={item.feeTxId} style={ov.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={ov.memberName}>{item.memberName}</Text>
+                <Text style={ov.detail}>
+                  Missed contribution — {item.periodLabel} · {item.daysLate}d late · due {fmtCurrency(item.amountDue)}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={ov.applyBtn}
+                onPress={() => handleApplyContributionFee(item)}
+                disabled={applyingFeeId === item.feeTxId}
+                activeOpacity={0.8}
+              >
+                <Text style={ov.applyBtnText}>
+                  {applyingFeeId === item.feeTxId ? "Applying…" : `+${fmtCurrency(item.feeAmount)}`}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          {overdueInstallments.map((item) => (
+            <View key={item.feeTxId} style={ov.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={ov.memberName}>{item.memberName}</Text>
+                <Text style={ov.detail}>
+                  Overdue installment #{item.installmentIndex + 1} · {item.daysLate}d late · due {fmtCurrency(item.amountDue)}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={ov.applyBtn}
+                onPress={() => handleApplyLoanFee(item)}
+                disabled={applyingFeeId === item.feeTxId}
+                activeOpacity={0.8}
+              >
+                <Text style={ov.applyBtnText}>
+                  {applyingFeeId === item.feeTxId ? "Applying…" : `+${fmtCurrency(item.feeAmount)}`}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Breakdown by type */}
+      {byType.length > 0 && (
+        <View style={styles.chartCard}>
+          <Text style={styles.chartTitle}>Earnings by Source</Text>
+          <View style={{ gap: 10, marginTop: 8 }}>
+            {byType.map(([type, amount]) => {
+              const pct = totalEarnings > 0 ? (amount / totalEarnings) * 100 : 0;
+              return (
+                <View key={type}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+                    <Text style={{ fontSize: 12, fontWeight: "600", color: C.text2 }}>{EARNING_TYPE_LABEL[type] ?? type}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: "700", color: C.gold }}>{fmtCurrency(amount)}</Text>
+                  </View>
+                  <View style={{ height: 6, borderRadius: 3, backgroundColor: C.border, overflow: "hidden" }}>
+                    <View style={{ height: "100%" as any, width: `${pct}%` as any, backgroundColor: C.gold, borderRadius: 3 }} />
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      )}
+
+      {/* Per-member breakdown — admins/officers only */}
+      {canSeeAll && byMember.length > 0 && (
+        <View style={styles.chartCard}>
+          <Text style={styles.chartTitle}>Earnings by Member</Text>
+          <View style={{ marginTop: 8 }}>
+            {byMember.map((row, i) => (
+              <View key={row.member.id} style={{
+                flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+                paddingVertical: 9, borderBottomWidth: i < byMember.length - 1 ? 1 : 0, borderBottomColor: C.borderLight,
+              }}>
+                <Text style={{ fontSize: 13, color: C.text, fontWeight: "500" }}>{row.member.fullName}</Text>
+                <Text style={{ fontSize: 13, color: C.gold, fontWeight: "700" }}>{fmtCurrency(row.total)}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Download buttons */}
+      <View style={{ flexDirection: "row", gap: 10, marginTop: 4, marginBottom: 16 }}>
+        <TouchableOpacity style={[styles.exportBtn, { flex: 1 }]} onPress={() => handleDownload("csv")}>
+          <Text style={styles.exportBtnText}>⬇ Download CSV</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.exportBtn, { flex: 1 }]} onPress={() => handleDownload("pdf")}>
+          <Text style={styles.exportBtnText}>⬇ Download PDF</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Type filter chips */}
       <View style={styles.filterChips}>
-        {["all", "pending", "active", "repaid"].map(status => (
+        {["all", ...EARNING_TYPES].map(type => (
           <TouchableOpacity
-            key={status}
-            style={[styles.filterChip, statusFilter === status && styles.filterChipActive]}
-            onPress={() => setStatusFilter(status as any)}
+            key={type}
+            style={[styles.filterChip, typeFilter === type && styles.filterChipActive]}
+            onPress={() => setTypeFilter(type)}
           >
-            <Text style={[styles.filterChipText, statusFilter === status && styles.filterChipTextActive]}>
-              {status.charAt(0).toUpperCase() + status.slice(1)}
+            <Text style={[styles.filterChipText, typeFilter === type && styles.filterChipTextActive]}>
+              {type === "all" ? "All" : (EARNING_TYPE_LABEL[type] ?? type)}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      <Text style={styles.resultsCount}>{filtered.length} loans found</Text>
+      <Text style={styles.resultsCount}>{filtered.length} earning{filtered.length !== 1 ? "s" : ""} found</Text>
 
       {filtered.length === 0 ? (
-        <Empty message="No loans found" icon="📋" />
+        <Empty message="No earnings recorded yet" icon="💰" />
       ) : (
-        filtered.map((loan: any) => {
-          const member = getMember(loan.memberId);
-          const pct = loan.totalRepayable > 0 ? round2((loan.amountRepaid / loan.totalRepayable) * 100) : 0;
-          const isPending = loan.status.startsWith("pending_");
-          
-          return (
-            <TouchableOpacity key={loan.id} onPress={() => onViewLoan?.(loan.id)}>
-              <Card style={styles.loanItem}>
-                <View style={styles.loanItemHeader}>
-                  <View style={styles.loanItemAvatar}>
-                    <Text style={styles.loanItemAvatarText}>
-                      {member?.fullName?.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase() || "??"}
-                    </Text>
+        filtered
+          .slice()
+          .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+          .map((tx: any) => {
+            const member = getMember(tx.memberId);
+            return (
+              <React.Fragment key={tx.id}>
+                <Card style={styles.loanItem}>
+                  <View style={styles.loanItemHeader}>
+                    <View style={styles.loanItemAvatar}>
+                      <Text style={styles.loanItemAvatarText}>
+                        {member ? member.fullName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase() : "€"}
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.loanItemMember}>{member?.fullName ?? "Group Earning"}</Text>
+                      <Text style={styles.loanItemDate}>{fmtDate(tx.date)} · {tx.description}</Text>
+                    </View>
+                    <Chip label={EARNING_TYPE_LABEL[tx.type] ?? tx.type} bg={C.goldBg} color={C.gold} />
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.loanItemMember}>{member?.fullName || "Unknown"}</Text>
-                    <Text style={styles.loanItemDate}>{fmtDate(loan.applicationDate)}</Text>
+                  <View style={{ marginTop: 8, alignItems: "flex-end" }}>
+                    <Text style={{ fontSize: 15, fontWeight: "800", color: C.gold }}>+{fmtCurrency(tx.amount)}</Text>
                   </View>
-                  <Chip 
-                    label={isPending ? "Pending" : (loan.status === "disbursed" ? "Active" : loan.status)} 
-                    bg={isPending ? C.goldBg : (loan.status === "disbursed" ? C.tealBg : C.greenBg)}
-                    color={isPending ? C.gold : (loan.status === "disbursed" ? C.teal : C.success)}
-                  />
-                </View>
-                
-                <View style={styles.loanItemAmounts}>
-                  <View><Text style={styles.loanItemLabel}>Principal</Text><Text style={styles.loanItemValue}>{fmtCurrency(loan.amount)}</Text></View>
-                  <View><Text style={styles.loanItemLabel}>Interest</Text><Text style={styles.loanItemValue}>{fmtCurrency(loan.totalInterest)}</Text></View>
-                  <View><Text style={styles.loanItemLabel}>Balance</Text><Text style={[styles.loanItemValue, { color: C.error }]}>{fmtCurrency(loan.balance)}</Text></View>
-                </View>
-                
-                {loan.status === "disbursed" && (
-                  <View style={styles.loanProgress}>
-                    <View style={styles.loanProgressBar}><View style={[styles.loanProgressFill, { width: `${pct}%` }]} /></View>
-                    <Text style={styles.loanProgressText}>{pct.toFixed(0)}% repaid</Text>
-                  </View>
-                )}
-              </Card>
-            </TouchableOpacity>
-          );
-        })
+                </Card>
+              </React.Fragment>
+            );
+          })
       )}
     </View>
   );
@@ -807,6 +1239,20 @@ function LoansTab({ loans, members, canSeeAll, onViewLoan }: any) {
 
 // Helper Components
 const Divider = () => <View style={{ height: 1, backgroundColor: C.borderLight, marginHorizontal: 16 }} />;
+
+const ov = StyleSheet.create({
+  row: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#fee2e2",
+  },
+  memberName: { fontSize: 13, fontWeight: "600", color: C.text },
+  detail: { fontSize: 11, color: C.text3, marginTop: 2 },
+  applyBtn: {
+    backgroundColor: "#fef2f2", borderWidth: 1, borderColor: "#fca5a5",
+    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, marginLeft: 10,
+  },
+  applyBtnText: { fontSize: 12, fontWeight: "700", color: "#b91c1c" },
+});
 
 const styles = StyleSheet.create({
   header: {
@@ -858,7 +1304,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: C.primaryFaint,
+    backgroundColor: C.primary + '18',
     paddingHorizontal: 16,
     paddingVertical: 10,
     marginHorizontal: 16,
@@ -1230,7 +1676,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   loanProgressFill: {
-    height: "100%",
+    height: "100%" as any,
     backgroundColor: C.accent,
     borderRadius: 2,
   },

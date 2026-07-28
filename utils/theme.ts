@@ -62,6 +62,20 @@ export const Colors = {
   info: "#2563EB",
 
   chartColors: ["#0D9488", "#D97706", "#2563EB", "#059669", "#7C3AED", "#EA580C"],
+
+  // Semantic bg/text pairs — used by screens still on Colors
+  greenBg:  "#ECFDF5",
+  greenText:"#065F46",
+  redBg:    "#FEF2F2",
+  redText:  "#991B1B",
+  goldBg:   "#FFFBEB",
+  goldText: "#B45309",
+  infoBg:   "#DBEAFE",
+  infoText: "#1D4ED8",
+  mutedBg:  "#F1F5F9",
+
+  // Card color (dark navy) — used by login.tsx desktop panel
+  card: BRAND.colors.navy,
 };
 
 export const Fonts = {
@@ -121,15 +135,20 @@ export const T = StyleSheet.create({
   mono:   { fontVariant: ["tabular-nums"] as any },
 });
 
+// Always shows the full comma-separated amount (e.g. "RWF 10,000", not
+// "RWF 10K") — abbreviated forms hide real values and make it hard to
+// verify totals at a glance for loans, contributions, and wallet balances.
+// Preserves the sign so negative amounts (debits, overdrafts) display
+// correctly instead of being silently shown as positive.
 export function fmtCurrency(amount: number, currency = BRAND.defaultCurrency): string {
-  const abs = Math.abs(Math.round(amount || 0));
-  if (abs >= 1_000_000) return `${currency} ${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `${currency} ${(abs / 1_000).toFixed(0)}K`;
-  return `${currency} ${abs.toLocaleString()}`;
+  const rounded = Math.round(amount || 0);
+  const sign = rounded < 0 ? "-" : "";
+  return `${sign}${currency} ${Math.abs(rounded).toLocaleString()}`;
 }
 
+// Alias kept for existing call sites — identical behavior to fmtCurrency now.
 export function fmtFull(amount: number, currency = BRAND.defaultCurrency): string {
-  return `${currency} ${Math.round(amount || 0).toLocaleString()}`;
+  return fmtCurrency(amount, currency);
 }
 
 export function fmtDate(iso: string): string {
@@ -187,20 +206,29 @@ export function round2(n: number): number {
 //    paid is lower than flat for the same nominal rate.
 // ─────────────────────────────────────────────────────────────────────────
 
+// Convert rate to a per-period (monthly) rate for amortization.
+// When period = "annual": monthlyRate = annualRate / 12
+// When period = "monthly": rate is already per-month
+export function toMonthlyRate(ratePercent: number, period: "monthly" | "annual" = "monthly"): number {
+  return period === "annual" ? ratePercent / 12 : ratePercent;
+}
+
 export function loanMonthlyPayment(
   principal: number,
   ratePercent: number,
   months: number,
   method: LoanInterestMethod = "flat",
+  period: "monthly" | "annual" = "monthly",
 ): number {
   if (months <= 0) return 0;
+  const r = toMonthlyRate(ratePercent, period) / 100;
   if (method === "reducing_balance") {
-    const r = ratePercent / 100;
     if (r === 0) return round2(principal / months);
     const payment = (principal * r) / (1 - Math.pow(1 + r, -months));
     return round2(payment);
   }
-  const totalInterest = principal * (ratePercent / 100) * months;
+  // Flat: totalInterest = principal × monthlyRate × months
+  const totalInterest = principal * r * months;
   return round2((principal + totalInterest) / months);
 }
 
@@ -209,16 +237,18 @@ export function loanSchedule(loan: {
   interestRate: number;
   repaymentMonths: number;
   firstPaymentDate: string;
-}, method: LoanInterestMethod = "flat") {
+}, method: LoanInterestMethod = "flat", period: "monthly" | "annual" = "monthly") {
   const { amount, interestRate, repaymentMonths, firstPaymentDate } = loan;
+  // Always work in monthly rate internally
+  const monthlyRatePct = toMonthlyRate(interestRate, period);
 
   if (method === "reducing_balance") {
-    const r = interestRate / 100;
-    const monthly = loanMonthlyPayment(amount, interestRate, repaymentMonths, "reducing_balance");
+    const r = monthlyRatePct / 100;
+    const monthly = loanMonthlyPayment(amount, interestRate, repaymentMonths, "reducing_balance", period);
     let balance = amount;
     let totalInterest = 0;
     const schedule = Array.from({ length: repaymentMonths }, (_, i) => {
-      const interestPer = round2(balance * r);
+      const interestPer = round2(balance * r); // r = monthly rate
       // Last installment absorbs any rounding remainder so the schedule
       // ends exactly at zero rather than a few cents off.
       const isLast = i === repaymentMonths - 1;
@@ -241,22 +271,33 @@ export function loanSchedule(loan: {
     return { schedule, monthlyPayment: monthly, totalInterest, totalRepayable };
   }
 
-  // Flat / simple interest (original behavior, unchanged).
-  const totalInterest = amount * (interestRate / 100) * repaymentMonths;
-  const totalRepayable = amount + totalInterest;
+  // Flat / simple interest.
+  // Round totalInterest and totalRepayable at origination so that
+  // splitRepayment's amountRepaid comparisons never drift by a fraction of a cent.
+  const totalInterest = round2(amount * (monthlyRatePct / 100) * repaymentMonths);
+  const totalRepayable = round2(amount + totalInterest);
   const monthly = round2(totalRepayable / repaymentMonths);
   const principalPer = round2(amount / repaymentMonths);
   const interestPer = round2(totalInterest / repaymentMonths);
 
+  // Last-payment reconciliation: absorb any cent-level rounding remainder so
+  // the schedule sums exactly to totalRepayable (prevents isRepaid never triggering).
+  const scheduleTotal = round2(monthly * (repaymentMonths - 1));
+  const lastPayment = round2(totalRepayable - scheduleTotal);
+
   const schedule = Array.from({ length: repaymentMonths }, (_, i) => {
     const d = new Date(firstPaymentDate);
     d.setMonth(d.getMonth() + i);
+    const isLast = i === repaymentMonths - 1;
+    const total = isLast ? lastPayment : monthly;
+    const interest = isLast ? round2(lastPayment * (totalInterest / totalRepayable)) : interestPer;
+    const principal = round2(total - interest);
     return {
       index: i,
       dueDate: d.toISOString(),
-      principal: principalPer,
-      interest: interestPer,
-      total: monthly,
+      principal,
+      interest,
+      total,
       paid: false,
     };
   });

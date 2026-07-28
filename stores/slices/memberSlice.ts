@@ -6,11 +6,11 @@ import { uid } from "../../utils/theme";
 
 export const createMemberSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addMemberLocal" | "approveMember" | "createMember" | "deleteMember" | "deleteMemberLocal" | "setMembers" | "updateMember" | "updateMemberLocal" | "updateOwnProfile"> => ({
       setMembers: (members) => set({ members }),
-      addMemberLocal: (member) => set((s) => ({ members: [...s.members, member] })),
+      addMemberLocal: (member) => set((s: StoreState) => ({ members: [...s.members, member] })),
       updateMemberLocal: (id, data) => set((s) => ({
-        members: s.members.map((m) => (m.id === id ? { ...m, ...data } : m)),
+        members: s.members.map((m: Member) => (m.id === id ? { ...m, ...data } : m)),
       })),
-      deleteMemberLocal: (id) => set((s) => ({ members: s.members.filter((m) => m.id !== id) })),
+      deleteMemberLocal: (id) => set((s: StoreState) => ({ members: s.members.filter((m: Member) => m.id !== id) })),
 
       createMember: async (data) => {
         const { activeGroupId, members } = get();
@@ -27,7 +27,7 @@ export const createMemberSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
           get().setSyncStatus("pending");
           const result = await FS.addMember(activeGroupId, member);
           members
-            .filter((m) => m.groupId === activeGroupId && m.role === "admin" && m.status === "active" && m.userId)
+            .filter((m: Member) => m.groupId === activeGroupId && m.role === "admin" && m.status === "active" && m.userId)
             .forEach((admin) => {
               FS.addNotification(admin.userId!, {
                 userId: admin.userId!,
@@ -51,7 +51,7 @@ export const createMemberSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
 
       updateMember: async (memberId, data) => {
         const { activeGroupId, members } = get();
-        const member = members.find((m) => m.id === memberId);
+        const member = members.find((m: Member) => m.id === memberId);
         const previous = member ? { ...member } : null;
 
         get().updateMemberLocal(memberId, data);
@@ -76,7 +76,7 @@ export const createMemberSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
 
       approveMember: async (memberId) => {
         const { activeGroupId, members, authUid, authName } = get();
-        const member = members.find((m) => m.id === memberId);
+        const member = members.find((m: Member) => m.id === memberId);
         const previous = member ? { ...member } : null;
 
         get().updateMemberLocal(memberId, { status: "active" });
@@ -124,7 +124,7 @@ export const createMemberSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
 
       deleteMember: async (memberId) => {
         const { activeGroupId, members } = get();
-        const member = members.find((m) => m.id === memberId);
+        const member = members.find((m: Member) => m.id === memberId);
         const previous = member ? { ...member } : null;
 
         get().deleteMemberLocal(memberId);
@@ -145,7 +145,7 @@ export const createMemberSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
 
       updateOwnProfile: async (memberId, data) => {
         const { activeGroupId, authUid, members } = get();
-        const member = members.find((m) => m.id === memberId);
+        const member = members.find((m: Member) => m.id === memberId);
         if (!member) throw new Error("Member not found");
         if (member.userId !== authUid) throw new Error("You can only update your own profile");
 

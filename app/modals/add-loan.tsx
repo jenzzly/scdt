@@ -1,26 +1,20 @@
 // app/modals/add-loan.tsx
 import React, { useState, useMemo } from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView, Alert } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView, Alert} from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useStore, useActiveGroup, useGroupMembers, useCurrentUserRole, useCurrentMember, useGroupMeetings } from "../../stores/useStore";
 import { Input, Select, Button, useToast } from "../../components/ui";
+import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R, fmtCurrency, round2, loanSchedule, showConfirm } from "../../utils/theme";
 import { useUnpaidPenalties } from "../../hooks/useUnpaidPenalties";
 
-const MONTHS_OPTIONS = [
-  { label: "3 months", value: "3" },
-  { label: "6 months", value: "6" },
-  { label: "9 months", value: "9" },
-  { label: "12 months", value: "12" },
-  { label: "18 months", value: "18" },
-  { label: "24 months", value: "24" },
-];
+// Months are now free-typed by the user
 
 export default function AddLoanModal() {
   const router = useRouter();
   const group = useActiveGroup();
   const members = useGroupMembers();
-  const { submitLoan, activeGroupId, authUid, clearAllMemberPenalties } = useStore();
+  const { submitLoan, activeGroupId, authUid, clearAllMemberPenalties, clearStandaloneLateFee } = useStore();
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
   const { show, Toast } = useToast();
@@ -48,6 +42,7 @@ export default function AddLoanModal() {
   const [loading, setLoading] = useState(false);
   const [showPenaltyDetails, setShowPenaltyDetails] = useState(false);
   const [clearingPenalties, setClearingPenalties] = useState(false);
+  const [clearingFeeId, setClearingFeeId] = useState<string | null>(null);
 
   const selectedId = isAdmin ? selectedMemberId : (currentMember?.id ?? "");
   const selectedMember = members.find(m => m.id === selectedId);
@@ -64,6 +59,7 @@ export default function AddLoanModal() {
   // the loan will actually be submitted with.
   const rate = group?.loanInterestRate ?? 2;
   const interestMethod = group?.loanInterestMethod ?? "flat";
+  const interestRatePeriod = group?.loanInterestRatePeriod ?? "monthly";
   const parsed = parseFloat(amount) || 0;
   const monthsNum = parseInt(months) || 0;
   const { totalInterest, totalRepayable, monthlyPayment } = useMemo(() => {
@@ -72,9 +68,10 @@ export default function AddLoanModal() {
     }
     return loanSchedule(
       { amount: parsed, interestRate: rate, repaymentMonths: monthsNum, firstPaymentDate: new Date().toISOString() },
-      interestMethod
+      interestMethod,
+      interestRatePeriod
     );
-  }, [parsed, rate, monthsNum, interestMethod]);
+  }, [parsed, rate, monthsNum, interestMethod, interestRatePeriod]);
 
   const memberOptions = members
     .filter((m) => m.status === "active")
@@ -88,8 +85,8 @@ export default function AddLoanModal() {
     
     if (hasUnpaidPenalties) {
       Alert.alert(
-        "Unpaid Meeting Penalties",
-        `This member has ${unpaidPenalties.count} unpaid meeting penalty/penalties totaling ${fmtCurrency(penaltyAmount)}.\n\nPlease resolve these penalties before applying for a loan.`,
+        "Outstanding Fees",
+        `This member has ${unpaidPenalties.count} unpaid fee(s) — meeting penalties and/or late payment fees — totaling ${fmtCurrency(penaltyAmount)}.\n\nPlease resolve these before applying for a loan.`,
         [
           { text: "Cancel", style: "cancel" },
           { 
@@ -127,6 +124,7 @@ export default function AddLoanModal() {
         amount: amt,
         purpose: purpose.trim(),
         interestRate: rate,
+        interestRatePeriod, // snapshot at submission — group setting may change later
         repaymentPlan: "monthly",
         repaymentMonths: parseInt(months),
         applicationDate: new Date().toISOString(),
@@ -163,11 +161,32 @@ export default function AddLoanModal() {
     );
   };
 
+  // Clears a single standalone late fee (contribution or loan repayment —
+  // not a meeting-attendance penalty, which goes through
+  // handleClearAllPenalties/clearAllMemberPenalties above instead).
+  const handleClearOneFee = (feeTxId: string, title: string) => {
+    showConfirm(
+      `Clear ${title}?`,
+      "This marks the fee as paid. It will no longer block this member from taking a loan.",
+      async () => {
+        try {
+          setClearingFeeId(feeTxId);
+          await clearStandaloneLateFee(feeTxId);
+          show("Fee cleared");
+        } catch {
+          show("Failed to clear fee", "error");
+        } finally {
+          setClearingFeeId(null);
+        }
+      }
+    );
+  };
+
   // Penalty Details Modal
   const PenaltyDetailsModal = () => (
     <View style={styles.penaltyModal}>
       <View style={styles.penaltyModalContent}>
-        <Text style={styles.penaltyModalTitle}>Unpaid Meeting Penalties</Text>
+        <Text style={styles.penaltyModalTitle}>Outstanding Fees</Text>
         <Text style={styles.penaltyModalSubtitle}>Member: {selectedMember?.fullName}</Text>
         
         <ScrollView style={styles.penaltyList} showsVerticalScrollIndicator={false}>
@@ -181,16 +200,37 @@ export default function AddLoanModal() {
               <Text style={styles.penaltyItemStatus}>Status: {penalty.status}</Text>
             </View>
           ))}
-          {unpaidPenalties.walletPenalties.map((penalty, index) => (
-            <View key={`wallet-${index}`} style={styles.penaltyItem}>
-              <View style={styles.penaltyItemHeader}>
-                <Text style={styles.penaltyItemTitle}>Meeting Penalty</Text>
-                <Text style={styles.penaltyItemAmount}>{fmtCurrency(penalty.amount)}</Text>
+          {unpaidPenalties.walletPenalties.map((penalty, index) => {
+            // Title reflects what this fee actually is, instead of a
+            // hardcoded "Meeting Penalty" — this bucket also holds
+            // late contribution fees and loan repayment late fees.
+            const title = penalty.description?.startsWith("Late contribution fee")
+              ? "Late Contribution Fee"
+              : penalty.description?.startsWith("Late repayment fee")
+              ? "Late Repayment Fee"
+              : "Other Fee";
+            return (
+              <View key={`wallet-${index}`} style={styles.penaltyItem}>
+                <View style={styles.penaltyItemHeader}>
+                  <Text style={styles.penaltyItemTitle}>{title}</Text>
+                  <Text style={styles.penaltyItemAmount}>{fmtCurrency(penalty.amount)}</Text>
+                </View>
+                <Text style={styles.penaltyItemDate}>{new Date(penalty.date).toLocaleDateString()}</Text>
+                <Text style={styles.penaltyItemDescription}>{penalty.description}</Text>
+                {canClearPenalties && (
+                  <TouchableOpacity
+                    style={styles.penaltyClearOneBtn}
+                    onPress={() => handleClearOneFee(penalty.id, title)}
+                    disabled={clearingFeeId === penalty.id}
+                  >
+                    <Text style={styles.penaltyClearOneBtnText}>
+                      {clearingFeeId === penalty.id ? "Clearing…" : "Clear this fee"}
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
-              <Text style={styles.penaltyItemDate}>{new Date(penalty.date).toLocaleDateString()}</Text>
-              <Text style={styles.penaltyItemDescription}>{penalty.description}</Text>
-            </View>
-          ))}
+            );
+          })}
         </ScrollView>
         
         <View style={styles.penaltyModalFooter}>
@@ -220,15 +260,7 @@ export default function AddLoanModal() {
   );
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1, backgroundColor: Colors.bg }}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn}>
-          <Text style={styles.closeBtnText}>✕</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>{isResubmit ? "Edit & Resubmit Loan" : "Loan Application"}</Text>
-        <View style={{ width: 32 }} />
-      </View>
-
+    <ModalShell title="Apply for Loan" onClose={() => router.back()}>
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         {/* Approval info banner */}
         {isResubmit ? (
@@ -253,7 +285,7 @@ export default function AddLoanModal() {
             activeOpacity={0.8}
           >
             <Text style={[styles.infoBannerText, { color: Colors.error, fontWeight: "700" }]}>
-              ⚠️ Cannot apply for loan: {unpaidPenalties.count} unpaid meeting penalty/penalties totaling {fmtCurrency(penaltyAmount)}
+              ⚠️ Cannot apply for loan: {unpaidPenalties.count} unpaid fee(s) totaling {fmtCurrency(penaltyAmount)}
             </Text>
             <Text style={[styles.infoBannerText, { color: Colors.error, fontSize: 11 }]}>
               Tap to view details
@@ -293,11 +325,13 @@ export default function AddLoanModal() {
           multiline
         />
         
-        <Select 
-          label="Repayment Period" 
-          value={months} 
-          options={MONTHS_OPTIONS} 
-          onChange={setMonths} 
+        <Input
+          label="Repayment Period (months) *"
+          value={months}
+          onChangeText={(v) => setMonths(v.replace(/[^0-9]/g, ""))}
+          keyboardType="numeric"
+          placeholder="e.g. 6"
+          hint="Enter any number of months (1–120)"
         />
 
         {/* Calculator preview - Shows full breakdown including interest */}
@@ -310,7 +344,10 @@ export default function AddLoanModal() {
             </View>
             <View style={styles.calcRow}>
               <Text style={styles.calcLbl}>Interest Rate</Text>
-              <Text style={styles.calcVal}>{rate}% per month × {months} months</Text>
+              <Text style={styles.calcVal}>
+                {rate}% {interestRatePeriod === "annual" ? "per year" : "per month"}
+                {interestRatePeriod === "annual" && ` (${round2(rate / 12)}%/mo)`}
+              </Text>
             </View>
             <View style={styles.calcRow}>
               <Text style={styles.calcLbl}>Interest Method</Text>
@@ -343,7 +380,7 @@ export default function AddLoanModal() {
                 ℹ️ {interestMethod === "reducing_balance"
                   ? `This loan accrues interest on the outstanding balance each month, so the principal/interest split changes as you repay. Estimated total interest is ${fmtCurrency(totalInterest)} if paid on schedule.`
                   : `This loan will accrue ${fmtCurrency(totalInterest)} in interest over ${months} months.`}
-                {" "}Total amount to repay is {fmtCurrency(totalRepayable)}.
+                Total amount to repay is {fmtCurrency(totalRepayable)}.
               </Text>
             </View>
           </View>
@@ -363,7 +400,7 @@ export default function AddLoanModal() {
       {showPenaltyDetails && <PenaltyDetailsModal />}
       
       <Toast />
-    </KeyboardAvoidingView>
+    </ModalShell>
   );
 }
 
@@ -485,6 +522,19 @@ const styles = StyleSheet.create({
   penaltyItemDescription: {
     fontSize: 11,
     color: Colors.text3,
+  },
+  penaltyClearOneBtn: {
+    alignSelf: "flex-start",
+    marginTop: S.sm,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: R.sm,
+    backgroundColor: Colors.primaryFaint ?? Colors.elevated,
+  },
+  penaltyClearOneBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: Colors.primary,
   },
   penaltyModalFooter: {
     flexDirection: "row",

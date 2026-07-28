@@ -18,9 +18,17 @@ export type ContributionType =
   | "investment_funding" | "investment_return" | "penalty" | "other";
 export type InvestmentStatus = "pending_committee" | "open" | "closed" | "pending";
 export type WalletTxType =
-  | "contribution" | "loan_disbursement" | "loan_repayment" | "interest"
-  | "late_fee" | "investment_disbursement" | "investment_return"
+  | "contribution"
+  | "loan_disbursement"
+  | "loan_repayment"          // legacy: combined repayment (kept for backward compat)
+  | "loan_interest_income"    // interest portion of a repayment
+  | "loan_principal_recovery" // principal portion of a repayment
+  | "interest"
+  | "late_fee"
+  | "investment_disbursement" | "investment_return"
   | "bank_fee" | "other_credit" | "other_debit" | "withdrawal";
+
+export type WalletTxSourceType = "loan" | "contribution" | "investment" | "manual";
 export type SyncStatus = "synced" | "pending" | "syncing" | "failed" | "offline";
 export type ExitReason = "resignation" | "death" | "dismissal" | "transfer";
 
@@ -40,17 +48,33 @@ export interface MemberPermissions {
   approveContributions: boolean;
   approveLoans: boolean;
   approveInvestments: boolean;
+  /**
+   * Grants a regular member visibility into OTHER members' reports (the
+   * Members tab in Reports, and group-wide totals on Overview/Earnings).
+   * Without this, a member only ever sees their own data, regardless of
+   * what officers/admins can see. Officers (loan_officer/committee/
+   * accountant) and admins always have this implicitly — this flag exists
+   * specifically to let an admin extend the same visibility to a regular
+   * "member" role on a case-by-case basis.
+   */
+  viewAllReports: boolean;
 }
 
+// Default-deny: a brand-new member (approved or not) starts with NO ability
+// to add contributions, loans, or investments. An admin must explicitly
+// grant each permission from Group Settings → Permissions. This prevents
+// unapproved or freshly-approved members from creating financial records
+// before an admin has reviewed and configured their access.
 export const DEFAULT_MEMBER_PERMISSIONS: MemberPermissions = {
-  addContribution: true,
-  addLoan: true,
+  addContribution: false,
+  addLoan: false,
   addInvestment: false,
   downloadReports: false,
   updateMeetings: false,
   approveContributions: false,
   approveLoans: false,
   approveInvestments: false,
+  viewAllReports: false,
 };
 
 export interface LoanApprovalStep {
@@ -91,9 +115,51 @@ export interface Group {
    * affects loans submitted afterward.
    */
   loanInterestMethod: LoanInterestMethod;
-  latePenaltyAmount: number;
-  maxLoanMultiplier: number;
+  loanInterestRatePeriod: "monthly" | "annual"; // whether rate is per-month or per-year
+
+  /**
+   * Meeting penalties are interest-based: a percentage of the group's
+   * standard contribution amount, not a fixed currency figure. This keeps
+   * penalties proportional as the group's contribution amount changes over
+   * time, instead of needing manual re-entry of fixed amounts.
+   *   penalty = contributionAmount × (ratePct / 100)
+   * Legacy fixed-amount fields are kept (optional) for backward
+   * compatibility with groups that haven't been migrated yet — when both
+   * are present, the percentage fields take priority.
+   */
+  latePenaltyRatePct?: number;           // % of contributionAmount, per meeting lateness
+  absencePenaltyMemberRatePct?: number;  // % of contributionAmount, member absence
+  absencePenaltyOfficerRatePct?: number; // % of contributionAmount, officer absence
+
+  /**
+   * Late-payment fees — separate from meeting-attendance penalties above.
+   * Both are calculated on the AMOUNT DUE (not a flat figure):
+   *   - Contributions: contributionAmount for the missed period
+   *   - Loans: the specific overdue installment's total (schedule[i].total)
+   * A contribution/installment becomes eligible once its due date has
+   * passed and it is still unpaid. Grace-period days delay eligibility.
+   */
+  contributionLateFeeRatePct?: number;   // % of the missed contribution amount
+  contributionLateFeeGraceDays?: number; // days after due date before a fee applies
+  /**
+   * Contribution late fees are only calculated for missed periods on or
+   * after this date (ISO date string, e.g. "2026-01-01") — NOT retroactively
+   * from a member's dateJoined. Without this, enabling late fees on an
+   * existing group would immediately generate fees for every missed period
+   * across each member's entire history, which is rarely what's wanted.
+   * Leave unset to disable contribution late fees regardless of the rate
+   * above (findOverdueContributions treats a missing start date as "not
+   * configured yet").
+   */
+  contributionLateFeeStartDate?: string;
+  loanLateFeeRatePct?: number;           // % of the overdue installment amount
+  loanLateFeeGraceDays?: number;         // days after due date before a fee applies
+
+  /** @deprecated fixed-amount penalties — retained for backward compatibility */
+  latePenaltyAmount?: number;
+  /** @deprecated fixed-amount penalties — retained for backward compatibility */
   absencePenaltyMember?: number;
+  /** @deprecated fixed-amount penalties — retained for backward compatibility */
   absencePenaltyOfficer?: number;
   totalSavings: number;
   totalLoans: number;
@@ -175,14 +241,18 @@ export interface Loan {
    * Falls back to "flat" for loans created before this field existed.
    */
   interestMethod?: LoanInterestMethod;
+  interestRatePeriod?: "monthly" | "annual"; // snapshot of Group.loanInterestRatePeriod at submission
   repaymentPlan: "monthly" | "weekly" | "lump_sum";
   repaymentMonths: number;
   firstPaymentDate: string;
   monthlyPayment: number;
-  totalInterest: number;
-  totalRepayable: number;
-  amountRepaid: number;
-  balance: number;
+  totalInterest: number;      // estimated at origination; actual may differ (daily accrual)
+  totalRepayable: number;     // estimated; for daily-accrual loans this is a projection
+  amountRepaid: number;       // cumulative cash received (interest + principal)
+  balance: number;            // outstanding principal only
+  accruedInterest: number;    // interest accrued since last payment, not yet paid
+  lastAccrualDate: string;    // ISO date of last accrual calculation
+  totalInterestPaid: number;  // cumulative interest actually paid
   lateFees: number;
   status: LoanStatus;
   approvals: LoanApprovals;
@@ -266,6 +336,8 @@ export interface WalletTransaction {
   id: ID;
   groupId: ID;
   type: WalletTxType;
+  sourceType?: WalletTxSourceType; // mandatory on new txs
+  sourceId?: ID;                   // loanId | contributionId | investmentId
   amount: number;
   description: string;
   date: string;
@@ -280,6 +352,15 @@ export interface WalletTransaction {
   deletedBy?: ID;
   deletedAt?: string;
   deletionReason?: string;
+  /**
+   * Only meaningful on type === "late_fee" transactions NOT generated by
+   * meeting attendance (those track "cleared" via the meeting attendee's
+   * own penaltyPaid flag instead — see clearAllMemberPenalties). A
+   * standalone contribution/loan late fee has no such flag to piggyback
+   * on, so it gets its own here. Set by clearStandaloneLateFee(), which is
+   * officer-gated the same way meeting-penalty clearing is.
+   */
+  feePaid?: boolean;
 }
 
 export interface Expense {
@@ -349,12 +430,14 @@ export interface AuditLog {
   groupId: ID;
   userId: ID;
   userName: string;
-  action: string;
+  action: string;          // created|approved|rejected|updated|deleted|disbursed|failed|repaid
   entityType: string;
   entityId: ID;
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
   reason?: string;
+  errorMessage?: string;   // populated when action === "failed"
+  status?: "success" | "failed"; // explicit status for filtering
   timestamp: string;
 }
 

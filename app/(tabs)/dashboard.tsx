@@ -2,8 +2,7 @@
 import React, { useMemo } from "react";
 import {
   ScrollView, View, Text, TouchableOpacity,
-  StyleSheet, Platform, StatusBar,
-} from "react-native";
+  StyleSheet, Platform, StatusBar, useWindowDimensions} from "react-native";
 import { useRouter } from "expo-router";
 import {
   useStore, useActiveGroup, useGroupLoans, useGroupContributions,
@@ -12,6 +11,7 @@ import {
 } from "../../stores/useStore";
 import { useCurrentMemberPermissions } from "../../stores/selectors";
 import { Colors, S, R, C, T, fmtCurrency, fmtFull, fmtDate, round2} from "../../utils/theme";
+import type { Loan, Contribution, WalletTransaction, Member } from "../../types";
 import { BRAND } from "../../lib/brand";
 import { useRecalcTotals } from "../../hooks/useRecalcTotals";
 
@@ -42,6 +42,8 @@ const Chip = ({ label, bg, color }: { label: string; bg: string; color: string }
 // ─── Main screen ──────────────────────────────────────────────────
 export default function DashboardScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 768;
   const { authName, members, activeGroupId, approveContribution } = useStore();
   const group     = useActiveGroup();
   const loans     = useGroupLoans();
@@ -52,6 +54,10 @@ export default function DashboardScreen() {
   const canSeeAll = useCanSeeAllFinancial();
   const isAdmin   = role === "admin";
   const permissions = useCurrentMemberPermissions();
+  // Contribution approval: loan_officer and accountant always can; committee needs permission
+  const canApproveContributions =
+    ["admin", "loan_officer", "accountant"].includes(role) ||
+    (role === "committee" && permissions.approveContributions);
   const unreadCount = useUnreadNotifs();
 
   useRecalcTotals();
@@ -64,13 +70,22 @@ export default function DashboardScreen() {
   const pendingLoans  = useMemo(() => loans.filter(l => l.status.startsWith("pending_")), [loans]);
   const pendingContribs = useMemo(() => contributions.filter(c => c.status === "pending"), [contributions]);
   const defaulters    = useMemo(() => loans.filter(l => l.status === "defaulted").length, [loans]);
-  const recentTxs     = useMemo(() => myWallet.slice(0, 5), [myWallet]);
+  const recentTxs     = useMemo(() => {
+    // Deduplicate by ID before rendering — prevents React key collision
+    // when Firestore subscription fires alongside optimistic local add
+    const seen = new Set<string>();
+    const deduped: typeof myWallet = [];
+    for (const tx of myWallet) {
+      if (!seen.has(tx.id)) { seen.add(tx.id); deduped.push(tx); }
+    }
+    return deduped.slice(0, 5);
+  }, [myWallet]);
 
   const getMemberName = (id: string) =>
     members.find(m => m.id === id)?.fullName ?? "Unknown";
 
   const actualBalance = useMemo(
-    () => round2(wallet.reduce((s, t) => s + t.amount, 0)),
+    () => round2(wallet.reduce((s: number, t: WalletTransaction) => s + t.amount, 0)),
     [wallet],
   );
 
@@ -112,7 +127,7 @@ export default function DashboardScreen() {
           activeOpacity={0.8}
         >
           <Text style={{ fontSize: 10 }}>N</Text>
-          {unreadCount > 0 && (
+          {(unreadCount > 0) && (
             <View style={st.badge}>
               <Text style={st.badgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
             </View>
@@ -121,13 +136,13 @@ export default function DashboardScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: 100, maxWidth: isWide ? 960 : undefined, alignSelf: isWide ? "center" as any : undefined, width: "100%" as any }}
         showsVerticalScrollIndicator={false}
       >
         {/* ── Account card ── */}
         <View style={st.accountCard}>
           {/* subtle grid lines for texture */}
-          <View style={st.cardGrid} pointerEvents="none" />
+          <View style={[st.cardGrid, { pointerEvents: "none" }]} />
 
           <Text style={st.cardLabel}>
             {canSeeAll ? "GROUP BALANCE" : "MY SAVINGS"}
@@ -271,7 +286,7 @@ export default function DashboardScreen() {
                   {(i < pendingLoans.slice(0, 3).length - 1 || pendingContribs.length > 0) && <Divider />}
                 </React.Fragment>
               ))}
-              {pendingContribs.slice(0, 3).map((c, i) => (
+              {pendingContribs.slice(0, 3).map((c: Contribution, i) => (
                 <React.Fragment key={c.id}>
                   <View style={st.pendingRow}>
                     <View style={st.pendingLeft}>
@@ -281,13 +296,15 @@ export default function DashboardScreen() {
                         <Text style={T.small}>{fmtCurrency(c.amount)} · {fmtDate(c.date)}</Text>
                       </View>
                     </View>
-                    <TouchableOpacity
-                      style={st.approveBtn}
-                      onPress={() => approveContribution(c.id)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={st.approveBtnText}>Approve</Text>
-                    </TouchableOpacity>
+                    {canApproveContributions && (
+                      <TouchableOpacity
+                        style={st.approveBtn}
+                        onPress={() => approveContribution(c.id)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={st.approveBtnText}>Approve</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                   {i < pendingContribs.slice(0, 3).length - 1 && <Divider />}
                 </React.Fragment>
@@ -310,7 +327,7 @@ export default function DashboardScreen() {
                 <Text style={T.body}>No transactions yet</Text>
               </View>
             ) : (
-              recentTxs.map((tx, i) => {
+              recentTxs.map((tx: WalletTransaction, i) => {
                 const isCredit = tx.amount > 0;
                 return (
                   <React.Fragment key={tx.id}>

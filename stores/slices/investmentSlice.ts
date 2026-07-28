@@ -7,9 +7,9 @@ import { recalcGroupTotals } from "../recalcGroupTotals";
 
 export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addInvestmentLocal" | "approveInvestmentStep" | "closeInvestment" | "createInvestment" | "deleteInvestment" | "deleteInvestmentLocal" | "setInvestments" | "updateInvestment" | "updateInvestmentLocal"> => ({
       setInvestments: (invs) => set({ investments: invs }),
-      addInvestmentLocal: (inv) => set((s) => ({ investments: [inv, ...s.investments] })),
+      addInvestmentLocal: (inv) => set((s: StoreState) => ({ investments: [inv, ...s.investments] })),
       updateInvestmentLocal: (id, data) => set((s) => ({
-        investments: s.investments.map((i) => (i.id === id ? { ...i, ...data } : i)),
+        investments: s.investments.map((i: Investment) => (i.id === id ? { ...i, ...data } : i)),
       })),
 
       createInvestment: async (data) => {
@@ -37,7 +37,7 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
       approveInvestmentStep: async (investmentId, step, approved, comment) => {
         const { activeGroupId, investments, authUid } = get();
         if (!activeGroupId) throw new Error("No active group");
-        const inv = investments.find((i) => i.id === investmentId);
+        const inv = investments.find((i: Investment) => i.id === investmentId);
         if (!inv) throw new Error("Investment not found");
 
         const currentApprovals: InvestmentApprovals = (inv as any).approvals ?? {
@@ -65,12 +65,14 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
           const tx: WalletTransaction = {
             id: uid(), groupId: activeGroupId,
             type: "investment_disbursement",
+            sourceType: "investment",
+            sourceId: inv.id,
             amount: -inv.investmentAmount,
             description: `Investment: ${inv.investmentName}`,
             date: inv.startDate, investmentId: inv.id, createdAt: new Date().toISOString(),
           };
           get().addWalletTxLocal(tx);
-          set((s) => recalcGroupTotals(s));
+          set((s: StoreState) => recalcGroupTotals(s));
           FS.addWalletTx(activeGroupId, tx).catch(console.warn);
         }
 
@@ -98,7 +100,7 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
         const { activeGroupId, investments } = get();
         if (!activeGroupId) throw new Error("No active group");
         
-        const inv = investments.find((i) => i.id === investmentId);
+        const inv = investments.find((i: Investment) => i.id === investmentId);
         if (!inv) throw new Error("Investment not found");
         if (inv.status === "closed") throw new Error("Investment is already closed");
         
@@ -120,6 +122,8 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
           id: uid(),
           groupId: activeGroupId,
           type: "investment_return",
+          sourceType: "investment",
+          sourceId: inv.id,
           amount: returnAmount,
           description: `Investment return: ${inv.investmentName} (${returnAmount > inv.investmentAmount ? 'Profit' : 'Loss'})`,
           date: now,
@@ -129,7 +133,7 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
         get().addWalletTxLocal(tx);
         
         // Recalculate totals
-        set((s) => recalcGroupTotals(s));
+        set((s: StoreState) => recalcGroupTotals(s));
         
         // Sync to Firebase
         try {
@@ -171,64 +175,40 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
             updatedAt: inv.updatedAt 
           });
           get().deleteWalletTxLocal(tx.id);
-          set((s) => recalcGroupTotals(s));
+          set((s: StoreState) => recalcGroupTotals(s));
           throw error;
         }
       },
-      // ─── Delete Investment ──────────────────────────────────────────────
+      // ─── Delete Investment (atomic cascade to all related wallet txs) ───
       deleteInvestment: async (investmentId: ID, reason: string) => {
         const { activeGroupId, investments, walletTransactions } = get();
         if (!activeGroupId) throw new Error("No active group");
-        
-        const investment = investments.find((i) => i.id === investmentId);
+
+        const investment = investments.find((i: Investment) => i.id === investmentId);
         if (!investment) throw new Error("Investment not found");
-        
-        // Only allow deletion of open, pending, matured, or closed investments
-        if (!["open", "pending", "matured", "closed"].includes(investment.status)) {
+
+        if (!["open", "pending", "pending_committee", "matured", "closed"].includes(investment.status)) {
           throw new Error(`Cannot delete investment with status: ${investment.status}`);
         }
-        
+
         const previousInvestments = [...investments];
         const previousWalletTxs = [...walletTransactions];
-        
-        // Find all associated wallet transactions
         const associatedTxs = walletTransactions.filter(tx => tx.investmentId === investmentId);
-        
-        // Log what we're deleting
-        console.log(`[deleteInvestment] Deleting investment "${investment.investmentName}" with ${associatedTxs.length} associated transactions`);
-        
-        // Delete investment from local state (this also removes associated wallet transactions)
+
+        // Optimistic local removal — investment + every related wallet tx
         get().deleteInvestmentLocal(investmentId);
-        
+
         try {
           get().setSyncStatus("pending");
-          
-          // Delete from Firebase
-          await FS.deleteInvestment(activeGroupId, investmentId, reason);
-          
-          // Also delete associated wallet transactions from Firebase
-          for (const tx of associatedTxs) {
-            await FS.deleteWalletTx(activeGroupId, tx.id, `Deleted with investment: ${reason}`);
-          }
-          
+
+          // Single atomic batch on the server: investment + all related wallet txs
+          await FS.deleteInvestmentWithRelations(activeGroupId, investmentId, reason);
+
           get().recalcTotals();
           get().setSyncStatus("synced");
-          
-          // Log the deletion
-          const { authUid, authName } = get();
-          if (authUid) {
-            await FS.writeAuditLog(activeGroupId, {
-              userId: authUid,
-              groupId: activeGroupId,
-              userName: authName || "Unknown",
-              action: "DELETED_INVESTMENT",
-              entityType: "investment",
-              entityId: investmentId,
-              before: investment as unknown as Record<string, unknown>,
-              reason: `Investment deleted: ${reason}. Associated transactions: ${associatedTxs.length}`,
-            });
-          }
-          
+          // Note: audit log entry (including cascade count) is already written
+          // server-side inside FS.deleteInvestmentWithRelations — no duplicate needed here.
+
         } catch (e) {
           // Rollback on error
           set((s) => ({ 
@@ -245,11 +225,11 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
         }
       },
 
-      deleteInvestmentLocal: (id: ID) => set((s) => {
+      deleteInvestmentLocal: (id: ID) => set((s: StoreState) => {
         // Also clean up any wallet transactions associated with this investment
         const remainingTxs = s.walletTransactions.filter((tx) => tx.investmentId !== id);
         return {
-          investments: s.investments.filter((i) => i.id !== id),
+          investments: s.investments.filter((i: Investment) => i.id !== id),
           walletTransactions: remainingTxs,
         };
       }),

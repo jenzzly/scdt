@@ -1,5 +1,6 @@
 // stores/slices/notificationSlice.ts
 import type { SetFn, GetFn, StoreState } from "../storeTypes";
+import type { AppNotification } from "../../types";
 import * as FS from "../../lib/firestore";
 
 export const createNotificationSlice = (set: SetFn, get: GetFn): Pick<StoreState, "markNotifReadLocal" | "setNotifications"> => ({

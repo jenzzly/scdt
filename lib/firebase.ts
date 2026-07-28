@@ -23,7 +23,8 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 // Initialize Auth with proper persistence for each platform
-let auth;
+import type { Auth } from 'firebase/auth';
+let auth: Auth;
 if (Platform.OS === "web") {
   // For web, use browser local persistence
   const { getAuth, setPersistence, browserLocalPersistence } = require("firebase/auth");

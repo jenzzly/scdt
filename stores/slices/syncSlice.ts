@@ -7,7 +7,7 @@ export const createSyncSlice = (set: SetFn, get: GetFn): Pick<StoreState, "setLo
         syncError: error,
         ...(s === "synced" ? { lastSyncTimestamp: Date.now() } : {}),
       })),
-      triggerForceSync: () => set((s) => ({ forceSyncTrigger: s.forceSyncTrigger + 1 })),
+      triggerForceSync: () => set((s: StoreState) => ({ forceSyncTrigger: s.forceSyncTrigger + 1 })),
       setLoading: (b) => set({ isLoading: b }),
 
 });

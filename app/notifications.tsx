@@ -1,8 +1,7 @@
 import React from "react";
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, Platform,
-} from "react-native";
+  StyleSheet, Platform, useWindowDimensions} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore } from "../stores/useStore";
 import { Card, CardRow, Empty } from "../components/ui";
@@ -21,6 +20,8 @@ const TYPE_ICON: Record<string, string> = {
 
 export default function NotificationsScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 768;
   const { notifications, markNotifReadLocal } = useStore();
 
   const sorted = [...notifications].sort(
@@ -41,14 +42,14 @@ export default function NotificationsScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: 40 }}
+        contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: 40, maxWidth: isWide ? 700 : undefined, alignSelf: isWide ? "center" as any : undefined, width: "100%" as any }}
         showsVerticalScrollIndicator={false}
       >
         {sorted.length === 0 && (
           <Empty message="No notifications yet" icon="🔔" />
         )}
 
-        {unread.length > 0 && (
+        {(unread.length > 0) && (
           <>
             <Text style={styles.groupLabel}>New</Text>
             <Card>
@@ -83,23 +84,24 @@ export default function NotificationsScreen() {
           </>
         )}
 
-        {read.length > 0 && (
+        {(read.length > 0) && (
           <>
             <Text style={[styles.groupLabel, { marginTop: 20 }]}>Earlier</Text>
             <Card>
               {read.map((n, i) => (
-                <CardRow
-                  key={n.id}
-                  left={
-                    <View style={[styles.iconWrap, { opacity: 0.5 }]}>
-                      <Text style={{ fontSize: 20 }}>{TYPE_ICON[n.type] ?? "🔔"}</Text>
-                    </View>
-                  }
-                  title={n.title}
-                  subtitle={n.message}
-                  right={<Text style={styles.time}>{fmtDate(n.createdAt)}</Text>}
-                  showBorder={i < read.length - 1}
-                />
+                <React.Fragment key={n.id}>
+                  <CardRow
+                    left={
+                      <View style={[styles.iconWrap, { opacity: 0.5 }]}>
+                        <Text style={{ fontSize: 20 }}>{TYPE_ICON[n.type] ?? "🔔"}</Text>
+                      </View>
+                    }
+                    title={n.title}
+                    subtitle={n.message}
+                    right={<Text style={styles.time}>{fmtDate(n.createdAt)}</Text>}
+                    showBorder={i < read.length - 1}
+                  />
+                </React.Fragment>
               ))}
             </Card>
           </>

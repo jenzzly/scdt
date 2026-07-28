@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup, useGroupMembers, useCurrentUserRole } from "../../stores/useStore";
 import { Input, Select, Button, useToast } from "../../components/ui";
+import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R, fmtCurrency } from "../../utils/theme";
 
 const CONTRIB_TYPES = [
@@ -59,15 +60,7 @@ export default function AddContributionModal() {
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1, backgroundColor: Colors.bg }}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn}>
-          <Text style={styles.closeBtnText}>✕</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Record Contribution</Text>
-        <View style={{ width: 32 }} />
-      </View>
-
+    <ModalShell title="Record Contribution" onClose={() => router.back()}>
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         <Select
           label="Member *"
@@ -99,7 +92,7 @@ export default function AddContributionModal() {
         <Button label="Record Contribution" onPress={handleSave} fullWidth loading={loading} size="lg" />
       </ScrollView>
       <Toast />
-    </KeyboardAvoidingView>
+    </ModalShell>
   );
 }
 

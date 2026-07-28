@@ -6,17 +6,15 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Dimensions,
   Platform,
   ScrollView,
   StatusBar,
+  useWindowDimensions,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Colors, S, R } from "../../utils/theme";
-
-const { width } = Dimensions.get("window");
 
 const SLIDES = [
   {
@@ -75,6 +73,12 @@ const SLIDES = [
 
 export default function OnboardingScreen() {
   const router = useRouter();
+  // Reactive width — updates on rotation/resize, unlike a module-level
+  // Dimensions.get("window") snapshot taken once at import time. On wide
+  // screens (web/tablet) the carousel is capped to a comfortable reading
+  // width instead of stretching edge-to-edge.
+  const { width: screenWidth } = useWindowDimensions();
+  const width = Math.min(screenWidth, 480);
   const [currentIndex, setCurrentIndex] = useState(0);
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -157,7 +161,7 @@ export default function OnboardingScreen() {
         style={styles.scrollView}
       >
         {SLIDES.map((slide, index) => (
-          <View key={slide.id} style={styles.slide}>
+          <View key={slide.id} style={[styles.slide, { width }]}>
             <View style={styles.slideContent}>
               {/* Icon Circle */}
               <View style={styles.iconCircle}>
@@ -247,7 +251,7 @@ export default function OnboardingScreen() {
             style={[
               styles.progressFill,
               {
-                width: `${((currentIndex + 1) / SLIDES.length) * 100}%`,
+                width: `${((currentIndex + 1) / SLIDES.length) * 100}%` as any,
                 backgroundColor: currentSlide.color,
               },
             ]}
@@ -318,7 +322,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   slide: {
-    width: width,
+    // width is applied inline at the call site (depends on component-local
+    // responsive `width`, not available at StyleSheet module scope)
     flex: 1,
   },
   slideContent: {
@@ -377,7 +382,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   featuresList: {
-    width: "100%",
+    width: "100%" as any,
     marginBottom: 24,
     paddingHorizontal: 20,
   },
@@ -474,7 +479,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   progressFill: {
-    height: "100%",
+    height: "100%" as any,
     borderRadius: 2,
   },
 });

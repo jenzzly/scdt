@@ -1,10 +1,11 @@
 // app/modals/add-investment.tsx - Add closing functionality
 
 import React, { useState, useMemo } from "react";
-import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup, useGroupInvestments } from "../../stores/useStore";
 import { Input, Select, Button, useToast, BottomModal } from "../../components/ui";
+import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R, fmtCurrency, round2, showConfirm } from "../../utils/theme";
 
 const INV_TYPES = [
@@ -111,12 +112,7 @@ export default function AddInvestmentModal() {
   const openInvestments = investments.filter(i => i.status === "open");
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1, backgroundColor: Colors.bg }}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}><Text style={styles.cancel}>Cancel</Text></TouchableOpacity>
-        <Text style={styles.title}>New Investment</Text>
-        <View style={{ width: 60 }} />
-      </View>
+    <ModalShell title="Add Investment" onClose={() => router.back()}>
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         <Text style={styles.sectionLbl}>Basic Info</Text>
         <Input label="Investment Name *" value={name} onChangeText={setName} placeholder="Real Estate Plot, Agricultural Co-op…" />
@@ -163,7 +159,7 @@ export default function AddInvestmentModal() {
         <Button label="Register Investment" onPress={handleSave} fullWidth loading={loading} size="lg" />
 
         {/* Open Investments Section */}
-        {openInvestments.length > 0 && (
+        {(openInvestments.length > 0) && (
           <View style={styles.openInvestmentsSection}>
             <Text style={styles.sectionLbl}>Open Investments</Text>
             {openInvestments.map((inv) => (
@@ -200,7 +196,7 @@ export default function AddInvestmentModal() {
                 <Text style={styles.modalDetail}>
                   Expected Return: {fmtCurrency(selectedInvestment.expectedReturn || 0)}
                 </Text>
-                {selectedInvestment.expectedReturn && selectedInvestment.investmentAmount && (
+                {!!(selectedInvestment.expectedReturn) && !!(selectedInvestment.investmentAmount) && (
                   <Text style={[styles.modalDetail, { color: Colors.gold }]}>
                     Expected ROI: {round2(((selectedInvestment.expectedReturn - selectedInvestment.investmentAmount) / selectedInvestment.investmentAmount) * 100)}%
                   </Text>
@@ -226,7 +222,7 @@ export default function AddInvestmentModal() {
                 hint="Leave blank to use calculated profit/loss"
               />
 
-              {closeReturn && selectedInvestment.investmentAmount && (
+              {!!(closeReturn) && !!(selectedInvestment.investmentAmount) && (
                 <View style={styles.profitPreview}>
                   <Text style={styles.profitLabel}>
                     {parseFloat(closeReturn) >= selectedInvestment.investmentAmount ? '📈 Profit' : '📉 Loss'}
@@ -261,7 +257,7 @@ export default function AddInvestmentModal() {
       </BottomModal>
 
       <Toast />
-    </KeyboardAvoidingView>
+    </ModalShell>
   );
 }
 

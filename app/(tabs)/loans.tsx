@@ -1,20 +1,20 @@
 // app/(tabs)/loans.tsx - Updated with delete investment button
 
 import React, { useState, useMemo } from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, StatusBar } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, StatusBar, useWindowDimensions } from "react-native";
 import { useRouter } from "expo-router";
 import {
   useStore, useGroupLoans, useGroupMembers,
   useCurrentUserRole, useCurrentMember,
 } from "../../stores/useStore";
-import { useGroupInvestments, useCurrentMemberPermissions } from "../../stores/selectors";
+import { useGroupInvestments, useGroupWallet, useCurrentMemberPermissions } from "../../stores/selectors";
 import {
   TabRow, Card, Badge, Empty, LoanProgress,
   useToast, Button, BottomModal, Input,
 } from "../../components/ui";
 import { S, R, Colors, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
 import { exportPdf, generatePaymentScheduleHtml } from "../../utils/export";
-import type { Loan, Investment } from "../../types";
+import type { Loan, Investment, WalletTransaction, Member } from "../../types";
 
 // ─── Tiny components ──────────────────────────────────────────────
 const Divider = () => (
@@ -133,6 +133,7 @@ function LoanDetailModal({
   visible,
   loan,
   member,
+  walletTxs,
   onClose,
   onSchedule,
   onRepayment,
@@ -146,8 +147,9 @@ function LoanDetailModal({
   visible: boolean;
   loan: Loan | null;
   member: any;
+  walletTxs: any[];
   onClose: () => void;
-  onSchedule: () => void;
+  onSchedule?: () => void;
   onRepayment: () => void;
   onDisburse: () => void;
   onApprove: () => void;
@@ -156,44 +158,111 @@ function LoanDetailModal({
   isPending: boolean;
   actableStep: string | null;
 }) {
+  // Pair interest + principal txs into rows for the history table
+  const paymentTxs = React.useMemo(() => {
+    if (!loan) return [];
+    const intTxs  = walletTxs.filter(t => t.loanId === loan.id && ["loan_interest_income","loan_repayment"].includes(t.type))
+      .sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const prinTxs = walletTxs.filter(t => t.loanId === loan.id && t.type === "loan_principal_recovery")
+      .sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return intTxs.map((itx, i) => ({
+      date:      itx.date,
+      interest:  itx.amount,
+      principal: prinTxs[i]?.amount ?? 0,
+    }));
+  }, [loan, walletTxs]);
   if (!loan) return null;
-  
-  const pct = loan.totalRepayable > 0 ? round2((loan.amountRepaid / loan.totalRepayable) * 100) : 0;
-  const statusColor = STATUS_COLOR[loan.status] || loan.status === "rejected" ? C.error : C.infoText;
-  const statusBg = STATUS_BG[loan.status] || C.mutedBg;
+
+  // Progress: repaid loans are always 100% regardless of amountRepaid vs totalRepayable
+  const pct = loan.status === "repaid"
+    ? 100
+    : loan.totalRepayable > 0
+      ? Math.min(100, (loan.amountRepaid / loan.totalRepayable) * 100)
+      : 0;
+  const isRB = loan.interestMethod === "reducing_balance";
+  const accruedInterest = (loan as any).accruedInterest ?? 0;
+  const statusColor = STATUS_COLOR[loan.status] || (loan.status === "rejected" ? C.error : C.infoText);
+  const statusBg    = STATUS_BG[loan.status] || C.mutedBg;
   const statusLabel = STATUS_LABEL[loan.status] || loan.status;
-  
+
   return (
     <BottomModal visible={visible} onClose={onClose} title="Loan Details">
-      <ScrollView style={{ padding: 16, maxHeight: 500 }} showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ padding: 16, maxHeight: 560 }} showsVerticalScrollIndicator={false}>
+
+        {/* Member + amount header */}
         <View style={styles.modalInfo}>
           <Text style={styles.modalMember}>{member?.fullName ?? "Unknown"}</Text>
           <Text style={styles.modalAmount}>{fmtCurrency(loan.amount)}</Text>
           <Text style={styles.modalDetail}>
-            Interest: {loan.interestRate}% · {loan.repaymentMonths} months
+            {loan.interestRate}% {(loan as any).interestRatePeriod === "annual" ? "annual" : "monthly"}{isRB ? " · daily accrual" : " flat"} · {loan.repaymentMonths} months
           </Text>
-          <Text style={styles.modalDetail}>
-            Total Repayable: {fmtCurrency(loan.totalRepayable)}
-          </Text>
-          <View style={[styles.statusBadge, { backgroundColor: statusBg, alignSelf: 'center', marginTop: 4 }]}>
+          <View style={[styles.statusBadge, { backgroundColor: statusBg, alignSelf: "center", marginTop: 4 }]}>
             <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
           </View>
         </View>
-        
-        {loan.purpose && (
+
+        {loan.purpose ? (
           <View style={styles.modalInfo}>
-            <Text style={styles.modalDetail}>Purpose:</Text>
-            <Text style={[styles.modalPurpose, { textAlign: 'center' }]}>
-              {loan.purpose}
+            <Text style={styles.modalDetail}>Purpose: {loan.purpose}</Text>
+          </View>
+        ) : null}
+
+        {/* Financial summary grid */}
+        <View style={detailSt.grid}>
+          <View style={detailSt.cell}>
+            <Text style={detailSt.cellLbl}>Principal</Text>
+            <Text style={detailSt.cellVal}>{fmtCurrency(loan.amount)}</Text>
+          </View>
+          <View style={detailSt.cell}>
+            <Text style={detailSt.cellLbl}>Est. Total Interest</Text>
+            <Text style={detailSt.cellVal}>{fmtCurrency(loan.totalInterest)}</Text>
+          </View>
+          <View style={detailSt.cell}>
+            <Text style={detailSt.cellLbl}>Balance (Principal)</Text>
+            <Text style={[detailSt.cellVal, { color: C.error }]}>{fmtCurrency(loan.balance)}</Text>
+          </View>
+          {isRB ? (
+            <View style={detailSt.cell}>
+              <Text style={detailSt.cellLbl}>Accrued Interest</Text>
+              <Text style={[detailSt.cellVal, { color: C.gold }]}>{fmtCurrency(accruedInterest)}</Text>
+            </View>
+          ) : (
+            <View style={detailSt.cell}>
+              <Text style={detailSt.cellLbl}>Int. Left</Text>
+              <Text style={[detailSt.cellVal, { color: C.gold }]}>
+                {fmtCurrency(Math.max(0, round2(loan.totalRepayable - loan.amountRepaid - loan.balance)))}
+              </Text>
+            </View>
+          )}
+          <View style={detailSt.cell}>
+            <Text style={detailSt.cellLbl}>Amount Repaid</Text>
+            <Text style={[detailSt.cellVal, { color: C.success }]}>{fmtCurrency(loan.amountRepaid)}</Text>
+          </View>
+          <View style={detailSt.cell}>
+            <Text style={detailSt.cellLbl}>Total Due</Text>
+            <Text style={[detailSt.cellVal, { color: C.primary, fontWeight: "800" }]}>
+              {isRB
+                ? fmtCurrency(round2(loan.balance + accruedInterest))
+                : fmtCurrency(round2(loan.totalRepayable - loan.amountRepaid))}
             </Text>
           </View>
-        )}
-        
-        <View style={styles.modalInfo}>
-          <Text style={styles.modalDetail}>Amount Repaid: {fmtCurrency(loan.amountRepaid)}</Text>
-          <Text style={styles.modalDetail}>Balance: {fmtCurrency(loan.balance)}</Text>
-          <Text style={styles.modalDetail}>Late Fees: {fmtCurrency(loan.lateFees || 0)}</Text>
-          <Text style={styles.modalDetail}>Progress: {pct.toFixed(0)}% complete</Text>
+        </View>
+
+        {/* Progress bar */}
+        <View style={detailSt.progressWrap}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+            <Text style={detailSt.progressLbl}>Repayment Progress</Text>
+            <Text style={[detailSt.progressLbl, { color: pct >= 100 ? C.success : C.primary, fontWeight: "700" }]}>
+              {pct.toFixed(1)}%
+            </Text>
+          </View>
+          <View style={detailSt.progressTrack}>
+            <View style={[detailSt.progressFill, { width: `${Math.min(100, pct)}%` as any, backgroundColor: pct >= 100 ? C.success : C.primary }]} />
+          </View>
+          <Text style={detailSt.progressSub}>
+            {fmtCurrency(loan.amountRepaid)} repaid of {fmtCurrency(loan.totalRepayable)}
+            {loan.status !== "repaid" ? ` · ${fmtCurrency(round2(Math.max(0, loan.totalRepayable - loan.amountRepaid)))} remaining` : " · Fully repaid ✓"}
+          </Text>
         </View>
         
         <View style={styles.actionRow}>
@@ -225,13 +294,88 @@ function LoanDetailModal({
         </View>
         
         <Button label="Close" onPress={onClose} fullWidth variant="secondary" style={{ marginTop: 12 }} />
+
+        {/* Payment history — pulled from walletTxs prop */}
+        {paymentTxs && paymentTxs.length > 0 && (
+          <View style={detailSt.histCard}>
+            <Text style={detailSt.histTitle}>Payment History ({paymentTxs.length} transactions)</Text>
+            {/* Column headers */}
+            <View style={detailSt.histHeadRow}>
+              <Text style={[detailSt.histHead, { flex: 1.4 }]}>DATE</Text>
+              <Text style={[detailSt.histHead, { flex: 1, textAlign: "right" }]}>INTEREST</Text>
+              <Text style={[detailSt.histHead, { flex: 1, textAlign: "right" }]}>PRINCIPAL</Text>
+              <Text style={[detailSt.histHead, { flex: 1, textAlign: "right" }]}>TOTAL</Text>
+            </View>
+            {paymentTxs.map((row: any, i: number) => (
+              <View key={i} style={[detailSt.histRow, i % 2 === 1 && { backgroundColor: C.elevated }]}>
+                <Text style={[detailSt.histCell, { flex: 1.4 }]} numberOfLines={1}>
+                  {new Date(row.date).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "2-digit" })}
+                </Text>
+                <Text style={[detailSt.histCell, { flex: 1, textAlign: "right", color: C.gold }]}>
+                  {fmtCurrency(row.interest)}
+                </Text>
+                <Text style={[detailSt.histCell, { flex: 1, textAlign: "right", color: C.success }]}>
+                  {fmtCurrency(row.principal)}
+                </Text>
+                <Text style={[detailSt.histCell, { flex: 1, textAlign: "right", fontWeight: "700" }]}>
+                  {fmtCurrency(row.interest + row.principal)}
+                </Text>
+              </View>
+            ))}
+            {/* Totals row */}
+            <View style={[detailSt.histRow, detailSt.histTotalRow]}>
+              <Text style={[detailSt.histCell, { flex: 1.4, fontWeight: "700", color: C.text }]}>Total</Text>
+              <Text style={[detailSt.histCell, { flex: 1, textAlign: "right", fontWeight: "700", color: C.gold }]}>
+                {fmtCurrency(paymentTxs.reduce((s: number, r: any) => s + r.interest, 0))}
+              </Text>
+              <Text style={[detailSt.histCell, { flex: 1, textAlign: "right", fontWeight: "700", color: C.success }]}>
+                {fmtCurrency(paymentTxs.reduce((s: number, r: any) => s + r.principal, 0))}
+              </Text>
+              <Text style={[detailSt.histCell, { flex: 1, textAlign: "right", fontWeight: "700", color: C.text }]}>
+                {fmtCurrency(paymentTxs.reduce((s: number, r: any) => s + r.interest + r.principal, 0))}
+              </Text>
+            </View>
+          </View>
+        )}
       </ScrollView>
     </BottomModal>
   );
 }
 
+// ─── Loan Detail Modal styles ─────────────────────────────────────────────────
+const detailSt = StyleSheet.create({
+  grid: {
+    flexDirection: "row", flexWrap: "wrap",
+    borderWidth: 1, borderColor: C.border, borderRadius: 12,
+    overflow: "hidden", marginBottom: 16,
+  },
+  cell: {
+    width: "50%", padding: 12,
+    borderRightWidth: 1, borderRightColor: C.border,
+    borderBottomWidth: 1, borderBottomColor: C.border,
+  },
+  cellLbl: { fontSize: 10, color: C.text3, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 },
+  cellVal: { fontSize: 14, fontWeight: "700", color: C.text },
+
+  progressWrap:  { marginBottom: 16 },
+  progressLbl:   { fontSize: 12, color: C.text3, fontWeight: "600" },
+  progressTrack: { height: 8, borderRadius: 4, backgroundColor: C.border, overflow: "hidden", marginVertical: 6 },
+  progressFill:  { height: "100%" as any, borderRadius: 4 },
+  progressSub:   { fontSize: 11, color: C.text3 },
+
+  histCard:    { marginTop: 16, borderWidth: 1, borderColor: C.border, borderRadius: 12, overflow: "hidden" },
+  histTitle:   { fontSize: 13, fontWeight: "700", color: C.text, padding: 12, backgroundColor: C.elevated, borderBottomWidth: 1, borderBottomColor: C.border },
+  histHeadRow: { flexDirection: "row", paddingHorizontal: 12, paddingVertical: 6, backgroundColor: C.elevated },
+  histHead:    { fontSize: 9, fontWeight: "700", color: C.text3, textTransform: "uppercase", letterSpacing: 0.6 },
+  histRow:     { flexDirection: "row", paddingHorizontal: 12, paddingVertical: 9, borderTopWidth: 1, borderTopColor: C.borderLight },
+  histCell:    { fontSize: 12, color: C.text2 },
+  histTotalRow:{ backgroundColor: C.elevated, borderTopWidth: 1, borderTopColor: C.border },
+});
+
 export default function LoansScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 768;
   const { 
     approveLoanStep, 
     disburseLoan, 
@@ -243,6 +387,7 @@ export default function LoansScreen() {
   } = useStore();
   const allLoans = useGroupLoans();
   const investments = useGroupInvestments();
+  const walletTxs = useGroupWallet();
   const groupMembers = useGroupMembers();
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
@@ -275,42 +420,42 @@ export default function LoansScreen() {
   const canSeeAll = ["admin", "loan_officer", "committee", "accountant"].includes(role);
   const isAdmin = role === "admin";
 
-  const getMember = (id: string) => groupMembers.find((m) => m.id === id);
+  const getMember = (id: string) => groupMembers.find((m: Member) => m.id === id);
 
   const visibleLoans = useMemo(() => {
     if (canSeeAll) return allLoans;
-    return allLoans.filter((l) => l.memberId === currentMember?.id);
+    return allLoans.filter((l: Loan) => l.memberId === currentMember?.id);
   }, [allLoans, canSeeAll, currentMember]);
 
   const visibleInvestments = useMemo(() => {
     if (canSeeAll) return investments;
-    return investments.filter((i) => i.createdBy === currentMember?.id);
+    return investments.filter((i: Investment) => i.createdBy === currentMember?.id);
   }, [investments, canSeeAll, currentMember]);
 
   const filteredLoans = useMemo(() => {
     const list = visibleLoans;
-    if (tab === "Pending")  return list.filter((l) => PENDING_STATUSES.includes(l.status));
-    if (tab === "Active")   return list.filter((l) => l.status === "disbursed");
-    if (tab === "Repaid")   return list.filter((l) => l.status === "repaid");
-    if (tab === "Rejected") return list.filter((l) => ["rejected", "defaulted"].includes(l.status));
+    if (tab === "Pending")  return list.filter((l: Loan) => PENDING_STATUSES.includes(l.status));
+    if (tab === "Active")   return list.filter((l: Loan) => l.status === "disbursed");
+    if (tab === "Repaid")   return list.filter((l: Loan) => l.status === "repaid");
+    if (tab === "Rejected") return list.filter((l: Loan) => ["rejected", "defaulted"].includes(l.status));
     return list;
   }, [visibleLoans, tab]);
 
   const filteredInvestments = useMemo(() => {
     const list = visibleInvestments;
-    if (tab === "Active")   return list.filter((i) => i.status === "open");
-    if (tab === "Closed")   return list.filter((i) => i.status === "closed");
-    if (tab === "Matured")  return list.filter((i) => i.status === "matured");
-    if (tab === "Pending")  return list.filter((i) => INVESTMENT_PENDING_STATUSES.includes(i.status));
+    if (tab === "Active")   return list.filter((i: Investment) => i.status === "open");
+    if (tab === "Closed")   return list.filter((i: Investment) => i.status === "closed");
+    if (tab === "Matured")  return list.filter((i: Investment) => (i.status as string) === "matured");
+    if (tab === "Pending")  return list.filter((i: Investment) => INVESTMENT_PENDING_STATUSES.includes(i.status));
     return list;
   }, [visibleInvestments, tab]);
 
-  const outstanding = useMemo(() => allLoans.filter((l) => l.status === "disbursed").reduce((s, l) => s + l.balance, 0), [allLoans]);
-  const totalRepaid = useMemo(() => allLoans.reduce((s, l) => s + l.amountRepaid, 0), [allLoans]);
-  const totalDisbursed = useMemo(() => allLoans.filter((l) => ["disbursed", "repaid"].includes(l.status)).reduce((s, l) => s + l.amount, 0), [allLoans]);
-  const pendingCount = useMemo(() => allLoans.filter((l) => PENDING_STATUSES.includes(l.status)).length, [allLoans]);
-  const totalInvested = useMemo(() => investments.reduce((s, i) => s + i.investmentAmount, 0), [investments]);
-  const totalReturns = useMemo(() => investments.reduce((s, i) => s + (i.actualReturn || 0), 0), [investments]);
+  const outstanding = useMemo(() => allLoans.filter((l: Loan) => l.status === "disbursed").reduce((s: number, l: Loan) => s + l.balance, 0), [allLoans]);
+  const totalRepaid = useMemo(() => allLoans.reduce((s: number, l: Loan) => s + l.amountRepaid, 0), [allLoans]);
+  const totalDisbursed = useMemo(() => allLoans.filter((l: Loan) => ["disbursed", "repaid"].includes(l.status)).reduce((s: number, l: Loan) => s + l.amount, 0), [allLoans]);
+  const pendingCount = useMemo(() => allLoans.filter((l: Loan) => PENDING_STATUSES.includes(l.status)).length, [allLoans]);
+  const totalInvested = useMemo(() => investments.reduce((s: number, i: Investment) => s + i.investmentAmount, 0), [investments]);
+  const totalReturns = useMemo(() => investments.reduce((s: number, i: Investment) => s + (i.actualReturn || 0), 0), [investments]);
 
   const handleApproval = async () => {
     if (!pendingAction) return;
@@ -487,7 +632,7 @@ export default function LoansScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.loanMember}>{investment.investmentName}</Text>
             <Text style={styles.loanDate}>
-              {investment.investmentType.replace('_', ' ')} · {fmtDate(investment.startDate)}
+              {(investment.investmentType ?? "other").replace('_', ' ')} · {fmtDate(investment.startDate)}
             </Text>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: statusBg }]}>
@@ -647,7 +792,7 @@ export default function LoansScreen() {
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
 
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, isWide && { paddingHorizontal: 32 }]}>
         <View>
           <Text style={styles.headerSub}>Manage</Text>
           <Text style={styles.headerTitle}>Loans & Investments</Text>
@@ -655,7 +800,10 @@ export default function LoansScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={[
+          { paddingBottom: 100 },
+          isWide && { maxWidth: 960, alignSelf: "center" as any, width: "100%" as any },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* Summary card — dark navy, matching wallet */}
@@ -691,7 +839,7 @@ export default function LoansScreen() {
               </View>
             </View>
 
-            {pendingCount > 0 && (
+            {(pendingCount > 0) && (
               <View style={styles.pendingBadgeRow}>
                 <View style={styles.pendingBadge}>
                   <Text style={styles.pendingBadgeText}>⏳ {pendingCount} pending approval{pendingCount > 1 ? "s" : ""}</Text>
@@ -774,8 +922,8 @@ export default function LoansScreen() {
                 const step = getActableStep(loan.status, role);
                 const isPending = PENDING_STATUSES.includes(loan.status);
                 return (
+                  <React.Fragment key={loan.id}>
                   <LoanCard
-                    key={loan.id}
                     loan={loan}
                     member={getMember(loan.memberId)}
                     actableStep={step}
@@ -821,6 +969,7 @@ export default function LoansScreen() {
                         : undefined
                     }
                   />
+                  </React.Fragment>
                 );
               } else {
                 // It's an investment
@@ -1030,7 +1179,7 @@ export default function LoansScreen() {
                 <Text style={styles.modalDetail}>
                   Expected Return: {fmtCurrency(selectedInvestment.expectedReturn || 0)}
                 </Text>
-                {selectedInvestment.expectedReturn && selectedInvestment.investmentAmount && (
+                {!!(selectedInvestment.expectedReturn) && !!(selectedInvestment.investmentAmount) && (
                   <Text style={[styles.modalDetail, { color: C.gold }]}>
                     Expected ROI: {round2(((selectedInvestment.expectedReturn - selectedInvestment.investmentAmount) / selectedInvestment.investmentAmount) * 100)}%
                   </Text>
@@ -1137,7 +1286,7 @@ export default function LoansScreen() {
                 <Text style={styles.modalDetail}>
                   Expected Return: {fmtCurrency(selectedInvestment.expectedReturn || 0)}
                 </Text>
-                {selectedInvestment.expectedReturn && selectedInvestment.investmentAmount && (
+                {!!(selectedInvestment.expectedReturn) && !!(selectedInvestment.investmentAmount) && (
                   <Text style={[styles.modalDetail, { color: C.gold }]}>
                     Expected ROI: {round2(((selectedInvestment.expectedReturn - selectedInvestment.investmentAmount) / selectedInvestment.investmentAmount) * 100)}%
                   </Text>
@@ -1163,7 +1312,7 @@ export default function LoansScreen() {
                 hint="Leave blank to use calculated profit/loss"
               />
 
-              {closeReturnAmount && selectedInvestment.investmentAmount && (
+              {!!(closeReturnAmount) && !!(selectedInvestment.investmentAmount) && (
                 <View style={styles.profitPreview}>
                   <Text style={styles.profitLabel}>
                     {parseFloat(closeReturnAmount) >= selectedInvestment.investmentAmount ? '📈 Profit' : '📉 Loss'}
@@ -1254,6 +1403,7 @@ export default function LoansScreen() {
         visible={showLoanDetail}
         loan={selectedLoan}
         member={selectedLoan ? getMember(selectedLoan.memberId) : null}
+        walletTxs={walletTxs}
         actableStep={selectedLoan ? getActableStep(selectedLoan.status, role) : null}
         onClose={() => { setShowLoanDetail(false); setSelectedLoan(null); }}
         onSchedule={() => {
@@ -1315,13 +1465,19 @@ function LoanCard({
   onApprove: () => void;
   onReject: () => void;
   onDisburse: () => void;
-  onRepayment: () => void;
+  onRepayment: () => void | any;
   onSchedule?: () => void;
   onDelete: () => void;
-  onEditResubmit?: () => void;
+  onEditResubmit?: () => void | any;
   onViewDetails: () => void;
+  key?: any; // React key — stripped before passing, needed for TS
 }) {
-  const pct = loan.totalRepayable > 0 ? round2((loan.amountRepaid / loan.totalRepayable) * 100) : 0;
+  // repaid loans are ALWAYS 100% — never compute from amountRepaid/totalRepayable
+  const pct = loan.status === "repaid"
+    ? 100
+    : loan.totalRepayable > 0
+      ? Math.min(100, (loan.amountRepaid / loan.totalRepayable) * 100)
+      : 0;
   const statusColor = STATUS_COLOR[loan.status] || C.infoText;
   const statusBg = STATUS_BG[loan.status] || C.mutedBg;
   const statusLabel = STATUS_LABEL[loan.status] || loan.status;
@@ -1366,13 +1522,15 @@ function LoanCard({
         <View style={styles.progressSection}>
           <View style={styles.progressHeader}>
             <Text style={styles.progressLabel}>Repayment Progress</Text>
-            <Text style={styles.progressPercent}>{pct.toFixed(0)}%</Text>
+            <Text style={[styles.progressPercent, pct >= 100 ? { color: C.success } : {}]}>{pct.toFixed(1)}%</Text>
           </View>
           <View style={styles.progressBar}>
-            <View style={[styles.progressFill, { width: `${pct}%` }]} />
+            <View style={[styles.progressFill, { width: `${Math.min(100, pct)}%` as any, backgroundColor: pct >= 100 ? C.success : C.primary }]} />
           </View>
           <Text style={styles.progressSub}>
-            {fmtCurrency(loan.amountRepaid)} of {fmtCurrency(loan.totalRepayable)}
+            {loan.status === "repaid"
+              ? `${fmtCurrency(loan.amountRepaid)} repaid · Fully paid ✓`
+              : `${fmtCurrency(loan.amountRepaid)} of ${fmtCurrency(loan.totalRepayable)} · ${fmtCurrency(Math.max(0, round2(loan.totalRepayable - loan.amountRepaid)))} remaining`}
           </Text>
         </View>
       )}
@@ -1660,7 +1818,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   progressFill: {
-    height: "100%",
+    height: "100%" as any,
     backgroundColor: C.accent,
     borderRadius: 3,
   },

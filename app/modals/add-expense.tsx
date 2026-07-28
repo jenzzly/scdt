@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup } from "../../stores/useStore";
 import { Input, Select, Button, useToast } from "../../components/ui";
+import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R } from "../../utils/theme";
 
 const CATEGORIES = [
@@ -48,12 +49,7 @@ export default function AddExpenseModal() {
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1, backgroundColor: Colors.bg }}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}><Text style={styles.cancel}>Cancel</Text></TouchableOpacity>
-        <Text style={styles.title}>Record Expense</Text>
-        <View style={{ width: 60 }} />
-      </View>
+    <ModalShell title="Record Expense" onClose={() => router.back()}>
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         <Select label="Category" value={category} options={CATEGORIES} onChange={setCategory} />
         <View style={{ flexDirection: "row", gap: 10 }}>
@@ -68,7 +64,7 @@ export default function AddExpenseModal() {
         <Button label="Record Expense" onPress={handleSave} fullWidth loading={loading} size="lg" />
       </ScrollView>
       <Toast />
-    </KeyboardAvoidingView>
+    </ModalShell>
   );
 }
 

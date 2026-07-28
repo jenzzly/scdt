@@ -36,10 +36,11 @@ export function useUnpaidPenalties(memberId: string) {
     // Meetings screen (which only flips `penaltyPaid`) could never make it
     // disappear here, since the wallet half was never reconsidered.
     //
-    // Late fees added independently of meeting attendance (e.g. via the
-    // "Add Wallet Transaction" screen) don't have that id shape, so they
-    // still count below as genuinely unpaid — there's no separate
-    // "cleared" flag for those yet.
+    // Late fees added independently of meeting attendance (standalone
+    // contribution/loan late fees from utils/lateFees.ts, or manual wallet
+    // entries) don't have that id shape, so they're tracked via their own
+    // `feePaid` flag instead — set by clearStandaloneLateFee(), officer-gated
+    // the same way clearAllMemberPenalties() is.
     const meetingPenaltyTxIds = new Set(
       meetings.map((meeting) => `meeting-penalty-${meeting.id}-${memberId}`)
     );
@@ -47,6 +48,7 @@ export function useUnpaidPenalties(memberId: string) {
       tx.type === "late_fee" && 
       tx.memberId === memberId &&
       !tx.deletedAt && // Not soft-deleted
+      !tx.feePaid && // Not already cleared by an officer (see clearStandaloneLateFee)
       !meetingPenaltyTxIds.has(tx.id) // not a meeting-attendance ledger mirror — those are tracked above
     );
     

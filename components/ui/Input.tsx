@@ -3,15 +3,18 @@ import React, { forwardRef } from "react";
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, Platform } from "react-native";
 import { Colors, S, R } from "../../utils/theme";
 
-interface InputProps {
+// Allows arbitrary extra props to pass through to TextInput without TS errors
+// while still providing typed intellisense for all known props.
+type InputProps = {
   label?: string;
   value: string;
   onChangeText: (text: string) => void;
   placeholder?: string;
   secureTextEntry?: boolean;
-  keyboardType?: "default" | "email-address" | "numeric" | "phone-pad";
+  keyboardType?: "default" | "email-address" | "numeric" | "phone-pad" | "decimal-pad" | "number-pad";
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
   autoComplete?: string;
+  autoCorrect?: boolean;
   returnKeyType?: "done" | "go" | "next" | "search" | "send";
   onSubmitEditing?: () => void;
   onKeyPress?: (e: any) => void;
@@ -23,10 +26,16 @@ interface InputProps {
   hint?: string;
   error?: string;
   prefix?: string;
+  clearButtonMode?: "never" | "while-editing" | "unless-editing" | "always";
   containerStyle?: any;
-}
+  style?: any;
+  inputStyle?: any;
+  testID?: string;
+  [key: string]: any; // passthrough for extra TextInput props
+};
 
-export const Input = forwardRef<TextInput, InputProps>(({
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const Input = forwardRef<TextInput, any>(({
   label,
   value,
   onChangeText,
@@ -47,6 +56,11 @@ export const Input = forwardRef<TextInput, InputProps>(({
   error,
   prefix,
   containerStyle,
+  autoCorrect,
+  clearButtonMode,
+  style,
+  inputStyle,
+  testID,
 }, ref) => {
   return (
     <View style={[styles.container, containerStyle]}>
@@ -56,6 +70,7 @@ export const Input = forwardRef<TextInput, InputProps>(({
         {prefix && <Text style={styles.prefix}>{prefix}</Text>}
         <TextInput
           ref={ref}
+          testID={testID}
           style={[
             styles.input,
             leftIcon && styles.inputWithLeftIcon,
@@ -70,6 +85,8 @@ export const Input = forwardRef<TextInput, InputProps>(({
           keyboardType={keyboardType}
           autoCapitalize={autoCapitalize}
           autoComplete={autoComplete}
+          autoCorrect={autoCorrect}
+          clearButtonMode={clearButtonMode}
           returnKeyType={returnKeyType}
           onSubmitEditing={onSubmitEditing}
           onKeyPress={onKeyPress}

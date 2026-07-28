@@ -66,6 +66,8 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
               id: uid(),
               groupId: activeGroupId,
               type: "contribution",
+              sourceType: "contribution" as const,
+              sourceId: contribution.id,
               amount: data.amount,
               description: data.description || "Contribution",
               date: data.date,

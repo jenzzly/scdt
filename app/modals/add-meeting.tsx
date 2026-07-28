@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup } from "../../stores/useStore";
 import { Input, Button, useToast } from "../../components/ui";
+import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S } from "../../utils/theme";
 
 export default function AddMeetingModal() {
@@ -38,12 +39,7 @@ export default function AddMeetingModal() {
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1, backgroundColor: Colors.bg }}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}><Text style={styles.cancel}>Cancel</Text></TouchableOpacity>
-        <Text style={styles.title}>Schedule Meeting</Text>
-        <View style={{ width: 60 }} />
-      </View>
+    <ModalShell title="Schedule Meeting" onClose={() => router.back()}>
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         <Input label="Meeting Title *" value={title} onChangeText={setTitle} placeholder="Monthly General Meeting" />
         <Input label="Date *" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
@@ -52,7 +48,7 @@ export default function AddMeetingModal() {
         <Button label="Schedule Meeting" onPress={handleSave} fullWidth loading={loading} size="lg" />
       </ScrollView>
       <Toast />
-    </KeyboardAvoidingView>
+    </ModalShell>
   );
 }
 

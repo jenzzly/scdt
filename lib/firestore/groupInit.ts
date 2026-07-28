@@ -34,7 +34,6 @@ export async function initGroupData(
   try {
     const groupSnap = await getDoc(groupRef);
     if (!groupSnap.exists()) {
-      console.log("[initGroupData] Creating group doc:", groupId);
       await setDoc(groupRef, {
         id: groupId,
         name: BRAND.defaultGroupName,
@@ -44,10 +43,10 @@ export async function initGroupData(
         contributionDay: BRAND.defaults.contributionDay,
         loanInterestRate: BRAND.defaults.loanInterestRate,
         loanInterestMethod: BRAND.defaults.loanInterestMethod,
-        latePenaltyAmount: BRAND.defaults.latePenaltyAmount,
-        maxLoanMultiplier: BRAND.defaults.maxLoanMultiplier,
-        absencePenaltyMember: BRAND.defaults.absencePenaltyMember,
-        absencePenaltyOfficer: BRAND.defaults.absencePenaltyOfficer,
+        latePenaltyRatePct: BRAND.defaults.latePenaltyRatePct,
+        loanInterestRatePeriod: BRAND.defaults.loanInterestRatePeriod,
+        absencePenaltyMemberRatePct: BRAND.defaults.absencePenaltyMemberRatePct,
+        absencePenaltyOfficerRatePct: BRAND.defaults.absencePenaltyOfficerRatePct,
         createdBy: userId,
         inviteCode: "",
         totalSavings: 0,
@@ -58,7 +57,6 @@ export async function initGroupData(
         memberCount: 0,
         createdAt: now,
       });
-      console.log("[initGroupData] Group doc created");
     }
   } catch (error) {
     console.error("[initGroupData] Group error:", error);
@@ -81,7 +79,6 @@ export async function initGroupData(
           userId: userId,
           updatedAt: now,
         });
-        console.log("[initGroupData] Linked existing member by email");
       } else {
         await setDoc(memberRef, {
           id: userId,
@@ -98,7 +95,6 @@ export async function initGroupData(
           loanEarnings: 0,
           createdAt: now,
         });
-        console.log("[initGroupData] Member profile created");
       }
     }
   } catch (error) {
@@ -110,7 +106,6 @@ export async function initGroupData(
   try {
     const membershipSnap = await getDoc(membershipRef);
     if (!membershipSnap.exists()) {
-      console.log("[initGroupData] Creating membership:", membershipId);
       await setDoc(membershipRef, {
         id: membershipId,
         groupId: groupId,
@@ -121,14 +116,12 @@ export async function initGroupData(
         email: email.toLowerCase(),
         createdAt: now,
       });
-      console.log("[initGroupData] Membership created");
     }
   } catch (error) {
     console.error("[initGroupData] Membership error:", error);
     throw error;
   }
 
-  console.log("[initGroupData] Setup complete");
   return true;
 }
 

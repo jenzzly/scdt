@@ -10,7 +10,8 @@
     "eas-build-pre-install": "node scripts/sync-client-assets.js",
     "build:android": "npm run sync-client && eas build --platform android",
     "build:ios": "npm run sync-client && eas build --platform ios",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "build:web": "npm run sync-client && expo export --platform web"
   },
   "dependencies": {
     "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",

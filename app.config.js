@@ -60,6 +60,11 @@ module.exports = {
     web: {
       favicon: clientAsset("favicon.png"),
       bundler: "metro",
+      // Static output = plain HTML/JS/CSS, deployable to any static host
+      // (Firebase Hosting, Netlify, Vercel static, S3+CDN, etc.) with no
+      // Node server required at runtime. All data access goes through the
+      // Firebase client SDK, so nothing here needs server-side rendering.
+      output: "static",
     },
     plugins: [
       "expo-router",

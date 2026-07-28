@@ -1,7 +1,7 @@
 /**
  * SCDT UI Component Library — Light Professional Theme
  */
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, forwardRef } from "react";
 import {
   View, Text, TouchableOpacity, TextInput, ScrollView,
   ActivityIndicator, Modal, Pressable, Platform, KeyboardAvoidingView,
@@ -108,7 +108,7 @@ export function StatCard({
 }
 
 // ── Card ──────────────────────────────────────────────────────────────────────
-export function Card({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
+export function Card({ children, style }: { children?: React.ReactNode; style?: ViewStyle }) {
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
@@ -248,18 +248,45 @@ export function Button({
 }
 
 // ── Input ─────────────────────────────────────────────────────────────────────
-export function Input({
-  label, value, onChangeText, placeholder, keyboardType, multiline,
-  secureTextEntry, error, prefix, right, editable = true, hint,
-}: {
-  label?: string; value: string; onChangeText: (v: string) => void;
-  placeholder?: string; keyboardType?: any; multiline?: boolean;
-  secureTextEntry?: boolean; error?: string; prefix?: string;
-  right?: React.ReactNode; editable?: boolean; hint?: string;
-}) {
+// forwardRef + broad prop surface so this single Input works for every
+// screen in the app (auth forms with refs/submit-chaining, simple search
+// boxes, multiline notes, numeric amounts, etc.) without per-screen casts.
+interface InputProps {
+  label?: string;
+  value: string;
+  onChangeText: (v: string) => void;
+  placeholder?: string;
+  keyboardType?: "default" | "email-address" | "numeric" | "phone-pad" | "decimal-pad" | "number-pad";
+  multiline?: boolean;
+  numberOfLines?: number;
+  secureTextEntry?: boolean;
+  error?: string;
+  prefix?: string;
+  leftIcon?: string;
+  right?: React.ReactNode;
+  editable?: boolean;
+  hint?: string;
+  autoCapitalize?: "none" | "sentences" | "words" | "characters";
+  autoComplete?: string;
+  autoCorrect?: boolean;
+  returnKeyType?: "done" | "go" | "next" | "search" | "send";
+  onSubmitEditing?: () => void;
+  onKeyPress?: (e: any) => void;
+  clearButtonMode?: "never" | "while-editing" | "unless-editing" | "always";
+  containerStyle?: any;
+  style?: any;
+  testID?: string;
+}
+
+export const Input = forwardRef<TextInput, InputProps>(({
+  label, value, onChangeText, placeholder, keyboardType, multiline, numberOfLines,
+  secureTextEntry, error, prefix, leftIcon, right, editable = true, hint,
+  autoCapitalize, autoComplete, autoCorrect, returnKeyType,
+  onSubmitEditing, onKeyPress, clearButtonMode, containerStyle, style, testID,
+}, ref) => {
   const [focused, setFocused] = useState(false);
   return (
-    <View style={styles.formGroup}>
+    <View style={[styles.formGroup, containerStyle]}>
       {label && <Text style={styles.formLabel}>{label}</Text>}
       <View style={[
         styles.inputWrap,
@@ -268,18 +295,29 @@ export function Input({
         !editable && styles.inputDisabled,
       ]}>
         {prefix && <Text style={styles.inputPrefix}>{prefix}</Text>}
+        {leftIcon && <Text style={{ fontSize: 14, marginRight: 8, color: Colors.text3 }}>{leftIcon}</Text>}
         <TextInput
+          ref={ref}
+          testID={testID}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
           placeholderTextColor={Colors.text3}
           keyboardType={keyboardType}
           multiline={multiline}
+          numberOfLines={numberOfLines}
           secureTextEntry={secureTextEntry}
           editable={editable}
+          autoCapitalize={autoCapitalize}
+          autoComplete={autoComplete as any}
+          autoCorrect={autoCorrect}
+          returnKeyType={returnKeyType}
+          onSubmitEditing={onSubmitEditing}
+          onKeyPress={onKeyPress}
+          clearButtonMode={clearButtonMode}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          style={[styles.input, multiline && { height: 80, textAlignVertical: "top" }]}
+          style={[styles.input, multiline && { height: 80, textAlignVertical: "top" }, style]}
         />
         {right}
       </View>
@@ -287,16 +325,16 @@ export function Input({
       {error && <Text style={styles.inputErrorText}>{error}</Text>}
     </View>
   );
-}
+});
 
 // ── Select ────────────────────────────────────────────────────────────────────
 export function Select({
   label, value, options, onChange, hint,
 }: {
   label?: string;
-  value: string;
-  options: { label: string; value: string }[];
-  onChange: (v: string) => void;
+  value: string | number;
+  options: { label: string; value: string | number }[];
+  onChange: (v: any) => void;
   hint?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -314,9 +352,9 @@ export function Select({
       <BottomModal visible={open} onClose={() => setOpen(false)} title={label ?? "Select"}>
         {options.map((o) => (
           <TouchableOpacity
-            key={o.value}
+            key={String(o.value)}
             onPress={() => { onChange(o.value); setOpen(false); }}
-            style={[styles.selectOption, o.value === value && styles.selectOptionActive]}
+            style={[styles.selectOption, String(o.value) === String(value) && styles.selectOptionActive]}
           >
             <Text style={[styles.selectOptionText, o.value === value && { color: Colors.accent, fontWeight: "700" }]}>
               {o.label}
@@ -336,7 +374,7 @@ export function Select({
 // ── Bottom Modal / Sheet ───────────────────────────────────────────────────────
 export function BottomModal({
   visible, onClose, title, children,
-}: { visible: boolean; onClose: () => void; title?: string; children: React.ReactNode }) {
+}: { visible: boolean; onClose: () => void; title?: string; children?: React.ReactNode }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView
@@ -747,3 +785,5 @@ const styles = StyleSheet.create({
   toastDot: { width: 8, height: 8, borderRadius: 4 },
   toastText: { fontSize: 13, fontWeight: "600" },
 });
+
+export { ModalShell } from './ModalShell';

@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, KeyboardAvoidingView, Platform,
-  TextInput as RNTextInput,
+  TextInput as RNTextInput, useWindowDimensions,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../hooks/useAuth";
@@ -68,10 +68,8 @@ export default function RegisterScreen() {
       );
       
       if (member && member.totalContributions > 0) {
-        console.log("[Register] Existing member found! Historical data preserved:", member.totalContributions);
         show(`Welcome back! Your balance of ${fmtCurrency(member.totalContributions)} has been restored.`, "success");
       } else if (member) {
-        console.log("[Register] New member created");
         show("Account created successfully!", "success");
       }
       
@@ -99,16 +97,34 @@ export default function RegisterScreen() {
     }
   };
 
+  const { width } = useWindowDimensions();
+  const isWide = width >= 768;
+
+  // NOTE: intentionally NOT a component function. Defining this as
+  // `const FormCard = () => ...` would create a new component type on every
+  // render, causing React to remount the <Input> fields inside it and kick
+  // focus out of whichever field the user is typing in after every keystroke.
+  const formCardStyle = isWide ? {
+    width: "100%" as any, maxWidth: 480, alignSelf: "center" as any,
+    backgroundColor: Colors.surface, borderRadius: 20,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: 32,
+  } : undefined;
+
   return (
     <KeyboardAvoidingView 
       behavior={Platform.OS === "ios" ? "padding" : "height"} 
       style={{ flex: 1, backgroundColor: Colors.bg }}
     >
       <ScrollView 
-        contentContainerStyle={styles.container} 
+        contentContainerStyle={[
+          styles.container,
+          isWide && { alignItems: "center" as any, paddingHorizontal: 24, paddingTop: 48 },
+        ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        <View style={formCardStyle}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton} activeOpacity={0.7}>
           <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
@@ -206,6 +222,7 @@ export default function RegisterScreen() {
           <TouchableOpacity onPress={() => router.push("/(auth)/login")} activeOpacity={0.7}>
             <Text style={styles.loginLink}>Sign In</Text>
           </TouchableOpacity>
+        </View>
         </View>
       </ScrollView>
       <Toast />

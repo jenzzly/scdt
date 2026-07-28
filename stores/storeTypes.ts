@@ -10,6 +10,7 @@ import type {
   WalletTransaction, Expense, Meeting, AppNotification,
   SyncStatus, ID, DeletionRecord, AuditLog,
 } from "../types";
+import type { OverdueContribution, OverdueInstallment } from "../utils/lateFees";
 
 export interface StoreState {
   authUid: string | null;
@@ -67,6 +68,7 @@ export interface StoreState {
   addExpenseLocal: (e: Expense) => void;
   updateExpenseLocal: (id: ID, data: Partial<Expense>) => void;
   deleteExpenseLocal: (id: ID) => void;
+  deleteExpense: (expenseId: ID, reason: string) => Promise<void>;
   setMeetings: (ms: Meeting[]) => void;
   addMeetingLocal: (m: Meeting) => void;
   updateMeetingLocal: (id: ID, data: Partial<Meeting>) => void;
@@ -96,6 +98,9 @@ export interface StoreState {
 
   // Wallet actions
   deleteWalletTransaction: (transactionId: ID, reason: string) => Promise<void>;
+  applyContributionLateFee: (overdue: OverdueContribution) => Promise<void>;
+  applyLoanLateFee: (overdue: OverdueInstallment) => Promise<void>;
+  clearStandaloneLateFee: (transactionId: ID) => Promise<void>;
 
   // High-level actions
   createMember: (data: Omit<Member, "id" | "totalContributions" | "totalSavings" | "loanEarnings">) => Promise<ID>;

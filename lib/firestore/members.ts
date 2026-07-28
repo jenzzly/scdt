@@ -122,7 +122,6 @@ export async function findAndMergeMemberByEmail(
   try {
     if (!email) return { merged: false, memberId: "", memberData: null };
     
-    console.log("[findAndMergeMemberByEmail] Looking for member with email:", email.toLowerCase());
     
     // Query for member with matching email (case insensitive)
     const membersRef = membersCol(groupId);
@@ -134,8 +133,6 @@ export async function findAndMergeMemberByEmail(
       const memberData = existingMember.data() as Member;
       const memberId = existingMember.id;
       
-      console.log("[findAndMergeMemberByEmail] Found existing member:", memberData.fullName);
-      console.log("[findAndMergeMemberByEmail] Member has history - contributions:", memberData.totalContributions);
       
       // Update member with Firebase user ID (if not already set)
       const updates: any = {
@@ -173,13 +170,11 @@ export async function findAndMergeMemberByEmail(
       
       if (!membershipSnap.exists()) {
         await setDoc(membershipRef, membershipData);
-        console.log("[findAndMergeMemberByEmail] Created membership document");
       } else {
         await updateDoc(membershipRef, {
           memberId: memberId,
           updatedAt: new Date().toISOString(),
         });
-        console.log("[findAndMergeMemberByEmail] Updated membership document");
       }
       
       // Get updated member data
@@ -193,7 +188,6 @@ export async function findAndMergeMemberByEmail(
       };
     }
     
-    console.log("[findAndMergeMemberByEmail] No existing member found with email:", email);
     return { merged: false, memberId: "", memberData: null };
   } catch (error) {
     console.error("[findAndMergeMemberByEmail] Error:", error);
@@ -214,7 +208,6 @@ export async function ensureMemberExists(
 
     // If membership exists, user is already linked
     if (membershipSnap.exists()) {
-      console.log("[ensureMemberExists] Member already exists, fetching data...");
       const memberId = membershipSnap.data()?.memberId;
       if (memberId) {
         const memberDoc = await getDoc(doc(membersCol(gId), memberId));
@@ -225,7 +218,6 @@ export async function ensureMemberExists(
       return null;
     }
 
-    console.log("[ensureMemberExists] Checking for existing member by email:", email);
 
     // Check if member exists by email first
     const membersRef = membersCol(gId);
@@ -244,11 +236,6 @@ export async function ensureMemberExists(
       existingMemberData = existingDoc.data() as Member;
       role = existingMemberData.role || "member";
       
-      console.log("[ensureMemberExists] Found existing member with historical data:");
-      console.log(`  - ID: ${memberId}`);
-      console.log(`  - Name: ${existingMemberData.fullName}`);
-      console.log(`  - Contributions: ${existingMemberData.totalContributions}`);
-      console.log(`  - Savings: ${existingMemberData.totalSavings}`);
       
       // Update with Firebase user ID
       const memberUpdateRef = doc(membersCol(gId), memberId);
@@ -258,7 +245,6 @@ export async function ensureMemberExists(
         updatedAt: new Date().toISOString(),
       });
       
-      console.log("[ensureMemberExists] Linked Firebase user to existing member");
     } else {
       // Create new member document
       memberId = userId;
@@ -286,7 +272,6 @@ export async function ensureMemberExists(
         createdAt: now,
       });
       
-      console.log("[ensureMemberExists] Created new member document");
     }
     
     // Create or update membership document
@@ -303,7 +288,6 @@ export async function ensureMemberExists(
     };
     
     await setDoc(membershipRef, membershipData);
-    console.log("[ensureMemberExists] Membership document created/updated");
     
     // Return the member data (with historical info if merged)
     const finalMemberDoc = await getDoc(doc(membersCol(gId), memberId));
