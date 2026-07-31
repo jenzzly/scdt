@@ -1,6 +1,13 @@
 // lib/firebase.ts
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { initializeAuth, getReactNativePersistence, browserLocalPersistence } from "firebase/auth";
+import {
+  initializeAuth,
+  getAuth,
+  getReactNativePersistence,
+  setPersistence,
+  browserLocalPersistence,
+  type Auth,
+} from "firebase/auth";
 import { getFirestore, enableNetwork, disableNetwork } from "firebase/firestore";
 import { getDatabase } from "firebase/database";
 import { getStorage } from "firebase/storage";
@@ -19,29 +26,56 @@ const firebaseConfig = {
   databaseURL: Constants.expoConfig?.extra?.firebaseDatabaseURL ?? process.env.EXPO_PUBLIC_FIREBASE_DATABASE_URL,
 };
 
-// Initialize Firebase app (singleton)
+// Fail fast and loudly if any required config value is missing — this is
+// almost always an EAS env / app.config.js wiring issue, not a code bug,
+// and it's much easier to debug here than as a downstream auth/db error.
+const missingKeys = Object.entries(firebaseConfig)
+  .filter(([, value]) => !value)
+  .map(([key]) => key);
+
+if (missingKeys.length > 0) {
+  throw new Error(
+    `[lib/firebase.ts] Missing Firebase config values: ${missingKeys.join(", ")}. ` +
+    `Check EXPO_PUBLIC_FIREBASE_* env vars are set for this build environment.`
+  );
+}
+
+if (__DEV__) {
+  console.log("==== FIREBASE CONFIG ====");
+  console.log(JSON.stringify({
+    ...firebaseConfig,
+    apiKey: firebaseConfig.apiKey?.substring(0, 8) + "...",
+  }, null, 2));
+}
+
+// Initialize Firebase app (singleton) — guards against re-initialization
+// on web during Fast Refresh / HMR, and on native during remounts.
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Auth with proper persistence for each platform
-import type { Auth } from 'firebase/auth';
+// Initialize Auth with proper persistence for each platform.
 let auth: Auth;
 if (Platform.OS === "web") {
-  // For web, use browser local persistence
-  const { getAuth, setPersistence, browserLocalPersistence } = require("firebase/auth");
+  // Web: browser local persistence. Guard against calling initializeAuth
+  // twice (e.g. Fast Refresh) by using getAuth if it's already set up.
   auth = getAuth(app);
-  setPersistence(auth, browserLocalPersistence).catch(console.error);
+  setPersistence(auth, browserLocalPersistence).catch((error) => {
+    console.error("[lib/firebase.ts] Failed to set auth persistence:", error);
+  });
 } else {
-  // For native platforms, use AsyncStorage persistence
+  // Native (iOS/Android): AsyncStorage persistence.
   auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(ReactNativeAsyncStorage)
+    persistence: getReactNativePersistence(ReactNativeAsyncStorage),
   });
 }
 
-// Firestore with offline persistence enabled by default
+// Firestore with offline persistence enabled by default.
 const db = getFirestore(app);
 
-// Realtime Database
-const database = getDatabase(app);
+// Realtime Database — explicit URL is required here because this project's
+// RTDB instance lives in europe-west1 (non-default region). Without passing
+// the URL, the SDK cannot infer it from projectId alone and throws:
+// "FIREBASE FATAL ERROR: Can't determine Firebase Database URL."
+const database = getDatabase(app, firebaseConfig.databaseURL);
 
 // Storage
 const storage = getStorage(app);

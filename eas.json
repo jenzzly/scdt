@@ -7,23 +7,35 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "autoIncrement": true,
       "env": { "CLIENT_ID": "scdt" }
     },
     "preview": {
       "distribution": "internal",
-      "env": { "CLIENT_ID": "scdt" }
+      "autoIncrement": true,
+      "env": { "CLIENT_ID": "scdt" },
+      "android": {
+        "buildType": "app-bundle"
+      }
     },
     "production": {
       "autoIncrement": true,
-      "env": { "CLIENT_ID": "scdt" }
+      "env": { "CLIENT_ID": "scdt" },
+      "android": {
+        "buildType": "app-bundle"
+      }
     },
-
     "scdt-preview": {
       "extends": "preview",
-      "env": { "CLIENT_ID": "scdt" }
+      "autoIncrement": true,
+      "env": { "CLIENT_ID": "scdt" },
+      "android": {
+        "buildType": "app-bundle"
+      }
     },
     "scdt-production": {
       "extends": "production",
+      "autoIncrement": true,
       "env": { "CLIENT_ID": "scdt" }
     }
   },
