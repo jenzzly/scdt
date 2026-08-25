@@ -141,9 +141,9 @@ export const T = StyleSheet.create({
 // Preserves the sign so negative amounts (debits, overdrafts) display
 // correctly instead of being silently shown as positive.
 export function fmtCurrency(amount: number, currency = BRAND.defaultCurrency): string {
-  const rounded = Math.round(amount || 0);
-  const sign = rounded < 0 ? "-" : "";
-  return `${sign}${currency} ${Math.abs(rounded).toLocaleString()}`;
+  const value = Number.isFinite(amount) ? amount : 0;
+  const sign = value < 0 ? "-" : "";
+  return `${sign}${currency} ${Math.abs(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 // Alias kept for existing call sites — identical behavior to fmtCurrency now.
@@ -331,6 +331,7 @@ export function showConfirm(
 
 export const Shadow = StyleSheet.create({
   xs: {
+    boxShadow: "0px 1px 4px rgba(26, 60, 94, 0.06)",
     shadowColor: "#1A3C5E",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.06,
@@ -338,6 +339,7 @@ export const Shadow = StyleSheet.create({
     elevation: 2,
   },
   sm: {
+    boxShadow: "0px 2px 8px rgba(26, 60, 94, 0.08)",
     shadowColor: "#1A3C5E",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
@@ -345,6 +347,7 @@ export const Shadow = StyleSheet.create({
     elevation: 3,
   },
   md: {
+    boxShadow: "0px 4px 16px rgba(26, 60, 94, 0.10)",
     shadowColor: "#1A3C5E",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.10,
@@ -352,6 +355,7 @@ export const Shadow = StyleSheet.create({
     elevation: 6,
   },
   teal: {
+    boxShadow: "0px 4px 12px rgba(13, 148, 136, 0.25)",
     shadowColor: "#0D9488",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,

@@ -9,13 +9,11 @@ import {
   useStore,
   useActiveGroup, useGroupMembers, useGroupLoans,
   useGroupContributions, useGroupInvestments, useGroupWallet,
-  useCurrentUserRole, useCurrentMember,
+  useCurrentMember, useCurrentMemberPermissions, useIsAdminView,
 } from "../../stores/useStore";
-import { useCurrentMemberPermissions } from "../../stores/selectors";
-import { Card, Badge, Empty, useToast, Input, BottomModal } from "../../components/ui";
+import { Card, Badge, Empty, useToast, Input, BottomModal, Select, DatePicker } from "../../components/ui";
 import { Colors, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
 import { exportCsv, exportPdf } from "../../utils/export";
-import { findOverdueContributions, findOverdueInstallments } from "../../utils/lateFees";
 
 // ─── Tiny components ──────────────────────────────────────────────
 const Chip = ({ label, bg, color }: { label: string; bg: string; color: string }) => (
@@ -116,26 +114,14 @@ function MemberSharesChart({
 function FilterModal({
   visible,
   onClose,
-  year, month, day,
-  onYearChange, onMonthChange, onDayChange,
+  fromDate, toDate,
+  onFromDateChange, onToDateChange,
   loanStatus, contributionStatus,
   onLoanStatusChange, onContributionStatusChange,
   onApply,
   searchTerm,
   onSearchChange,
 }: any) {
-  const yearOptions = [{ label: "All Years", value: 0 }, ...Array.from({ length: 6 }, (_, i) => {
-    const y = new Date().getFullYear() - 2 + i;
-    return { label: String(y), value: y };
-  })];
-  const monthOptions = [{ label: "All Months", value: 0 },
-    { label: "Jan", value: 1 }, { label: "Feb", value: 2 }, { label: "Mar", value: 3 },
-    { label: "Apr", value: 4 }, { label: "May", value: 5 }, { label: "Jun", value: 6 },
-    { label: "Jul", value: 7 }, { label: "Aug", value: 8 }, { label: "Sep", value: 9 },
-    { label: "Oct", value: 10 }, { label: "Nov", value: 11 }, { label: "Dec", value: 12 }
-  ];
-  const dayOptions = [{ label: "All Days", value: 0 }, ...Array.from({ length: 31 }, (_, i) => ({ label: String(i + 1), value: i + 1 }))];
-
   return (
     <BottomModal visible={visible} onClose={onClose} title="Filter Reports">
       <View style={{ padding: 16 }}>
@@ -148,97 +134,47 @@ function FilterModal({
         />
         
         <Text style={styles.modalSectionLabel}>Date Range</Text>
-        <View style={styles.modalRow}>
-          <View style={styles.modalHalf}>
-            <Text style={styles.modalSelectLabel}>Year</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {yearOptions.map(opt => (
-                <TouchableOpacity
-                  key={opt.value}
-                  style={[styles.modalChip, (year === opt.value || (year === null && opt.value === 0)) && styles.modalChipActive]}
-                  onPress={() => onYearChange(opt.value === 0 ? null : opt.value)}
-                >
-                  <Text style={[styles.modalChipText, (year === opt.value || (year === null && opt.value === 0)) && styles.modalChipTextActive]}>
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-
-        <View style={styles.modalRow}>
-          <View style={styles.modalHalf}>
-            <Text style={styles.modalSelectLabel}>Month</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {monthOptions.map(opt => (
-                <TouchableOpacity
-                  key={opt.value}
-                  style={[styles.modalChip, (month === opt.value || (month === null && opt.value === 0)) && styles.modalChipActive]}
-                  onPress={() => onMonthChange(opt.value === 0 ? null : opt.value)}
-                >
-                  <Text style={[styles.modalChipText, (month === opt.value || (month === null && opt.value === 0)) && styles.modalChipTextActive]}>
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-          <View style={styles.modalHalf}>
-            <Text style={styles.modalSelectLabel}>Day</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {dayOptions.map(opt => (
-                <TouchableOpacity
-                  key={opt.value}
-                  style={[styles.modalChip, (day === opt.value || (day === null && opt.value === 0)) && styles.modalChipActive]}
-                  onPress={() => onDayChange(opt.value === 0 ? null : opt.value)}
-                >
-                  <Text style={[styles.modalChipText, (day === opt.value || (day === null && opt.value === 0)) && styles.modalChipTextActive]}>
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
+        <DatePicker
+          label="From Date"
+          value={fromDate}
+          onChange={onFromDateChange}
+          placeholder="Start date"
+        />
+        <DatePicker
+          label="To Date"
+          value={toDate}
+          onChange={onToDateChange}
+          placeholder="End date"
+        />
 
         <Text style={styles.modalSectionLabel}>Status Filters</Text>
         <View style={styles.modalRow}>
           <View style={styles.modalHalf}>
-            <Text style={styles.modalSelectLabel}>Loans</Text>
-            {["all", "pending", "active", "repaid"].map(status => (
-              <TouchableOpacity
-                key={status}
-                style={[styles.modalChip, loanStatus === status && styles.modalChipActive]}
-                onPress={() => onLoanStatusChange(status)}
-              >
-                <Text style={[styles.modalChipText, loanStatus === status && styles.modalChipTextActive]}>
-                  {status.charAt(0).toUpperCase() + status.slice(1)}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            <Select
+              label="Loans"
+              value={loanStatus}
+              options={["all", "pending", "active", "repaid"].map(status => ({
+                label: status.charAt(0).toUpperCase() + status.slice(1), value: status,
+              }))}
+              onChange={onLoanStatusChange}
+            />
           </View>
           <View style={styles.modalHalf}>
-            <Text style={styles.modalSelectLabel}>Contributions</Text>
-            {["all", "approved", "pending", "rejected"].map(status => (
-              <TouchableOpacity
-                key={status}
-                style={[styles.modalChip, contributionStatus === status && styles.modalChipActive]}
-                onPress={() => onContributionStatusChange(status)}
-              >
-                <Text style={[styles.modalChipText, contributionStatus === status && styles.modalChipTextActive]}>
-                  {status.charAt(0).toUpperCase() + status.slice(1)}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            <Select
+              label="Contributions"
+              value={contributionStatus}
+              options={["all", "approved", "pending", "rejected"].map(status => ({
+                label: status.charAt(0).toUpperCase() + status.slice(1), value: status,
+              }))}
+              onChange={onContributionStatusChange}
+            />
           </View>
         </View>
 
         <View style={{ flexDirection: "row", gap: 10, marginTop: 20 }}>
           <TouchableOpacity style={styles.modalClearBtn} onPress={() => {
-            onYearChange(null);
-            onMonthChange(null);
-            onDayChange(null);
+            onFromDateChange("");
+            onToDateChange("");
             onLoanStatusChange("all");
             onContributionStatusChange("all");
             onSearchChange("");
@@ -264,7 +200,6 @@ export default function ReportsScreen() {
   const allContributions = useGroupContributions();
   const allInvestments = useGroupInvestments();
   const allWallet = useGroupWallet();
-  const role = useCurrentUserRole();
   const permissions = useCurrentMemberPermissions();
   const currentMember = useCurrentMember();
   const { show, Toast } = useToast();
@@ -273,23 +208,19 @@ export default function ReportsScreen() {
   // sees group-wide data when explicitly granted the viewAllReports
   // permission from Group Settings → Permissions — otherwise they only ever
   // see their own report (enforced below on every data slice).
-  const canSeeAll =
-    ["admin", "loan_officer", "committee", "accountant"].includes(role) ||
-    permissions.viewAllReports;
+  const canSeeAll = useIsAdminView();
   const [activeTab, setActiveTab] = useState<"overview" | "members" | "earnings">("overview");
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedYear, setSelectedYear] = useState<number | null>(null);
-  const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
-  const [selectedDay, setSelectedDay] = useState<number | null>(null);
+  const [selectedFromDate, setSelectedFromDate] = useState("");
+  const [selectedToDate, setSelectedToDate] = useState("");
   const [loanStatus, setLoanStatus] = useState<"all" | "pending" | "active" | "repaid">("all");
   const [contributionStatus, setContributionStatus] = useState<"all" | "approved" | "pending" | "rejected">("all");
   
   // Temp state for modal
   const [tempSearch, setTempSearch] = useState("");
-  const [tempYear, setTempYear] = useState<number | null>(null);
-  const [tempMonth, setTempMonth] = useState<number | null>(null);
-  const [tempDay, setTempDay] = useState<number | null>(null);
+  const [tempFromDate, setTempFromDate] = useState("");
+  const [tempToDate, setTempToDate] = useState("");
   const [tempLoanStatus, setTempLoanStatus] = useState<"all" | "pending" | "active" | "repaid">("all");
   const [tempContributionStatus, setTempContributionStatus] = useState<"all" | "approved" | "pending" | "rejected">("all");
 
@@ -297,18 +228,16 @@ export default function ReportsScreen() {
   const members = canSeeAll ? allMembers : allMembers.filter(m => m.id === currentMember?.id);
   const loans = canSeeAll ? allLoans : allLoans.filter(l => l.memberId === currentMember?.id);
   const contributions = canSeeAll ? allContributions : allContributions.filter(c => c.memberId === currentMember?.id);
-  const investments = allInvestments;
+  const investments = canSeeAll ? allInvestments : allInvestments.filter(i => i.createdBy === currentMember?.id);
   const wallet = canSeeAll ? allWallet : allWallet.filter(t => t.memberId === currentMember?.id);
 
   // Filter helpers
-  const filterByDate = (items: any[], dateField: string) => {
+  const filterByDateRange = (items: any[], dateField: string) => {
     return items.filter(item => {
-      if (!selectedYear && !selectedMonth && !selectedDay) return true;
-      const date = new Date(item[dateField]);
-      if (isNaN(date.getTime())) return true;
-      if (selectedYear && date.getFullYear() !== selectedYear) return false;
-      if (selectedMonth && (date.getMonth() + 1) !== selectedMonth) return false;
-      if (selectedDay && date.getDate() !== selectedDay) return false;
+      const dStr = (item[dateField] || "").slice(0, 10);
+      if (!dStr) return true;
+      if (selectedFromDate && dStr < selectedFromDate) return false;
+      if (selectedToDate && dStr > selectedToDate) return false;
       return true;
     });
   };
@@ -322,26 +251,26 @@ export default function ReportsScreen() {
   };
 
   const filteredLoans = useMemo(() => {
-    let list = filterByDate(loans, "applicationDate");
+    let list = filterByDateRange(loans, "applicationDate");
     if (loanStatus !== "all") {
       if (loanStatus === "active") list = list.filter(l => l.status === "disbursed");
       if (loanStatus === "pending") list = list.filter(l => l.status.startsWith("pending_"));
       if (loanStatus === "repaid") list = list.filter(l => l.status === "repaid");
     }
     return filterBySearch(list, ["memberId", "id", "purpose"]);
-  }, [loans, selectedYear, selectedMonth, selectedDay, loanStatus, searchTerm]);
+  }, [loans, selectedFromDate, selectedToDate, loanStatus, searchTerm]);
 
   const filteredContributions = useMemo(() => {
-    let list = filterByDate(contributions, "date");
+    let list = filterByDateRange(contributions, "date");
     if (contributionStatus !== "all") {
       list = list.filter(c => c.status === contributionStatus);
     }
     return filterBySearch(list, ["memberId", "description"]);
-  }, [contributions, selectedYear, selectedMonth, selectedDay, contributionStatus, searchTerm]);
+  }, [contributions, selectedFromDate, selectedToDate, contributionStatus, searchTerm]);
 
   const filteredInvestments = useMemo(() => 
-    filterByDate(investments, "startDate"),
-    [investments, selectedYear, selectedMonth, selectedDay]
+    filterByDateRange(investments, "startDate"),
+    [investments, selectedFromDate, selectedToDate]
   );
 
   const cashflow = useMemo(() => {
@@ -365,7 +294,7 @@ export default function ReportsScreen() {
   }, [wallet]);
 
   const memberPie = useMemo(() => {
-    const top = allMembers.filter(m => m.status === "active" && m.totalContributions > 0).slice(0, 5);
+    const top = members.filter(m => m.status === "active" && m.totalContributions > 0).slice(0, 5);
     const palette = [C.accent, C.gold, C.info, C.success, "#7C3AED"];
     return top.map((m, i) => ({
       name: m.fullName.split(" ")[0],
@@ -374,7 +303,7 @@ export default function ReportsScreen() {
       legendFontColor: C.text2,
       legendFontSize: 11,
     }));
-  }, [allMembers]);
+  }, [members]);
 
   // Interest earned: read from wallet ledger (loan_interest_income txs) + legacy loan_repayment
   const totalInterest = useMemo(() => {
@@ -398,13 +327,12 @@ export default function ReportsScreen() {
   const contributionsTotal = useMemo(() => filteredContributions.reduce((s, c) => s + c.amount, 0), [filteredContributions]);
   const investmentsTotal = useMemo(() => filteredInvestments.reduce((s, i) => s + i.investmentAmount, 0), [filteredInvestments]);
 
-  const hasActiveFilters = selectedYear || selectedMonth || selectedDay || loanStatus !== "all" || contributionStatus !== "all" || searchTerm;
+  const hasActiveFilters = selectedFromDate !== "" || selectedToDate !== "" || loanStatus !== "all" || contributionStatus !== "all" || searchTerm !== "";
 
   const openFilterModal = () => {
     setTempSearch(searchTerm);
-    setTempYear(selectedYear);
-    setTempMonth(selectedMonth);
-    setTempDay(selectedDay);
+    setTempFromDate(selectedFromDate);
+    setTempToDate(selectedToDate);
     setTempLoanStatus(loanStatus);
     setTempContributionStatus(contributionStatus);
     setShowFilterModal(true);
@@ -412,9 +340,8 @@ export default function ReportsScreen() {
 
   const applyFilters = () => {
     setSearchTerm(tempSearch);
-    setSelectedYear(tempYear);
-    setSelectedMonth(tempMonth);
-    setSelectedDay(tempDay);
+    setSelectedFromDate(tempFromDate);
+    setSelectedToDate(tempToDate);
     setLoanStatus(tempLoanStatus);
     setContributionStatus(tempContributionStatus);
     setShowFilterModal(false);
@@ -422,15 +349,13 @@ export default function ReportsScreen() {
 
   const clearFilters = () => {
     setSearchTerm("");
-    setSelectedYear(null);
-    setSelectedMonth(null);
-    setSelectedDay(null);
+    setSelectedFromDate("");
+    setSelectedToDate("");
     setLoanStatus("all");
     setContributionStatus("all");
     setTempSearch("");
-    setTempYear(null);
-    setTempMonth(null);
-    setTempDay(null);
+    setTempFromDate("");
+    setTempToDate("");
     setTempLoanStatus("all");
     setTempContributionStatus("all");
   };
@@ -494,11 +419,10 @@ export default function ReportsScreen() {
       {/* Active Filters Bar */}
       {hasActiveFilters && (
         <TouchableOpacity style={styles.activeFiltersBar} onPress={openFilterModal}>
-          <Text style={styles.activeFiltersText}>
+          <Text style={styles.activeFiltersText} numberOfLines={1}>
             {searchTerm && `🔍 "${searchTerm}" `}
-            {selectedYear && `📅 ${selectedYear} `}
-            {selectedMonth && `📆 ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][selectedMonth-1]} `}
-            {selectedDay && `📌 ${selectedDay} `}
+            {selectedFromDate && `📅 From ${fmtDate(selectedFromDate)} `}
+            {selectedToDate && `📌 To ${fmtDate(selectedToDate)} `}
             {loanStatus !== "all" && `🏦 ${loanStatus} loans `}
             {contributionStatus !== "all" && `💰 ${contributionStatus} contributions`}
           </Text>
@@ -542,12 +466,8 @@ export default function ReportsScreen() {
                 subtext={canSeeAll ? "group savings" : "personal savings"}
               />
               <KpiCard label="INTEREST EARNED" value={fmtCurrency(totalInterest)} color={C.gold} subtext="from loans" />
-              {canSeeAll && (
-                <>
-                  <KpiCard label="INVESTMENTS" value={fmtCurrency(group?.totalInvestments ?? 0)} color={C.success} subtext="active" />
-                  <KpiCard label="EXPENSES" value={fmtCurrency(totalExpenses)} color={C.error} subtext="operational" />
-                </>
-              )}
+              <KpiCard label={canSeeAll ? "INVESTMENTS" : "MY INVESTMENTS"} value={fmtCurrency(investmentsTotal)} color={C.success} subtext={canSeeAll ? "active" : "personal"} />
+              <KpiCard label={canSeeAll ? "EXPENSES" : "MY EXPENSES"} value={fmtCurrency(totalExpenses)} color={C.error} subtext={canSeeAll ? "operational" : "personal"} />
             </View>
 
             {/* Cash Flow Chart */}
@@ -563,15 +483,15 @@ export default function ReportsScreen() {
             </View>
 
             {/* Savings by Member - Admin only */}
-            {canSeeAll && memberPie.length > 0 && (
+            {memberPie.length > 0 && (
               <View style={styles.chartCard}>
-                <Text style={styles.chartTitle}>Savings by Member (Top 5)</Text>
+                <Text style={styles.chartTitle}>{canSeeAll ? "Savings by Member (Top 5)" : "My Savings"}</Text>
                 <MemberSharesChart data={memberPie} />
               </View>
             )}
 
             {/* Export Section - gated by downloadReports permission */}
-            {canSeeAll && permissions.downloadReports && (
+            {permissions.downloadReports && (
               <View style={styles.exportSection}>
                 <Text style={styles.exportTitle}>Export Data</Text>
                 <Text style={styles.exportSubtitle}>Filtered data based on your current filters</Text>
@@ -654,12 +574,10 @@ export default function ReportsScreen() {
       <FilterModal
         visible={showFilterModal}
         onClose={() => setShowFilterModal(false)}
-        year={tempYear}
-        month={tempMonth}
-        day={tempDay}
-        onYearChange={setTempYear}
-        onMonthChange={setTempMonth}
-        onDayChange={setTempDay}
+        fromDate={tempFromDate}
+        toDate={tempToDate}
+        onFromDateChange={setTempFromDate}
+        onToDateChange={setTempToDate}
         loanStatus={tempLoanStatus}
         contributionStatus={tempContributionStatus}
         onLoanStatusChange={setTempLoanStatus}
@@ -964,12 +882,16 @@ function earningsHtmlTable(headers: string[], rows: any[][]) {
   return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
-const EARNING_TYPES = ["loan_interest_income", "interest", "investment_return", "late_fee", "other_credit", "bank_fee"];
+const EARNING_TYPES = [
+  "loan_disbursement", "loan_repayment", "loan_interest_income",
+  "loan_principal_recovery", "interest", "late_fee",
+  "investment_disbursement", "investment_return", "bank_fee",
+  "other_credit", "other_debit", "withdrawal",
+];
 const EARNING_TYPE_LABEL: Record<string, string> = {
   loan_interest_income: "Loan Interest",
   interest:             "Interest",
   investment_return:    "Investment Return",
-  late_fee:             "Late Fee / Penalty",
   other_credit:         "Other Credit",
   bank_fee:             "Bank Fee",
 };
@@ -978,82 +900,43 @@ function EarningsTab({
   wallet, members, canSeeAll, currency,
   group, allMembers, allContributions, allLoans, allWallet, permissions,
 }: any) {
-  const { applyContributionLateFee, applyLoanLateFee } = useStore();
   const { show } = useToast();
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [applyingFeeId, setApplyingFeeId] = useState<string | null>(null);
-
-  // ── Overdue detection — admins/officers only, calculated on demand ──────
-  const canManageFees = canSeeAll && (permissions?.approveContributions || permissions?.approveLoans);
-  const overdueContributions = useMemo(() => {
-    if (!canManageFees || !group) return [];
-    return findOverdueContributions(group, allMembers ?? [], allContributions ?? [], allWallet ?? []);
-  }, [canManageFees, group, allMembers, allContributions, allWallet]);
-  const overdueInstallments = useMemo(() => {
-    if (!canManageFees || !group) return [];
-    return findOverdueInstallments(group, allMembers ?? [], allLoans ?? [], allWallet ?? []);
-  }, [canManageFees, group, allMembers, allLoans, allWallet]);
-
-  const handleApplyContributionFee = async (item: any) => {
-    setApplyingFeeId(item.feeTxId);
-    try {
-      await applyContributionLateFee(item);
-      show(`Late fee of ${fmtCurrency(item.feeAmount)} applied to ${item.memberName}`);
-    } catch (e: any) {
-      show(e?.message || "Failed to apply late fee", "error");
-    } finally {
-      setApplyingFeeId(null);
-    }
-  };
-
-  const handleApplyLoanFee = async (item: any) => {
-    setApplyingFeeId(item.feeTxId);
-    try {
-      await applyLoanLateFee(item);
-      show(`Late fee of ${fmtCurrency(item.feeAmount)} applied to ${item.memberName}`);
-    } catch (e: any) {
-      show(e?.message || "Failed to apply late fee", "error");
-    } finally {
-      setApplyingFeeId(null);
-    }
-  };
 
   const earningsTxs = useMemo(
-    () => wallet.filter((t: any) => EARNING_TYPES.includes(t.type) && t.amount > 0),
+    () => wallet.filter((t: any) => t.type !== "contribution" && t.amount !== 0),
     [wallet]
   );
 
-  const filtered = typeFilter === "all"
-    ? earningsTxs
-    : earningsTxs.filter((t: any) => t.type === typeFilter);
-
-  const totalEarnings = useMemo(
-    () => earningsTxs.reduce((s: number, t: any) => s + t.amount, 0),
-    [earningsTxs]
+  const groupEarningsTxs = useMemo(
+    () => allWallet.filter((t: any) => t.type !== "contribution" && t.amount !== 0),
+    [allWallet],
   );
 
-  const byType = useMemo(() => {
-    const map: Record<string, number> = {};
-    earningsTxs.forEach((t: any) => { map[t.type] = (map[t.type] || 0) + t.amount; });
-    return Object.entries(map).sort((a, b) => b[1] - a[1]);
-  }, [earningsTxs]);
+  const filtered = useMemo(() => {
+    if (typeFilter === "all") return earningsTxs;
+    return earningsTxs.filter((t: any) => t.type === typeFilter);
+  }, [earningsTxs, typeFilter]);
 
-  // Per-member breakdown — only meaningful for admins/officers viewing the group
+  const totalCredited = useMemo(
+    () => groupEarningsTxs.filter((t: any) => t.amount > 0).reduce((sum: number, t: any) => sum + t.amount, 0),
+    [groupEarningsTxs],
+  );
+  const totalDebited = useMemo(
+    () => groupEarningsTxs.filter((t: any) => t.amount < 0).reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0),
+    [groupEarningsTxs],
+  );
+  const activeMemberCount = Math.max(1, allMembers.filter((member: any) => member.status === "active").length);
+  const totalEarnings = totalCredited - totalDebited;
+  const earningsPerMember = totalEarnings / activeMemberCount;
+
+  // Distribute net wallet earnings equally across active members. Contribution
+  // credits are excluded from the wallet total above.
   const byMember = useMemo(() => {
-    if (!canSeeAll) return [];
-    const map: Record<string, number> = {};
-    earningsTxs.forEach((t: any) => {
-      if (!t.memberId) return; // group-level earnings with no specific member (e.g. investment returns)
-      map[t.memberId] = (map[t.memberId] || 0) + t.amount;
-    });
-    return Object.entries(map)
-      .map(([memberId, total]) => ({
-        member: members.find((m: any) => m.id === memberId),
-        total: total as number,
-      }))
-      .filter(r => r.member)
-      .sort((a, b) => b.total - a.total);
-  }, [earningsTxs, members, canSeeAll]);
+    return (canSeeAll ? allMembers : members)
+      .filter((member: any) => member.status === "active")
+      .map((member: any) => ({ member, total: earningsPerMember }));
+  }, [allMembers, members, canSeeAll, earningsPerMember]);
 
   const getMember = (id?: string) => members.find((m: any) => m.id === id);
 
@@ -1073,96 +956,16 @@ function EarningsTab({
   return (
     <View style={styles.content}>
       <View style={styles.statsGrid}>
-        <KpiCard label={canSeeAll ? "Total Group Earnings" : "My Total Earnings"} value={fmtCurrency(totalEarnings)} color={C.gold} />
+        <KpiCard label={canSeeAll ? "Net Group Earnings" : "My Earnings Share"} value={fmtCurrency(canSeeAll ? totalEarnings : earningsPerMember)} color={C.gold} />
+        <KpiCard label="Per Member" value={fmtCurrency(earningsPerMember)} color={C.accent} />
         <KpiCard label="Transactions" value={String(earningsTxs.length)} color={C.teal} />
       </View>
 
-      {/* Overdue late fees — admins/officers only. Calculated on the amount
-          due (missed contribution / overdue installment), surfaced here so
-          an officer can apply them with one tap. Nothing charges silently
-          in the background. */}
-      {canManageFees && (overdueContributions.length > 0 || overdueInstallments.length > 0) && (
-        <View style={[styles.chartCard, { borderColor: "#fca5a5", borderWidth: 1 }]}>
-          <Text style={[styles.chartTitle, { color: "#b91c1c" }]}>
-            ⚠ Overdue — Late Fees Available
-          </Text>
-          <Text style={{ fontSize: 11, color: C.text3, marginTop: 2, marginBottom: 12 }}>
-            Calculated on the amount due. Tap to apply a fee.
-          </Text>
-
-          {overdueContributions.map((item) => (
-            <View key={item.feeTxId} style={ov.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={ov.memberName}>{item.memberName}</Text>
-                <Text style={ov.detail}>
-                  Missed contribution — {item.periodLabel} · {item.daysLate}d late · due {fmtCurrency(item.amountDue)}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={ov.applyBtn}
-                onPress={() => handleApplyContributionFee(item)}
-                disabled={applyingFeeId === item.feeTxId}
-                activeOpacity={0.8}
-              >
-                <Text style={ov.applyBtnText}>
-                  {applyingFeeId === item.feeTxId ? "Applying…" : `+${fmtCurrency(item.feeAmount)}`}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ))}
-
-          {overdueInstallments.map((item) => (
-            <View key={item.feeTxId} style={ov.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={ov.memberName}>{item.memberName}</Text>
-                <Text style={ov.detail}>
-                  Overdue installment #{item.installmentIndex + 1} · {item.daysLate}d late · due {fmtCurrency(item.amountDue)}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={ov.applyBtn}
-                onPress={() => handleApplyLoanFee(item)}
-                disabled={applyingFeeId === item.feeTxId}
-                activeOpacity={0.8}
-              >
-                <Text style={ov.applyBtnText}>
-                  {applyingFeeId === item.feeTxId ? "Applying…" : `+${fmtCurrency(item.feeAmount)}`}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ))}
-        </View>
-      )}
-
-      {/* Breakdown by type */}
-      {byType.length > 0 && (
+      {byMember.length > 0 && (
         <View style={styles.chartCard}>
-          <Text style={styles.chartTitle}>Earnings by Source</Text>
-          <View style={{ gap: 10, marginTop: 8 }}>
-            {byType.map(([type, amount]) => {
-              const pct = totalEarnings > 0 ? (amount / totalEarnings) * 100 : 0;
-              return (
-                <View key={type}>
-                  <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
-                    <Text style={{ fontSize: 12, fontWeight: "600", color: C.text2 }}>{EARNING_TYPE_LABEL[type] ?? type}</Text>
-                    <Text style={{ fontSize: 12, fontWeight: "700", color: C.gold }}>{fmtCurrency(amount)}</Text>
-                  </View>
-                  <View style={{ height: 6, borderRadius: 3, backgroundColor: C.border, overflow: "hidden" }}>
-                    <View style={{ height: "100%" as any, width: `${pct}%` as any, backgroundColor: C.gold, borderRadius: 3 }} />
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-        </View>
-      )}
-
-      {/* Per-member breakdown — admins/officers only */}
-      {canSeeAll && byMember.length > 0 && (
-        <View style={styles.chartCard}>
-          <Text style={styles.chartTitle}>Earnings by Member</Text>
+          <Text style={styles.chartTitle}>{canSeeAll ? "Earnings by Member" : "My Earnings"}</Text>
           <View style={{ marginTop: 8 }}>
-            {byMember.map((row, i) => (
+            {byMember.map((row: any, i: number) => (
               <View key={row.member.id} style={{
                 flexDirection: "row", alignItems: "center", justifyContent: "space-between",
                 paddingVertical: 9, borderBottomWidth: i < byMember.length - 1 ? 1 : 0, borderBottomColor: C.borderLight,
@@ -1239,20 +1042,6 @@ function EarningsTab({
 
 // Helper Components
 const Divider = () => <View style={{ height: 1, backgroundColor: C.borderLight, marginHorizontal: 16 }} />;
-
-const ov = StyleSheet.create({
-  row: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#fee2e2",
-  },
-  memberName: { fontSize: 13, fontWeight: "600", color: C.text },
-  detail: { fontSize: 11, color: C.text3, marginTop: 2 },
-  applyBtn: {
-    backgroundColor: "#fef2f2", borderWidth: 1, borderColor: "#fca5a5",
-    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, marginLeft: 10,
-  },
-  applyBtnText: { fontSize: 12, fontWeight: "700", color: "#b91c1c" },
-});
 
 const styles = StyleSheet.create({
   header: {

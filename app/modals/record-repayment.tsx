@@ -10,7 +10,7 @@ import {
   Platform, TouchableOpacity, ScrollView, TextInput} from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useStore, useGroupLoans, useGroupMembers, useActiveGroup, useGroupWallet } from "../../stores/useStore";
-import { Button, useToast } from "../../components/ui";
+import { Button, useToast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R, fmtCurrency, round2, showConfirm, fmtFull } from "../../utils/theme";
 
@@ -169,7 +169,7 @@ export default function RecordRepaymentModal() {
   })();
 
   const today = new Date().toISOString().slice(0, 10);
-  const [amount, setAmount] = useState(loan?.monthlyPayment ? String(Math.round(loan.monthlyPayment)) : "");
+  const [amount, setAmount] = useState(loan?.monthlyPayment ? loan.monthlyPayment.toFixed(2) : "");
   const [date,   setDate]   = useState(today);
   const submitting = useRef(false);
   const [loading, setLoading] = useState(false);
@@ -353,16 +353,12 @@ export default function RecordRepaymentModal() {
           </View>
         </View>
 
-        <View style={st.inputGroup}>
-          <Text style={st.inputLabel}>Payment Date *</Text>
-          <TextInput
-            style={[st.input, { paddingHorizontal: 14 }]}
-            value={date}
-            onChangeText={setDate}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor={Colors.text3}
-          />
-        </View>
+        <DatePicker
+          label="Payment Date *"
+          value={date}
+          onChange={setDate}
+          placeholder="Select payment date"
+        />
 
         {/* ── Breakdown ── */}
         {split && amtNum > 0 && (

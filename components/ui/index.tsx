@@ -8,7 +8,7 @@ import {
   StyleSheet, Animated, type ViewStyle, type TextStyle,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { Colors, Fonts, R, S, initials } from "../../utils/theme";
+import { Colors, Fonts, R, S, initials, fmtCurrency } from "../../utils/theme";
 
 // ── Screen wrapper ─────────────────────────────────────────────────────────────
 export function Screen({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
@@ -56,7 +56,7 @@ export function HeroCard({
       <Text style={styles.heroLabel}>{label}</Text>
       <Text style={styles.heroAmount}>
         <Text style={styles.heroCurrency}>{currency} </Text>
-        {Math.round(amount).toLocaleString()}
+        {fmtCurrency(amount, currency)}
       </Text>
       {subtitle && <Text style={styles.heroSub}>{subtitle}</Text>}
       {pills && (
@@ -787,3 +787,4 @@ const styles = StyleSheet.create({
 });
 
 export { ModalShell } from './ModalShell';
+export { DatePicker } from './DatePicker';

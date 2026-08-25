@@ -1,6 +1,7 @@
 import { Share, Platform } from "react-native";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
+import { fmtCurrency } from "./theme";
 
 export function csvEscape(value: any): string {
   const text = value == null ? "" : String(value);
@@ -114,9 +115,9 @@ export function generatePaymentScheduleHtml(
         `<tr>
           <td>${item.index + 1}</td>
           <td>${new Date(item.dueDate).toLocaleDateString()}</td>
-          <td>RWF ${item.principal.toLocaleString()}</td>
-          <td>RWF ${item.interest.toLocaleString()}</td>
-          <td>RWF ${item.total.toLocaleString()}</td>
+          <td>${fmtCurrency(item.principal)}</td>
+          <td>${fmtCurrency(item.interest)}</td>
+          <td>${fmtCurrency(item.total)}</td>
         </tr>`
     )
     .join("");
@@ -124,10 +125,10 @@ export function generatePaymentScheduleHtml(
   return `
     <table>
       <tr><th>Member</th><td>${memberName}</td></tr>
-      <tr><th>Principal</th><td>RWF ${amount.toLocaleString()}</td></tr>
+      <tr><th>Principal</th><td>${fmtCurrency(amount)}</td></tr>
       <tr><th>Interest Rate</th><td>${interestRate}%</td></tr>
-      <tr><th>Monthly Payment</th><td>RWF ${monthlyPayment.toLocaleString()}</td></tr>
-      <tr><th>Total Repayable</th><td>RWF ${totalRepayable.toLocaleString()}</td></tr>
+      <tr><th>Monthly Payment</th><td>${fmtCurrency(monthlyPayment)}</td></tr>
+      <tr><th>Total Repayable</th><td>${fmtCurrency(totalRepayable)}</td></tr>
     </table>
     <h3>Repayment Schedule</h3>
     <table>

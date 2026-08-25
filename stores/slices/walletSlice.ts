@@ -174,8 +174,13 @@ export const createWalletSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
       // permission checks live in the UI (meetings.tsx, add-loan.tsx), not
       // in the store action itself.
       clearStandaloneLateFee: async (transactionId: ID) => {
-        const { activeGroupId } = get();
+        const { activeGroupId, authUid, members } = get();
         if (!activeGroupId) throw new Error("No active group");
+
+        const role = members.find(member => member.userId === authUid)?.role;
+        if (!role || !["admin", "accountant", "loan_officer"].includes(role)) {
+          throw new Error("Only an admin, accountant, or loan officer can clear late fees");
+        }
 
         const tx = get().walletTransactions.find((t) => t.id === transactionId);
         if (!tx) throw new Error("Fee not found");

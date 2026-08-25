@@ -107,5 +107,6 @@ export function splitRepayment(loan: LoanLedgerFields, amount: number): Repaymen
 }
 
 export function fmtCurrency(amount: number, currency: string): string {
-  return `${currency} ${Math.round(amount || 0).toLocaleString()}`;
+  const value = Number.isFinite(amount) ? amount : 0;
+  return `${currency} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }

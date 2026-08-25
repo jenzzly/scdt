@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup } from "../../stores/useStore";
-import { Input, Select, Button, useToast } from "../../components/ui";
+import { Input, Select, Button, useToast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R } from "../../utils/theme";
 
@@ -52,14 +52,8 @@ export default function AddExpenseModal() {
     <ModalShell title="Record Expense" onClose={() => router.back()}>
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         <Select label="Category" value={category} options={CATEGORIES} onChange={setCategory} />
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <View style={{ flex: 1 }}>
-            <Input label={`Amount (${group?.currency ?? "RWF"}) *`} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="5000" prefix={group?.currency ?? "RWF"} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Input label="Date *" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
-          </View>
-        </View>
+        <Input label={`Amount (${group?.currency ?? "RWF"}) *`} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="5000" prefix={group?.currency ?? "RWF"} />
+        <DatePicker label="Date *" value={date} onChange={setDate} placeholder="Select expense date" />
         <Input label="Description *" value={description} onChangeText={setDescription} placeholder="What was this expense for?" multiline />
         <Button label="Record Expense" onPress={handleSave} fullWidth loading={loading} size="lg" />
       </ScrollView>

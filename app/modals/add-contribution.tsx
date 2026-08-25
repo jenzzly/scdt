@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView} from "react-native";
 import { useRouter } from "expo-router";
-import { useStore, useActiveGroup, useGroupMembers, useCurrentUserRole } from "../../stores/useStore";
-import { Input, Select, Button, useToast } from "../../components/ui";
+import { useStore, useActiveGroup, useGroupMembers, useCurrentUserRole, useCurrentMember } from "../../stores/useStore";
+import { Input, Select, Button, useToast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R, fmtCurrency } from "../../utils/theme";
 
@@ -19,13 +19,15 @@ export default function AddContributionModal() {
   const members  = useGroupMembers();
   const { recordContribution, activeGroupId } = useStore();
   const role     = useCurrentUserRole();
+  const currentMember = useCurrentMember();
   const { show, Toast } = useToast();
 
   const isAdmin = role === "admin";
 
-  const [memberId, setMemberId] = useState("");
+  const [memberId, setMemberId] = useState(currentMember?.id ?? "");
   const [amount,   setAmount]   = useState(String(group?.contributionAmount ?? ""));
   const [type,     setType]     = useState("regular");
+  const [date,     setDate]     = useState(new Date().toISOString().slice(0, 10));
   const [desc,     setDesc]     = useState("");
   const [loading,  setLoading]  = useState(false);
 
@@ -34,7 +36,8 @@ export default function AddContributionModal() {
     .map((m) => ({ label: m.fullName, value: m.id }));
 
   const handleSave = async () => {
-    if (!memberId) { show("Select a member", "error"); return; }
+    const contributionMemberId = isAdmin ? memberId : currentMember?.id;
+    if (!contributionMemberId) { show("Your member account is not ready", "error"); return; }
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) { show("Enter a valid amount", "error"); return; }
     if (!activeGroupId) return;
@@ -44,12 +47,12 @@ export default function AddContributionModal() {
       await recordContribution(
         {
           groupId: activeGroupId,
-          memberId,
+          memberId: contributionMemberId,
           amount: amt,
           contributionType: type as any,
           status: "approved",
           description: desc.trim() || fallbackDesc,
-          date: new Date().toISOString(),
+          date: date ? new Date(date + "T12:00:00").toISOString() : new Date().toISOString(),
         },
         true, // auto-approve
       );
@@ -62,12 +65,16 @@ export default function AddContributionModal() {
   return (
     <ModalShell title="Record Contribution" onClose={() => router.back()}>
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
-        <Select
-          label="Member *"
-          value={memberId}
-          options={[{ label: "Select member…", value: "" }, ...memberOptions]}
-          onChange={setMemberId}
-        />
+        {isAdmin ? (
+          <Select
+            label="Member *"
+            value={memberId}
+            options={[{ label: "Select member…", value: "" }, ...memberOptions]}
+            onChange={setMemberId}
+          />
+        ) : (
+          <Input label="Member" value={currentMember?.fullName ?? "Current member"} onChangeText={() => {}} editable={false} />
+        )}
         <Select
           label="Type *"
           value={type}
@@ -81,6 +88,12 @@ export default function AddContributionModal() {
           keyboardType="numeric"
           prefix={group?.currency ?? "RWF"}
           hint={`Standard: ${fmtCurrency(group?.contributionAmount ?? 0)}`}
+        />
+        <DatePicker
+          label="Contribution Date"
+          value={date}
+          onChange={setDate}
+          placeholder="Select contribution date"
         />
         <Input
           label="Note (optional)"

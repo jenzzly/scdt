@@ -40,41 +40,43 @@ export interface AuthUser {
 }
 
 export interface MemberPermissions {
+  // Create / Submit
   addContribution: boolean;
   addLoan: boolean;
   addInvestment: boolean;
-  downloadReports: boolean;
-  updateMeetings: boolean;
+  
+  // Approvals
   approveContributions: boolean;
   approveLoans: boolean;
   approveInvestments: boolean;
-  /**
-   * Grants a regular member visibility into OTHER members' reports (the
-   * Members tab in Reports, and group-wide totals on Overview/Earnings).
-   * Without this, a member only ever sees their own data, regardless of
-   * what officers/admins can see. Officers (loan_officer/committee/
-   * accountant) and admins always have this implicitly — this flag exists
-   * specifically to let an admin extend the same visibility to a regular
-   * "member" role on a case-by-case basis.
-   */
+
+  // View & Access
   viewAllReports: boolean;
+  downloadReports: boolean;
+
+  // Management & Edits
+  manageMeetings: boolean;
+  editMembers: boolean;
+  deleteRecords: boolean;
+  manageSettings: boolean;
+  /** @deprecated alias kept for backward compatibility */
+  updateMeetings?: boolean;
 }
 
-// Default-deny: a brand-new member (approved or not) starts with NO ability
-// to add contributions, loans, or investments. An admin must explicitly
-// grant each permission from Group Settings → Permissions. This prevents
-// unapproved or freshly-approved members from creating financial records
-// before an admin has reviewed and configured their access.
 export const DEFAULT_MEMBER_PERMISSIONS: MemberPermissions = {
   addContribution: false,
   addLoan: false,
   addInvestment: false,
-  downloadReports: false,
-  updateMeetings: false,
   approveContributions: false,
   approveLoans: false,
   approveInvestments: false,
   viewAllReports: false,
+  downloadReports: false,
+  manageMeetings: false,
+  editMembers: false,
+  deleteRecords: false,
+  manageSettings: false,
+  updateMeetings: false,
 };
 
 export interface LoanApprovalStep {

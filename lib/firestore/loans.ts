@@ -30,7 +30,7 @@ import { recordDeletion } from "./deletions";
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 function fmtCurrency(n: number, currency = "RWF") {
-  return `${currency} ${n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  return `${currency} ${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /** Convert a stored loan interest rate to its ANNUAL equivalent, based on period. */

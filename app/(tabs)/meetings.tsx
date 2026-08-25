@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, useWindowDimensions} from "react-native";
 import { useRouter } from "expo-router";
-import { useStore, useGroupMeetings, useGroupMembers, useCurrentUserRole } from "../../stores/useStore";
+import { useStore, useGroupMeetings, useGroupMembers, useCurrentUserRole, useCurrentMember, useIsAdminView } from "../../stores/useStore";
 import { useCurrentMemberPermissions } from "../../stores/selectors";
 import { useToast, Button, BottomModal, Input } from "../../components/ui";
 import { Colors, S, R, C, fmtDate, fmtCurrency, showConfirm } from "../../utils/theme";
@@ -24,6 +24,8 @@ export default function MeetingsScreen() {
   const isWide = width >= 768;
   const meetings = useGroupMeetings();
   const members = useGroupMembers();
+  const currentMember = useCurrentMember();
+  const isAdminView = useIsAdminView();
   const currentUserRole = useCurrentUserRole();
   const { cancelMeeting, clearMeetingPenalty, deleteMeeting, updateMeeting, activeGroupId } = useStore();
   const { show, Toast } = useToast();
@@ -41,6 +43,13 @@ export default function MeetingsScreen() {
   const canScheduleMeeting = ["admin", "accountant"].includes(currentUserRole) && permissions.updateMeetings;
   const canEditMeeting = isAdmin;
   const canDeleteMeeting = isAdmin;
+
+  const visibleMeetings = useMemo(
+    () => isAdminView
+      ? meetings
+      : meetings.filter(meeting => meeting.attendees?.some(attendee => attendee.memberId === currentMember?.id)),
+    [meetings, isAdminView, currentMember],
+  );
 
   const getAttendanceSummary = (meeting: Meeting) => {
     const total = meeting.attendees?.length || 0;
@@ -97,7 +106,7 @@ export default function MeetingsScreen() {
     });
   };
 
-  const sorted = useMemo(() => [...meetings].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()), [meetings]);
+  const sorted = useMemo(() => [...visibleMeetings].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()), [visibleMeetings]);
   const upcoming = sorted.filter(m => new Date(m.date) >= new Date() && m.status !== "cancelled");
   const past = sorted.filter(m => new Date(m.date) < new Date() || m.status === "cancelled");
 

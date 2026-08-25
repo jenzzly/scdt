@@ -9,7 +9,7 @@ disburse/repay a loan. These functions close that gap:
 
 - **Role check**: looks up the caller's membership doc for the specific
   group and rejects unless their role is allowed to disburse
-  (`admin`/`accountant`/`loan_officer`) or record a repayment
+  (`accountant`) or record a repayment
   (`admin`/`accountant`).
 - **Status check**: `disburseLoan` requires `status === "approved"`;
   `recordRepayment` requires `status === "disbursed"`. A client can no

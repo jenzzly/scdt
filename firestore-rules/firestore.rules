@@ -58,6 +58,55 @@ service cloud.firestore {
         && memberRole(groupId) in ["admin", "accountant", "loan_officer"];
     }
 
+    function memberDocRef(groupId) {
+      return /databases/$(database)/documents/groups/$(groupId)/members/$(membershipData(groupId).memberId);
+    }
+
+    function hasMemberDoc(groupId) {
+      return exists(membershipRef(groupId))
+        && ('memberId' in membershipData(groupId))
+        && exists(memberDocRef(groupId));
+    }
+
+    function memberPermissions(groupId) {
+      return hasMemberDoc(groupId) && ('permissions' in get(memberDocRef(groupId)).data)
+        ? get(memberDocRef(groupId)).data.permissions
+        : {};
+    }
+
+    function hasPermission(groupId, key) {
+      return isAdmin(groupId)
+        || (isActiveMember(groupId) && (key in memberPermissions(groupId)) && memberPermissions(groupId)[key] == true);
+    }
+
+    function canAddContribution(groupId) {
+      return isAdminOrAccountant(groupId) || hasPermission(groupId, 'addContribution');
+    }
+
+    function canAddLoan(groupId) {
+      return canManageLoans(groupId) || hasPermission(groupId, 'addLoan');
+    }
+
+    function canAddInvestment(groupId) {
+      return isAdminOrAccountant(groupId) || hasPermission(groupId, 'addInvestment');
+    }
+
+    function canApproveContributions(groupId) {
+      return isAdminOrAccountant(groupId) || hasPermission(groupId, 'approveContributions');
+    }
+
+    function canApproveLoans(groupId) {
+      return canManageLoans(groupId) || hasPermission(groupId, 'approveLoans');
+    }
+
+    function canManageMeetings(groupId) {
+      return isAdminOrAccountant(groupId) || hasPermission(groupId, 'manageMeetings') || hasPermission(groupId, 'updateMeetings');
+    }
+
+    function canDeleteRecords(groupId) {
+      return isAdmin(groupId) || hasPermission(groupId, 'deleteRecords');
+    }
+
     // ─────────────────────────────
     // GROUPS
     // ─────────────────────────────
@@ -73,6 +122,7 @@ service cloud.firestore {
       // Also allow update during initial setup when membership doesn't exist yet
       // (the founder is setting up the group before their membership doc is created).
       allow update: if isAdminOrAccountant(groupId)
+        || hasPermission(groupId, 'manageSettings')
         || (isAuth() && !exists(membershipRef(groupId)));
 
       allow delete: if isAdmin(groupId);
@@ -94,13 +144,14 @@ service cloud.firestore {
         );
 
         allow update: if isAdminOrAccountant(groupId)
+          || hasPermission(groupId, 'editMembers')
           || (isAuth()
               && resource.data.userId == uid()
               && !request.resource.data.diff(resource.data)
                   .affectedKeys()
-                  .hasAny(["role", "status", "userId", "groupId"]));
+                  .hasAny(["role", "status", "userId", "groupId", "permissions"]));
 
-        allow delete: if isAdmin(groupId);
+        allow delete: if isAdmin(groupId) || hasPermission(groupId, 'editMembers');
       }
 
       // ───────── CONTRIBUTIONS ─────────
@@ -108,14 +159,13 @@ service cloud.firestore {
         allow read: if isMember(groupId);
 
         allow create: if isAuth() && (
-          isActiveMember(groupId)
-          || isAdminOrAccountant(groupId)
+          canAddContribution(groupId)
           || request.resource.data.id == "_init"
           || request.resource.data.system == true
         );
 
-        allow update: if isAdminOrAccountant(groupId);
-        allow delete: if isAdmin(groupId);
+        allow update: if canApproveContributions(groupId);
+        allow delete: if canDeleteRecords(groupId);
       }
 
       // ───────── LOANS ─────────
@@ -123,13 +173,13 @@ service cloud.firestore {
         allow read: if isMember(groupId);
 
         allow create: if isAuth() && (
-          isActiveMember(groupId)
+          canAddLoan(groupId)
           || request.resource.data.id == "_init"
           || request.resource.data.system == true
         );
 
-        allow update: if canManageLoans(groupId);
-        allow delete: if isAdmin(groupId);
+        allow update: if canApproveLoans(groupId);
+        allow delete: if canDeleteRecords(groupId);
       }
 
       // ───────── WALLET TRANSACTIONS ─────────
@@ -137,15 +187,15 @@ service cloud.firestore {
         allow read: if isMember(groupId);
 
         allow create: if isAuth() && (
-          isAdminOrAccountant(groupId)
-          || isActiveMember(groupId)
+          canAddContribution(groupId)
+          || isAdminOrAccountant(groupId)
           || request.resource.data.id == "_init"
           || request.resource.data.system == true
         );
 
-        // Only admins can update (soft-delete sets deletedAt/deletedBy)
-        allow update: if isAdmin(groupId);
-        allow delete: if isAdmin(groupId);
+        // Only admins or users with deleteRecords can update/soft-delete
+        allow update: if canDeleteRecords(groupId);
+        allow delete: if canDeleteRecords(groupId);
       }
 
       // ───────── EXPENSES ─────────
@@ -159,7 +209,7 @@ service cloud.firestore {
         );
 
         allow update: if isAdminOrAccountant(groupId);
-        allow delete: if isAdmin(groupId);
+        allow delete: if canDeleteRecords(groupId);
       }
 
       // ───────── MEETINGS ─────────
@@ -167,13 +217,13 @@ service cloud.firestore {
         allow read: if isMember(groupId);
 
         allow create: if isAuth() && (
-          isAdminOrAccountant(groupId)
+          canManageMeetings(groupId)
           || request.resource.data.id == "_init"
           || request.resource.data.system == true
         );
 
-        allow update: if isAdminOrAccountant(groupId);
-        allow delete: if isAdmin(groupId);
+        allow update: if canManageMeetings(groupId);
+        allow delete: if canDeleteRecords(groupId);
       }
 
       // ───────── INVESTMENTS ─────────
@@ -181,13 +231,13 @@ service cloud.firestore {
         allow read: if isMember(groupId);
 
         allow create: if isAuth() && (
-          isAdminOrAccountant(groupId)
+          canAddInvestment(groupId)
           || request.resource.data.id == "_init"
           || request.resource.data.system == true
         );
 
-        allow update: if isAdminOrAccountant(groupId);
-        allow delete: if isAdmin(groupId);
+        allow update: if isAdminOrAccountant(groupId) || hasPermission(groupId, 'approveInvestments');
+        allow delete: if canDeleteRecords(groupId);
       }
 
       // ───────── AUDIT LOGS ─────────

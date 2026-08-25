@@ -8,6 +8,7 @@ import { useRouter } from "expo-router";
 import {
   useActiveGroup, useGroupWallet, useGroupMembers,
   useCurrentUserRole, useCurrentMember,
+  useIsAdminView,
 } from "../../stores/useStore";
 import { TabRow, SearchBar, useToast } from "../../components/ui";
 import { Colors, S, R, C, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
@@ -68,7 +69,7 @@ export default function WalletScreen() {
   const { show, Toast } = useToast();
 
   const isAdmin   = role === "admin";
-  const canSeeAll = ["admin","loan_officer","committee","accountant"].includes(role);
+  const canSeeAll = useIsAdminView();
 
   const txs = useMemo(() =>
     canSeeAll ? allTxs : allTxs.filter(t => t.memberId === currentMember?.id),
@@ -228,7 +229,7 @@ export default function WalletScreen() {
           <Text style={wt.balanceLabel}>{canSeeAll ? "AVAILABLE BALANCE" : "MY SAVINGS"}</Text>
           <Text style={wt.balanceAmount}>
             <Text style={wt.balanceCurrency}>{group?.currency ?? "RWF"} </Text>
-            {Math.round(displayBalance).toLocaleString()}
+            {fmtCurrency(displayBalance, group?.currency ?? "RWF").replace(`${group?.currency ?? "RWF"} `, "")}
           </Text>
           <View style={wt.balancePills}>
             <View style={wt.balancePill}>

@@ -5,7 +5,7 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, StatusB
 import { useRouter } from "expo-router";
 import {
   useStore, useGroupLoans, useGroupMembers,
-  useCurrentUserRole, useCurrentMember,
+  useCurrentUserRole, useCurrentMember, useIsAdminView,
 } from "../../stores/useStore";
 import { useGroupInvestments, useGroupWallet, useCurrentMemberPermissions } from "../../stores/selectors";
 import {
@@ -143,6 +143,7 @@ function LoanDetailModal({
   isAdmin,
   isPending,
   actableStep,
+  canDisburse,
 }: {
   visible: boolean;
   loan: Loan | null;
@@ -157,6 +158,7 @@ function LoanDetailModal({
   isAdmin: boolean;
   isPending: boolean;
   actableStep: string | null;
+  canDisburse: boolean;
 }) {
   // Pair interest + principal txs into rows for the history table
   const paymentTxs = React.useMemo(() => {
@@ -276,7 +278,7 @@ function LoanDetailModal({
               </TouchableOpacity>
             </>
           )}
-          {loan.status === "approved" && isAdmin && (
+          {loan.status === "approved" && canDisburse && (
             <TouchableOpacity style={[styles.disburseBtn, { flex: 1 }]} onPress={onDisburse}>
               <Text style={styles.disburseBtnText}>Disburse</Text>
             </TouchableOpacity>
@@ -417,20 +419,20 @@ export default function LoansScreen() {
     investmentId: string; step: "committee" | "accountant"; approve: boolean;
   } | null>(null);
 
-  const canSeeAll = ["admin", "loan_officer", "committee", "accountant"].includes(role);
+  const isAdminView = useIsAdminView();
   const isAdmin = role === "admin";
 
   const getMember = (id: string) => groupMembers.find((m: Member) => m.id === id);
 
   const visibleLoans = useMemo(() => {
-    if (canSeeAll) return allLoans;
+    if (isAdminView) return allLoans;
     return allLoans.filter((l: Loan) => l.memberId === currentMember?.id);
-  }, [allLoans, canSeeAll, currentMember]);
+  }, [allLoans, isAdminView, currentMember]);
 
   const visibleInvestments = useMemo(() => {
-    if (canSeeAll) return investments;
+    if (isAdminView) return investments;
     return investments.filter((i: Investment) => i.createdBy === currentMember?.id);
-  }, [investments, canSeeAll, currentMember]);
+  }, [investments, isAdminView, currentMember]);
 
   const filteredLoans = useMemo(() => {
     const list = visibleLoans;
@@ -450,12 +452,12 @@ export default function LoansScreen() {
     return list;
   }, [visibleInvestments, tab]);
 
-  const outstanding = useMemo(() => allLoans.filter((l: Loan) => l.status === "disbursed").reduce((s: number, l: Loan) => s + l.balance, 0), [allLoans]);
-  const totalRepaid = useMemo(() => allLoans.reduce((s: number, l: Loan) => s + l.amountRepaid, 0), [allLoans]);
-  const totalDisbursed = useMemo(() => allLoans.filter((l: Loan) => ["disbursed", "repaid"].includes(l.status)).reduce((s: number, l: Loan) => s + l.amount, 0), [allLoans]);
-  const pendingCount = useMemo(() => allLoans.filter((l: Loan) => PENDING_STATUSES.includes(l.status)).length, [allLoans]);
-  const totalInvested = useMemo(() => investments.reduce((s: number, i: Investment) => s + i.investmentAmount, 0), [investments]);
-  const totalReturns = useMemo(() => investments.reduce((s: number, i: Investment) => s + (i.actualReturn || 0), 0), [investments]);
+  const outstanding = useMemo(() => visibleLoans.filter((l: Loan) => l.status === "disbursed").reduce((s: number, l: Loan) => s + l.balance, 0), [visibleLoans]);
+  const totalRepaid = useMemo(() => visibleLoans.reduce((s: number, l: Loan) => s + l.amountRepaid, 0), [visibleLoans]);
+  const totalDisbursed = useMemo(() => visibleLoans.filter((l: Loan) => ["disbursed", "repaid"].includes(l.status)).reduce((s: number, l: Loan) => s + l.amount, 0), [visibleLoans]);
+  const pendingCount = useMemo(() => visibleLoans.filter((l: Loan) => PENDING_STATUSES.includes(l.status)).length, [visibleLoans]);
+  const totalInvested = useMemo(() => visibleInvestments.reduce((s: number, i: Investment) => s + i.investmentAmount, 0), [visibleInvestments]);
+  const totalReturns = useMemo(() => visibleInvestments.reduce((s: number, i: Investment) => s + (i.actualReturn || 0), 0), [visibleInvestments]);
 
   const handleApproval = async () => {
     if (!pendingAction) return;
@@ -595,8 +597,8 @@ export default function LoansScreen() {
     }
   };
 
-  const LOAN_TABS = canSeeAll ? ["All", "Pending", "Active", "Repaid", "Rejected"] : ["All", "Active", "Repaid"];
-  const INVEST_TABS = canSeeAll ? ["All", "Pending", "Active", "Matured", "Closed"] : ["All", "Active", "Matured", "Closed"];
+  const LOAN_TABS = isAdminView ? ["All", "Pending", "Active", "Repaid", "Rejected"] : ["All", "Active", "Repaid"];
+  const INVEST_TABS = isAdminView ? ["All", "Pending", "Active", "Matured", "Closed"] : ["All", "Active", "Matured", "Closed"];
 
   const getFilteredItems = () => {
     if (activeSubTab === "investments") {
@@ -807,15 +809,15 @@ export default function LoansScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Summary card — dark navy, matching wallet */}
-        {canSeeAll && (
+        {
           <View style={styles.balanceCard}>
             <View style={styles.cardAccentDot} />
-            <Text style={styles.balanceLabel}>PORTFOLIO OVERVIEW</Text>
+            <Text style={styles.balanceLabel}>{isAdminView ? "PORTFOLIO OVERVIEW" : "MY PORTFOLIO"}</Text>
             <Text style={styles.balanceAmount}>
               <Text style={styles.balanceCurrency}>RWF </Text>
-              {Math.round(totalDisbursed).toLocaleString()}
+              {fmtCurrency(totalDisbursed).replace("RWF ", "")}
             </Text>
-            <Text style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>total loans disbursed</Text>
+            <Text style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{isAdminView ? "total loans disbursed" : "my loans disbursed"}</Text>
 
             <View style={styles.balancePills}>
               <View style={styles.balancePill}>
@@ -847,7 +849,7 @@ export default function LoansScreen() {
               </View>
             )}
           </View>
-        )}
+        }
 
         {/* Sub Tabs + Add buttons inline */}
         <View style={styles.subTabRow}>
@@ -928,6 +930,7 @@ export default function LoansScreen() {
                     member={getMember(loan.memberId)}
                     actableStep={step}
                     isAdmin={isAdmin}
+                    canDisburse={role === "accountant"}
                     isPending={isPending}
                     onApprove={() => {
                       if (!step) return;
@@ -1444,6 +1447,7 @@ export default function LoansScreen() {
         }}
         isAdmin={isAdmin}
         isPending={selectedLoan ? PENDING_STATUSES.includes(selectedLoan.status) : false}
+        canDisburse={role === "accountant"}
       />
 
       <Toast />
@@ -1453,7 +1457,7 @@ export default function LoansScreen() {
 
 // LoanCard Component with View Details button
 function LoanCard({
-  loan, member, actableStep, isAdmin, isPending,
+  loan, member, actableStep, isAdmin, isPending, canDisburse,
   onApprove, onReject, onDisburse, onRepayment, onSchedule, onDelete, onEditResubmit,
   onViewDetails,
 }: {
@@ -1462,6 +1466,7 @@ function LoanCard({
   actableStep: string | null;
   isAdmin: boolean;
   isPending: boolean;
+  canDisburse: boolean;
   onApprove: () => void;
   onReject: () => void;
   onDisburse: () => void;
@@ -1571,7 +1576,7 @@ function LoanCard({
                 <Text style={styles.scheduleBtnText}>Schedule</Text>
               </TouchableOpacity>
             )}
-            {isAdmin && (
+            {canDisburse && (
               <TouchableOpacity style={[styles.disburseBtn, { flex: 1 }]} onPress={onDisburse} activeOpacity={0.8}>
                 <Text style={styles.disburseBtnText}>Disburse</Text>
               </TouchableOpacity>
@@ -1599,7 +1604,7 @@ function LoanCard({
         </TouchableOpacity>
       )}
 
-      {isAdmin && (
+            {canDisburse && (
         <TouchableOpacity style={styles.deleteBtn} onPress={onDelete} activeOpacity={0.8}>
           <Text style={styles.deleteBtnText}>🗑 Delete Loan</Text>
         </TouchableOpacity>

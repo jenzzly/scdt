@@ -7,7 +7,7 @@ import { useRouter } from "expo-router";
 import {
   useStore, useActiveGroup, useGroupLoans, useGroupContributions,
   useGroupWallet, useCurrentUserRole, useCurrentMember,
-  useCanSeeAllFinancial, useUnreadNotifs,
+  useIsAdminView, useUnreadNotifs,
 } from "../../stores/useStore";
 import { useCurrentMemberPermissions } from "../../stores/selectors";
 import { Colors, S, R, C, T, fmtCurrency, fmtFull, fmtDate, round2} from "../../utils/theme";
@@ -51,7 +51,7 @@ export default function DashboardScreen() {
   const wallet    = useGroupWallet();
   const role      = useCurrentUserRole();
   const currentMember = useCurrentMember();
-  const canSeeAll = useCanSeeAllFinancial();
+  const isAdminView = useIsAdminView();
   const isAdmin   = role === "admin";
   const permissions = useCurrentMemberPermissions();
   // Contribution approval: loan_officer and accountant always can; committee needs permission
@@ -62,14 +62,14 @@ export default function DashboardScreen() {
 
   useRecalcTotals();
 
-  const myLoans   = useMemo(() => canSeeAll ? loans  : loans.filter(l  => l.memberId  === currentMember?.id), [loans,  canSeeAll, currentMember]);
-  const myContribs = useMemo(() => canSeeAll ? contributions : contributions.filter(c => c.memberId === currentMember?.id), [contributions, canSeeAll, currentMember]);
-  const myWallet  = useMemo(() => canSeeAll ? wallet : wallet.filter(t  => t.memberId  === currentMember?.id), [wallet, canSeeAll, currentMember]);
+  const myLoans   = useMemo(() => isAdminView ? loans  : loans.filter(l  => l.memberId === currentMember?.id), [loans, isAdminView, currentMember]);
+  const myContribs = useMemo(() => isAdminView ? contributions : contributions.filter(c => c.memberId === currentMember?.id), [contributions, isAdminView, currentMember]);
+  const myWallet  = useMemo(() => isAdminView ? wallet : wallet.filter(t => t.memberId === currentMember?.id), [wallet, isAdminView, currentMember]);
 
   const activeLoans   = useMemo(() => myLoans.filter(l => l.status === "disbursed"), [myLoans]);
-  const pendingLoans  = useMemo(() => loans.filter(l => l.status.startsWith("pending_")), [loans]);
-  const pendingContribs = useMemo(() => contributions.filter(c => c.status === "pending"), [contributions]);
-  const defaulters    = useMemo(() => loans.filter(l => l.status === "defaulted").length, [loans]);
+  const pendingLoans  = useMemo(() => myLoans.filter(l => l.status.startsWith("pending_")), [myLoans]);
+  const pendingContribs = useMemo(() => myContribs.filter(c => c.status === "pending"), [myContribs]);
+  const defaulters    = useMemo(() => myLoans.filter(l => l.status === "defaulted").length, [myLoans]);
   const recentTxs     = useMemo(() => {
     // Deduplicate by ID before rendering — prevents React key collision
     // when Firestore subscription fires alongside optimistic local add
@@ -90,7 +90,7 @@ export default function DashboardScreen() {
   );
 
   const loanEarnings = useMemo(() => {
-    const src = canSeeAll ? loans : myLoans;
+    const src = isAdminView ? loans : myLoans;
     return src.reduce((sum, l) => {
       if (l.status === "repaid" || l.status === "disbursed") {
         const ratio = l.totalRepayable > 0 ? (l.totalInterest / l.totalRepayable) : 0;
@@ -98,7 +98,7 @@ export default function DashboardScreen() {
       }
       return sum;
     }, 0);
-  }, [myLoans, loans, canSeeAll]);
+  }, [myLoans, loans, isAdminView]);
 
   const myTotalContributions = currentMember?.totalContributions ?? 0;
 
@@ -145,15 +145,15 @@ export default function DashboardScreen() {
           <View style={[st.cardGrid, { pointerEvents: "none" }]} />
 
           <Text style={st.cardLabel}>
-            {canSeeAll ? "GROUP BALANCE" : "MY SAVINGS"}
+            {isAdminView ? "GROUP BALANCE" : "MY SAVINGS"}
           </Text>
           <Text style={st.cardAmount}>
-            {fmtFull(canSeeAll ? actualBalance : myTotalContributions)}
+            {fmtFull(isAdminView ? actualBalance : myTotalContributions)}
           </Text>
           <Text style={st.cardSub}>{group?.name ?? BRAND.defaultGroupName}</Text>
 
           <View style={st.cardPills}>
-            {canSeeAll ? (
+            {isAdminView ? (
               <>
                 <View style={st.cardPill}>
                   <Text style={st.cardPillLabel}>SAVINGS</Text>
@@ -212,42 +212,70 @@ export default function DashboardScreen() {
           </View>
         )}
 
-        {/* ── Admin stats ── */}
-        {canSeeAll && (
+
+
+        {/* ── Group Financial Position ── */}
+        {(
           <View style={st.block}>
-            <SectionHeader title="Overview" />
-            <View style={st.statsCard}>
+            <SectionHeader title="Group Financial Position" />
+            <View style={[st.statsCard, { padding: 0, overflow: 'hidden' }]}>
+              {/* Row 1 */}
               <View style={st.statRow}>
-                <View style={st.stat}>
+                <View style={[st.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
                   <Text style={T.label}>Members</Text>
-                  <Text style={[st.statValue]}>
-                    {members.filter(m => m.groupId === activeGroupId).length}
+                  <Text style={st.statValue}>
+                    {members.filter(m => m.groupId === activeGroupId && m.status === 'active').length}
                   </Text>
-                  <Text style={T.small}>
-                    {members.filter(m => m.groupId === activeGroupId && m.status === "active").length} active
-                  </Text>
+                  <Text style={T.small}>active</Text>
                 </View>
                 <View style={st.statDivider} />
-                <View style={st.stat}>
-                  <Text style={T.label}>Active Loans</Text>
-                  <Text style={st.statValue}>{activeLoans.length}</Text>
-                  <Text style={T.small}>{fmtCurrency(group?.totalLoans ?? 0)}</Text>
-                </View>
-              </View>
-              <View style={{ height: 1, backgroundColor: C.border }} />
-              <View style={st.statRow}>
-                <View style={st.stat}>
-                  <Text style={T.label}>Defaulters</Text>
-                  <Text style={[st.statValue, { color: defaulters > 0 ? C.debit : C.text }]}>{defaulters}</Text>
-                  <Text style={T.small}>overdue</Text>
-                </View>
-                <View style={st.statDivider} />
-                <View style={st.stat}>
-                  <Text style={T.label}>Net Worth</Text>
-                  <Text style={[st.statValue, { color: C.primary }]}>
-                    {fmtCurrency((group?.totalSavings ?? 0) + (group?.totalInterestEarned ?? 0))}
+                <View style={[st.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
+                  <Text style={T.label}>Total Net Assets</Text>
+                  <Text style={[st.statValue, { color: C.primary, fontSize: 16 }]}>
+                    {fmtCurrency(round2((group?.totalSavings ?? 0) + (group?.totalInterestEarned ?? 0)))}
                   </Text>
                   <Text style={T.small}>savings + interest</Text>
+                </View>
+              </View>
+              <View style={st.statRow}>
+                <View style={[st.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
+                  <Text style={T.label}>Contributions</Text>
+                  <Text style={[st.statValue, { fontSize: 16 }]}>
+                    {fmtCurrency(group?.totalSavings ?? 0)}
+                  </Text>
+                  <Text style={T.small}>total collected</Text>
+                </View>
+                <View style={st.statDivider} />
+                <View style={[st.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
+                  <Text style={T.label}>Interest Earned</Text>
+                  <Text style={[st.statValue, { color: C.gold, fontSize: 16 }]}>
+                    {fmtCurrency(round2(group?.totalInterestEarned ?? 0))}
+                  </Text>
+                  <Text style={T.small}>from loan repayments</Text>
+                </View>
+              </View>
+              <View style={st.statRow}>
+                <View style={st.stat}>
+                  <Text style={T.label}>Value Per Share</Text>
+                  <Text style={[st.statValue, { color: C.primary, fontSize: 16 }]}>
+                    {(() => {
+                      const active = members.filter(m => m.groupId === activeGroupId && m.status === 'active').length;
+                      const netAssets = round2((group?.totalSavings ?? 0) + (group?.totalInterestEarned ?? 0));
+                      return active > 0 ? fmtCurrency(round2(netAssets / active)) : 'N/A';
+                    })()}
+                  </Text>
+                  <Text style={T.small}>per active member</Text>
+                </View>
+                <View style={st.statDivider} />
+                <View style={st.stat}>
+                  <Text style={T.label}>Dividend Per Share</Text>
+                  <Text style={[st.statValue, { color: C.gold, fontSize: 16 }]}>
+                    {(() => {
+                      const active = members.filter(m => m.groupId === activeGroupId && m.status === 'active').length;
+                      return active > 0 ? fmtCurrency(round2((group?.totalInterestEarned ?? 0) / active)) : 'N/A';
+                    })()}
+                  </Text>
+                  <Text style={T.small}>interest per member</Text>
                 </View>
               </View>
             </View>
@@ -317,7 +345,7 @@ export default function DashboardScreen() {
         <View style={st.block}>
           <SectionHeader
             title="Recent Activity"
-            action={canSeeAll ? () => router.push("/(tabs)/wallet") : undefined}
+            action={isAdminView ? () => router.push("/(tabs)/wallet") : undefined}
             actionLabel="See all"
           />
           <View style={st.card}>

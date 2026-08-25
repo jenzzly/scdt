@@ -4,7 +4,7 @@ import React, { useState, useMemo } from "react";
 import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup, useGroupInvestments } from "../../stores/useStore";
-import { Input, Select, Button, useToast, BottomModal } from "../../components/ui";
+import { Input, Select, Button, useToast, BottomModal, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R, fmtCurrency, round2, showConfirm } from "../../utils/theme";
 
@@ -137,14 +137,8 @@ export default function AddInvestmentModal() {
         )}
 
         <Text style={styles.sectionLbl}>Dates</Text>
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <View style={{ flex: 1 }}>
-            <Input label="Start Date" value={startDate} onChangeText={setStartDate} placeholder="YYYY-MM-DD" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Input label="Maturity Date" value={maturityDate} onChangeText={setMaturityDate} placeholder="YYYY-MM-DD" />
-          </View>
-        </View>
+        <DatePicker label="Start Date" value={startDate} onChange={setStartDate} placeholder="Select start date" />
+        <DatePicker label="Maturity Date (Optional)" value={maturityDate} onChange={setMaturityDate} placeholder="Select maturity date" />
 
         <Text style={styles.sectionLbl}>Representative (Optional)</Text>
         <View style={{ flexDirection: "row", gap: 10 }}>

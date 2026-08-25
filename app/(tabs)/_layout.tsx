@@ -5,8 +5,26 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
   useWindowDimensions, ScrollView, Alert,
 } from "react-native";
-import { Home, CreditCard, Wallet, BarChart3, Settings, Calendar, LogOut } from "lucide-react-native";
-import { useStore, useCurrentUserRole, useCurrentMember } from "../../stores/useStore";
+// Dynamic import to avoid web hydration error with lucide-react-native
+let Icons: any;
+try {
+  Icons = require("lucide-react-native");
+} catch (e) {
+  // Fallback for web - use simple text emojis
+  Icons = {
+    Home: null,
+    CreditCard: null,
+    Wallet: null,
+    BarChart3: null,
+    Settings: null,
+    Calendar: null,
+    LogOut: null,
+    DollarSign: null,
+  };
+}
+
+const { Home, CreditCard, Wallet, BarChart3, Settings, Calendar, LogOut, DollarSign } = Icons || {};
+import { useStore, useCurrentUserRole, useCurrentMember, useDataViewMode } from "../../stores/useStore";
 import { useAuth } from "../../hooks/useAuth";
 import { useFirebaseSync, useNotificationSync } from "../../hooks/useFirebaseSync";
 import { useNetworkStatus } from "../../hooks/useNetworkStatus";
@@ -16,22 +34,35 @@ import { BRAND } from "../../lib/brand";
 // ─────────────────────────────────────────────
 // Nav config
 // ─────────────────────────────────────────────
-const NAV_ICONS: Record<string, React.ComponentType<{ color?: string; size?: number }>> = {
-  Dashboard: Home,
-  Loans:     CreditCard,
-  Wallet:    Wallet,
-  Reports:   BarChart3,
-  Meetings:  Calendar,
-  Settings:  Settings,
+const NAV_ICONS: Record<string, React.ComponentType<{ color?: string; size?: number }> | null> = {
+  Dashboard:     Home || null,
+  Loans:         CreditCard || null,
+  Wallet:        Wallet || null,
+  Contributions: DollarSign || null,
+  Reports:       BarChart3 || null,
+  Meetings:      Calendar || null,
+  Settings:      Settings || null,
 };
 
-const NAV_ITEMS = [
-  { label: "Dashboard", route: "/(tabs)/dashboard" },
-  { label: "Loans",     route: "/(tabs)/loans"     },
-  { label: "Wallet",    route: "/(tabs)/wallet"    },
-  { label: "Reports",   route: "/(tabs)/reports"   },
-  { label: "Meetings",  route: "/(tabs)/meetings"  },
-  { label: "Settings",  route: "/(tabs)/more"      },
+// Desktop sidebar shows everything including Wallet
+const DESKTOP_NAV_ITEMS = [
+  { label: "Dashboard",     route: "/(tabs)/dashboard"     },
+  { label: "Loans",         route: "/(tabs)/loans"         },
+  { label: "Wallet",        route: "/(tabs)/wallet"        },
+  { label: "Contributions", route: "/(tabs)/contributions" },
+  { label: "Reports",       route: "/(tabs)/reports"       },
+  { label: "Meetings",      route: "/(tabs)/meetings"      },
+  { label: "Settings",      route: "/(tabs)/more"          },
+];
+
+// Mobile tab bar: hide Wallet, show Contributions
+const MOBILE_NAV_ITEMS = [
+  { label: "Dashboard",     route: "/(tabs)/dashboard"     },
+  { label: "Loans",         route: "/(tabs)/loans"         },
+  { label: "Contributions", route: "/(tabs)/contributions" },
+  { label: "Reports",       route: "/(tabs)/reports"       },
+  { label: "Meetings",      route: "/(tabs)/meetings"      },
+  { label: "Settings",      route: "/(tabs)/more"          },
 ];
 
 // ─────────────────────────────────────────────
@@ -39,10 +70,20 @@ const NAV_ITEMS = [
 // ─────────────────────────────────────────────
 function SidebarItem({ label, isActive, onPress }: { label: string; isActive: boolean; onPress: () => void }) {
   const Icon = NAV_ICONS[label];
+  const iconEmoji: Record<string, string> = {
+    Dashboard: "🏠",
+    Loans: "💳",
+    Wallet: "💰",
+    Contributions: "💵",
+    Reports: "📊",
+    Meetings: "📅",
+    Settings: "⚙️",
+  };
+  
   return (
     <TouchableOpacity style={[sb.item, isActive && sb.itemActive]} onPress={onPress} activeOpacity={0.7}>
       <View style={[sb.iconWrap, isActive && sb.iconWrapActive]}>
-        {Icon && <Icon size={16} color={isActive ? Colors.primary : Colors.text3} />}
+        {Icon ? <Icon size={16} color={isActive ? Colors.primary : Colors.text3} /> : <Text style={{ fontSize: 16 }}>{iconEmoji[label] || "•"}</Text>}
       </View>
       <Text style={[sb.label, isActive && sb.labelActive]}>{label}</Text>
       {isActive && <View style={sb.activePip} />}
@@ -55,10 +96,19 @@ function SidebarItem({ label, isActive, onPress }: { label: string; isActive: bo
 // ─────────────────────────────────────────────
 function TabItem({ label, focused }: { label: string; focused: boolean }) {
   const Icon = NAV_ICONS[label];
+  const iconEmoji: Record<string, string> = {
+    Dashboard: "🏠",
+    Loans: "💳",
+    Contributions: "💵",
+    Reports: "📊",
+    Meetings: "📅",
+    Settings: "⚙️",
+  };
+  
   return (
     <View style={tb.item}>
       <View style={[tb.iconWrap, focused && tb.iconWrapActive]}>
-        {Icon && <Icon size={19} color={focused ? "#fff" : Colors.text3} />}
+        {Icon ? <Icon size={19} color={focused ? "#fff" : Colors.text3} /> : <Text style={{ fontSize: 19 }}>{iconEmoji[label] || "•"}</Text>}
       </View>
       <Text style={[tb.label, focused && tb.labelActive]} numberOfLines={1}>
         {label}
@@ -143,6 +193,8 @@ export default function TabsLayout() {
   const isWide = Platform.OS === "web" && width >= 768;
 
   const { authUid, activeGroupId, authName, reset } = useStore();
+  const dataViewMode = useDataViewMode();
+  const setDataViewMode = useStore((s) => s.setDataViewMode);
   const currentUserRole = useCurrentUserRole();
   const currentMember = useCurrentMember();
   const isOnline = useNetworkStatus();
@@ -170,6 +222,18 @@ export default function TabsLayout() {
       router.replace("/(auth)/login");
     }, undefined, true);
   };
+
+  const viewModeSwitch = currentUserRole === "admin" ? (
+    <TouchableOpacity
+      style={[shared.viewModeSwitch, dataViewMode === "admin" && shared.viewModeSwitchActive]}
+      onPress={() => setDataViewMode(dataViewMode === "admin" ? "mine" : "admin")}
+      activeOpacity={0.8}
+    >
+      <Text style={[shared.viewModeText, dataViewMode === "admin" && shared.viewModeTextActive]}>
+        {dataViewMode === "admin" ? "Admin view" : "Mine view"}
+      </Text>
+    </TouchableOpacity>
+  ) : null;
 
   // ── Pending-approval gate ───────────────────────────────────────────────
   // A member record with status "pending" means an admin hasn't approved
@@ -212,7 +276,8 @@ export default function TabsLayout() {
           {/* Nav */}
           <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={sb.navList}>
             <Text style={sb.navSection}>Navigation</Text>
-            {NAV_ITEMS.map((item) => (
+            {viewModeSwitch}
+            {DESKTOP_NAV_ITEMS.map((item) => (
               <React.Fragment key={item.route}>
                 <SidebarItem
                   label={item.label}
@@ -245,12 +310,13 @@ export default function TabsLayout() {
         <View style={shared.desktopContent}>
           {offlineBanner}
           <Tabs screenOptions={{ headerShown: false, tabBarStyle: { display: "none" } }}>
-            <Tabs.Screen name="dashboard" options={{ title: "Dashboard" }} />
-            <Tabs.Screen name="loans"     options={{ title: "Loans"     }} />
-            <Tabs.Screen name="wallet"    options={{ title: "Wallet"    }} />
-            <Tabs.Screen name="reports"   options={{ title: "Reports"   }} />
-            <Tabs.Screen name="meetings"  options={{ title: "Meetings"  }} />
-            <Tabs.Screen name="more"      options={{ title: "Settings"  }} />
+            <Tabs.Screen name="dashboard"     options={{ title: "Dashboard"     }} />
+            <Tabs.Screen name="loans"         options={{ title: "Loans"         }} />
+            <Tabs.Screen name="wallet"        options={{ title: "Wallet"        }} />
+            <Tabs.Screen name="contributions" options={{ title: "Contributions" }} />
+            <Tabs.Screen name="reports"       options={{ title: "Reports"       }} />
+            <Tabs.Screen name="meetings"      options={{ title: "Meetings"      }} />
+            <Tabs.Screen name="more"          options={{ title: "Settings"      }} />
           </Tabs>
         </View>
       </View>
@@ -261,14 +327,16 @@ export default function TabsLayout() {
   return (
     <View style={{ flex: 1, backgroundColor: Colors.bg }}>
       {offlineBanner}
+      {viewModeSwitch}
       <Tabs
         screenOptions={{
           headerShown: false,
           tabBarShowLabel: false,
           tabBarStyle: tb.bar,
+          tabBarItemStyle: tb.itemStyle,
         }}
       >
-        {NAV_ITEMS.map((item) => (
+        {MOBILE_NAV_ITEMS.map((item) => (
           <Tabs.Screen
             key={item.route}
             name={item.route.replace("/(tabs)/", "")}
@@ -277,6 +345,11 @@ export default function TabsLayout() {
             }}
           />
         ))}
+        {/* Wallet is accessible by route but hidden from mobile tab bar */}
+        <Tabs.Screen
+          name="wallet"
+          options={{ tabBarButton: () => null }}
+        />
       </Tabs>
     </View>
   );
@@ -286,6 +359,14 @@ export default function TabsLayout() {
 // Shared styles
 // ─────────────────────────────────────────────
 const shared = StyleSheet.create({
+  viewModeSwitch: {
+    marginHorizontal: 14, marginVertical: 8, paddingVertical: 9,
+    borderRadius: 9, borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: Colors.elevated, alignItems: "center",
+  },
+  viewModeSwitchActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  viewModeText: { fontSize: 12, fontWeight: "700", color: Colors.text2 },
+  viewModeTextActive: { color: "#fff" },
   offlineBanner: {
     backgroundColor: Colors.error,
     paddingVertical: 6,
@@ -386,24 +467,28 @@ const tb = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: Colors.border,
     height: Platform.OS === "ios" ? 82 : 66,
-    paddingTop: 6,
-    paddingBottom: Platform.OS === "ios" ? 22 : 6,
+    paddingHorizontal: 2,
+    paddingTop: 4,
+    paddingBottom: Platform.OS === "ios" ? 20 : 4,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.06,
     shadowRadius: 8,
     elevation: 12,
   },
+  itemStyle: { flex: 1, minWidth: 0, maxWidth: "16.666%" as any, paddingHorizontal: 0 },
   item: {
     flex: 1,
+    width: "100%" as any,
+    minWidth: 0,
     alignItems: "center",
     justifyContent: "center",
-    gap: 3,
+    gap: 2,
   },
   iconWrap: {
-    width: 36,
-    height: 30,
-    borderRadius: 9,
+    width: 32,
+    height: 28,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -411,10 +496,10 @@ const tb = StyleSheet.create({
     backgroundColor: Colors.primary,
   },
   label: {
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: "600",
     color: Colors.text3,
-    letterSpacing: 0.2,
+    letterSpacing: 0,
     textTransform: "uppercase",
   },
   labelActive: {

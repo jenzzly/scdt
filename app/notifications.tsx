@@ -31,6 +31,22 @@ export default function NotificationsScreen() {
   const unread = sorted.filter((n) => !n.read);
   const read = sorted.filter((n) => n.read);
 
+  const openNotification = (notification: typeof sorted[number]) => {
+    markNotifReadLocal(notification.id);
+    const metadata = notification.metadata ?? {};
+    if (notification.actionUrl) {
+      router.push(notification.actionUrl as any);
+    } else if (metadata.loanId) {
+      router.push("/(tabs)/loans");
+    } else if (metadata.investmentId) {
+      router.push("/(tabs)/loans");
+    } else if (metadata.meetingId) {
+      router.push("/(tabs)/meetings");
+    } else if (metadata.contributionId) {
+      router.push("/(tabs)/contributions");
+    }
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: Colors.bg }}>
       <View style={styles.header}>
@@ -56,12 +72,7 @@ export default function NotificationsScreen() {
               {unread.map((n, i) => (
                 <TouchableOpacity
                   key={n.id}
-                  onPress={() => {
-                    markNotifReadLocal(n.id);
-                    if (n.type === "loan_rejected" || n.type === "loan_approved" || n.type === "loan_approval") {
-                      router.push("/(tabs)/loans");
-                    }
-                  }}
+                  onPress={() => openNotification(n)}
                   activeOpacity={0.7}
                 >
                   <CardRow
@@ -89,7 +100,7 @@ export default function NotificationsScreen() {
             <Text style={[styles.groupLabel, { marginTop: 20 }]}>Earlier</Text>
             <Card>
               {read.map((n, i) => (
-                <React.Fragment key={n.id}>
+                <TouchableOpacity key={n.id} onPress={() => openNotification(n)} activeOpacity={0.7}>
                   <CardRow
                     left={
                       <View style={[styles.iconWrap, { opacity: 0.5 }]}>
@@ -101,7 +112,7 @@ export default function NotificationsScreen() {
                     right={<Text style={styles.time}>{fmtDate(n.createdAt)}</Text>}
                     showBorder={i < read.length - 1}
                   />
-                </React.Fragment>
+                </TouchableOpacity>
               ))}
             </Card>
           </>

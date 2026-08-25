@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup } from "../../stores/useStore";
-import { Input, Button, useToast } from "../../components/ui";
+import { Input, Button, useToast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S } from "../../utils/theme";
 
@@ -42,7 +42,7 @@ export default function AddMeetingModal() {
     <ModalShell title="Schedule Meeting" onClose={() => router.back()}>
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         <Input label="Meeting Title *" value={title} onChangeText={setTitle} placeholder="Monthly General Meeting" />
-        <Input label="Date *" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
+        <DatePicker label="Date *" value={date} onChange={setDate} placeholder="Select meeting date" />
         <Input label="Location" value={location} onChangeText={setLocation} placeholder="Kigali City Hall, Room 3" />
         <Input label="Agenda" value={agenda} onChangeText={setAgenda} placeholder="Topics to be discussed…" multiline />
         <Button label="Schedule Meeting" onPress={handleSave} fullWidth loading={loading} size="lg" />

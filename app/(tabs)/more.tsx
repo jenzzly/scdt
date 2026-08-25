@@ -5,6 +5,7 @@ import { useRouter } from "expo-router";
 import {
   useStore, useGroupMembers, useGroupContributions, useGroupLoans,
   useCurrentUserRole, useCurrentMember, useGroupWallet,
+  useIsAdminView,
 } from "../../stores/useStore";
 import {
   SearchBar, TabRow, Card, CardRow, Avatar, Badge, Empty,
@@ -65,7 +66,7 @@ export default function MoreScreen() {
   const currentMember = useCurrentMember();
 
   const isAdmin = role === "admin";
-  const canViewAll = isAdmin;
+  const canViewAll = useIsAdminView();
 
   const [activeTab, setActiveTab] = useState<"profile" | "members">("profile");
   const [search, setSearch] = useState("");

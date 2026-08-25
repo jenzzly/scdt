@@ -13,6 +13,7 @@ import type {
 import type { OverdueContribution, OverdueInstallment } from "../utils/lateFees";
 
 export interface StoreState {
+  dataViewMode: "admin" | "mine";
   authUid: string | null;
   authName: string | null;
   authEmail: string | null;
@@ -33,6 +34,7 @@ export interface StoreState {
   lastSyncTimestamp: number | null;
   forceSyncTrigger: number;
   isLoading: boolean;
+  setDataViewMode: (mode: "admin" | "mine") => void;
 
   setAuth: (uid: string, name: string, email: string) => void;
   clearAuth: () => void;

@@ -8,7 +8,7 @@ import { useRouter } from "expo-router";
 import { useStore, useActiveGroup, useGroupAuditLogs } from "../stores/useStore";
 import { useGroupMembers } from "../stores/selectors";
 import { useAuth } from "../hooks/useAuth";
-import { Input, Select, Button, useToast, Card } from "../components/ui";
+import { Input, Select, Button, useToast, Card, DatePicker } from "../components/ui";
 import { Colors, C, T, fmtDate, fmtCurrency, showConfirm, round2 } from "../utils/theme";
 import { exportFullData, importFullData } from "../utils/importExport";
 import * as FS from "../lib/firestore";
@@ -1024,11 +1024,11 @@ export default function GroupSettingsScreen() {
                     />
                   </View>
                 </View>
-                <Input
+                <DatePicker
                   label="Start calculating from"
                   value={contribLateFeeStart}
-                  onChangeText={setContribLateFeeStart}
-                  placeholder="YYYY-MM-DD"
+                  onChange={setContribLateFeeStart}
+                  placeholder="Select start date"
                   hint={
                     contribLateFeeStart.trim()
                       ? "Missed contributions before this date are ignored — fees only apply from here forward"
@@ -1150,24 +1150,30 @@ export default function GroupSettingsScreen() {
 
               const PERM_KEYS: (keyof MemberPermissions)[] = [
                 "addContribution", "addLoan", "addInvestment",
-                "downloadReports", "updateMeetings", "viewAllReports",
                 "approveContributions", "approveLoans", "approveInvestments",
+                "viewAllReports", "downloadReports",
+                "manageMeetings", "editMembers", "deleteRecords", "manageSettings",
               ];
               const PERM_LABELS: Record<keyof MemberPermissions, string> = {
-                addContribution:    "Add Contribution",
-                addLoan:            "Apply for Loan",
-                addInvestment:      "Add Investment",
-                downloadReports:    "Download Reports",
-                updateMeetings:     "Update Meetings",
-                viewAllReports:     "View All Members' Reports",
+                addContribution:      "Record / Add Contributions",
+                addLoan:              "Apply for / Add Loans",
+                addInvestment:        "Add Investments",
                 approveContributions: "Approve Contributions",
-                approveLoans:       "Approve Loans",
-                approveInvestments: "Approve Investments",
+                approveLoans:         "Approve Loans",
+                approveInvestments:   "Approve Investments",
+                viewAllReports:       "View All Reports & Member Data",
+                downloadReports:      "Export & Download Reports",
+                manageMeetings:       "Record & Manage Meetings",
+                editMembers:          "Edit Member Profiles & Details",
+                deleteRecords:        "Delete Financial Records",
+                manageSettings:       "Edit Group Rules & Settings",
+                updateMeetings:       "Update Meetings",
               };
               const PERM_GROUPS = [
-                { label: "ACTIONS", keys: ["addContribution","addLoan","addInvestment"] as (keyof MemberPermissions)[] },
-                { label: "APPROVALS", keys: ["approveContributions","approveLoans","approveInvestments"] as (keyof MemberPermissions)[] },
-                { label: "ACCESS", keys: ["downloadReports","updateMeetings","viewAllReports"] as (keyof MemberPermissions)[] },
+                { label: "CREATE & APPLY", keys: ["addContribution", "addLoan", "addInvestment"] as (keyof MemberPermissions)[] },
+                { label: "APPROVALS", keys: ["approveContributions", "approveLoans", "approveInvestments"] as (keyof MemberPermissions)[] },
+                { label: "REPORTS & VISIBILITY", keys: ["viewAllReports", "downloadReports"] as (keyof MemberPermissions)[] },
+                { label: "MANAGEMENT & OPERATIONS", keys: ["manageMeetings", "editMembers", "deleteRecords", "manageSettings"] as (keyof MemberPermissions)[] },
               ];
 
               return filtered.map((member) => {
@@ -1215,24 +1221,60 @@ export default function GroupSettingsScreen() {
                       </View>
                     </TouchableOpacity>
 
-                    {/* Expanded permissions — grouped */}
+                    {/* Expanded permissions — grouped with visual toggles */}
                     {isExpanded && (
                       <View style={ps.permGrid}>
+                        {/* Quick Action Buttons */}
+                        <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+                          <TouchableOpacity
+                            style={ps.quickBtn}
+                            onPress={() => {
+                              const all: Record<string, boolean> = {};
+                              PERM_KEYS.forEach(k => { all[k] = true; });
+                              setPendingPerms(prev => ({ ...prev, [member.id]: all as any }));
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={ps.quickBtnText}>✔ Grant All</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[ps.quickBtn, { borderColor: "rgba(239,68,68,0.3)", backgroundColor: "rgba(239,68,68,0.06)" }]}
+                            onPress={() => {
+                              const none: Record<string, boolean> = {};
+                              PERM_KEYS.forEach(k => { none[k] = false; });
+                              setPendingPerms(prev => ({ ...prev, [member.id]: none as any }));
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={[ps.quickBtnText, { color: C.error }]}>✕ Revoke All</Text>
+                          </TouchableOpacity>
+                        </View>
+
                         {PERM_GROUPS.map((group) => (
-                          <View key={group.label}>
+                          <View key={group.label} style={{ marginBottom: 10 }}>
                             <Text style={ps.permGroupLabel}>{group.label}</Text>
-                            {group.keys.map((key) => (
-                              <View key={key} style={ps.permRow}>
-                                <Text style={ps.permLabel}>{PERM_LABELS[key]}</Text>
-                                <Switch
-                                  value={perms[key]}
-                                  onValueChange={() => togglePerm(member.id, key, perms)}
-                                  trackColor={{ false: C.border, true: C.primary + "66" }}
-                                  thumbColor={perms[key] ? C.primary : C.text3}
-                                  ios_backgroundColor={C.border}
-                                />
-                              </View>
-                            ))}
+                            <View style={{ gap: 4 }}>
+                              {group.keys.map((key) => {
+                                const isEnabled = !!perms[key];
+                                return (
+                                  <TouchableOpacity
+                                    key={key}
+                                    style={[ps.permRow, isEnabled && ps.permRowActive]}
+                                    onPress={() => togglePerm(member.id, key, perms)}
+                                    activeOpacity={0.7}
+                                  >
+                                    <Text style={[ps.permLabel, isEnabled && { color: C.primary, fontWeight: "700" }]}>
+                                      {PERM_LABELS[key]}
+                                    </Text>
+                                    <View style={[ps.togglePill, isEnabled && ps.togglePillActive]}>
+                                      <Text style={[ps.toggleText, isEnabled && ps.toggleTextActive]}>
+                                        {isEnabled ? "ON" : "OFF"}
+                                      </Text>
+                                    </View>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
                           </View>
                         ))}
                       </View>
@@ -1682,10 +1724,33 @@ const ps = StyleSheet.create({
   permGrid: { padding: 12 },
   permRow: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingVertical: 10, paddingHorizontal: 4,
-    borderBottomWidth: 1, borderBottomColor: C.border,
+    paddingVertical: 10, paddingHorizontal: 8,
+    borderRadius: 8,
   },
-  permLabel: { fontSize: 14, color: C.text, flex: 1 },
+  permRowActive: {
+    backgroundColor: C.primary + "0a",
+  },
+  permLabel: { fontSize: 13, fontWeight: "500", color: C.text, flex: 1, paddingRight: 8 },
+  quickBtn: {
+    paddingHorizontal: 12, paddingVertical: 7,
+    borderRadius: 8, borderWidth: 1,
+    borderColor: C.primary + "40",
+    backgroundColor: C.primary + "0a",
+  },
+  quickBtnText: { fontSize: 11, fontWeight: "700", color: C.primary },
+  togglePill: {
+    paddingHorizontal: 12, paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: C.elevated,
+    borderWidth: 1, borderColor: C.border,
+    minWidth: 46, alignItems: "center",
+  },
+  togglePillActive: {
+    backgroundColor: C.primary + "15",
+    borderColor: C.primary,
+  },
+  toggleText: { fontSize: 9, fontWeight: "800", color: C.text3, letterSpacing: 0.5 },
+  toggleTextActive: { color: C.primary },
   saveBtn: {
     backgroundColor: C.primary, paddingHorizontal: 14, paddingVertical: 7,
     borderRadius: 8,
@@ -1702,7 +1767,7 @@ const ps = StyleSheet.create({
   searchInput: { flex: 1, fontSize: 14, color: C.text, minHeight: 20 },
   permGroupLabel: {
     fontSize: 9, fontWeight: "800", color: C.text3, letterSpacing: 1.2,
-    textTransform: "uppercase", paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4,
-    backgroundColor: C.elevated,
+    textTransform: "uppercase", paddingHorizontal: 8, paddingTop: 10, paddingBottom: 4,
+    backgroundColor: "transparent",
   },
 });

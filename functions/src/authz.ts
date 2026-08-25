@@ -2,7 +2,7 @@
 import * as admin from "firebase-admin";
 import { CallableRequest, HttpsError } from "firebase-functions/v2/https";
 
-const ROLES_THAT_CAN_DISBURSE = new Set(["admin", "accountant", "loan_officer"]);
+const ROLES_THAT_CAN_DISBURSE = new Set(["accountant"]);
 const ROLES_THAT_CAN_RECORD_REPAYMENT = new Set(["admin", "accountant"]);
 
 export function requireAuth(request: CallableRequest): string {
