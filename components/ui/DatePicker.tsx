@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
   Modal, Pressable,
@@ -28,13 +28,28 @@ export function DatePicker({
   hint,
 }: DatePickerProps) {
   const [showPicker, setShowPicker] = useState(false);
-  const dateValue = value ? new Date(value) : new Date();
+  const [draftValue, setDraftValue] = useState(value);
+  const dateValue = draftValue ? new Date(`${draftValue}T12:00:00`) : new Date();
 
   const handleChange = (_event: any, selectedDate?: Date) => {
-    setShowPicker(false);
-    if (selectedDate) {
-      onChange(selectedDate.toISOString().split('T')[0]);
+    if (!selectedDate) return;
+    const nextValue = selectedDate.toISOString().split('T')[0];
+    if (Platform.OS === 'ios') {
+      setDraftValue(nextValue);
+    } else {
+      setShowPicker(false);
+      onChange(nextValue);
     }
+  };
+
+  const openPicker = () => {
+    setDraftValue(value);
+    setShowPicker(true);
+  };
+
+  const commitPicker = () => {
+    setShowPicker(false);
+    if (draftValue) onChange(draftValue);
   };
 
   const displayText = value ? fmtDate(value) : '';
@@ -50,7 +65,7 @@ export function DatePicker({
             type="date"
             value={value || ''}
             onChange={(e: any) => {
-              if (e.target.value) onChange(e.target.value);
+              onChange(e.target.value || '');
             }}
             min={minimumDate ? minimumDate.toISOString().split('T')[0] : undefined}
             max={maximumDate ? maximumDate.toISOString().split('T')[0] : undefined}
@@ -72,7 +87,7 @@ export function DatePicker({
       {label && <Text style={styles.formLabel}>{label}</Text>}
       <TouchableOpacity
         style={[styles.inputWrap, !!error && styles.inputError]}
-        onPress={() => setShowPicker(true)}
+        onPress={openPicker}
         activeOpacity={0.7}
       >
         <Text style={{ fontSize: 14, marginRight: 8 }}>📅</Text>
@@ -90,7 +105,7 @@ export function DatePicker({
           <Pressable style={styles.modalOverlay} onPress={() => setShowPicker(false)}>
             <Pressable style={styles.pickerSheet} onPress={(e) => e.stopPropagation()}>
               <View style={styles.pickerHeader}>
-                <TouchableOpacity onPress={() => setShowPicker(false)}>
+                  <TouchableOpacity onPress={commitPicker}>
                   <Text style={styles.pickerDone}>Done</Text>
                 </TouchableOpacity>
               </View>
@@ -152,4 +167,5 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   pickerDone: { fontSize: 16, fontWeight: '700', color: Colors.accent },
+  webInputWrap: { paddingVertical: 0 },
 });

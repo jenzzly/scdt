@@ -231,6 +231,31 @@ export default function ReportsScreen() {
   const investments = canSeeAll ? allInvestments : allInvestments.filter(i => i.createdBy === currentMember?.id);
   const wallet = canSeeAll ? allWallet : allWallet.filter(t => t.memberId === currentMember?.id);
 
+  const groupWalletEarnings = useMemo(
+    () => allWallet
+      .filter(t => t.type !== "contribution")
+      .reduce((sum, t) => sum + t.amount, 0),
+    [allWallet],
+  );
+  const groupInterest = useMemo(() => {
+    const fromLedger = allWallet
+      .filter(t => t.type === "loan_interest_income" && t.amount > 0)
+      .reduce((sum, t) => sum + t.amount, 0);
+    const legacy = allWallet
+      .filter(t => t.type === "loan_repayment" && t.amount > 0)
+      .reduce((sum, t) => {
+        const loan = allLoans.find(item => item.id === t.loanId);
+        return loan?.totalRepayable
+          ? sum + round2(t.amount * (loan.totalInterest / loan.totalRepayable))
+          : sum;
+      }, 0);
+    return round2(fromLedger + legacy);
+  }, [allWallet, allLoans]);
+  const groupExpenses = useMemo(
+    () => allWallet.filter(t => ["bank_fee", "other_debit"].includes(t.type)).reduce((sum, t) => sum + Math.abs(t.amount), 0),
+    [allWallet],
+  );
+
   // Filter helpers
   const filterByDateRange = (items: any[], dateField: string) => {
     return items.filter(item => {
@@ -282,7 +307,7 @@ export default function ReportsScreen() {
       d.setMonth(d.getMonth() - i);
       const startOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
       const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-      const monthTxs = wallet.filter(t => {
+      const monthTxs = allWallet.filter(t => {
         const txDate = new Date(t.date);
         return txDate >= startOfMonth && txDate <= endOfMonth;
       });
@@ -291,10 +316,10 @@ export default function ReportsScreen() {
       expenses.push(Math.abs(monthTxs.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0)));
     }
     return { months, income, expenses };
-  }, [wallet]);
+  }, [allWallet]);
 
   const memberPie = useMemo(() => {
-    const top = members.filter(m => m.status === "active" && m.totalContributions > 0).slice(0, 5);
+    const top = allMembers.filter(m => m.status === "active" && m.totalContributions > 0).slice(0, 5);
     const palette = [C.accent, C.gold, C.info, C.success, "#7C3AED"];
     return top.map((m, i) => ({
       name: m.fullName.split(" ")[0],
@@ -303,7 +328,7 @@ export default function ReportsScreen() {
       legendFontColor: C.text2,
       legendFontSize: 11,
     }));
-  }, [members]);
+  }, [allMembers]);
 
   // Interest earned: read from wallet ledger (loan_interest_income txs) + legacy loan_repayment
   const totalInterest = useMemo(() => {
@@ -460,14 +485,15 @@ export default function ReportsScreen() {
             {/* KPI Row */}
             <View style={styles.kpiGrid}>
               <KpiCard 
-                label={canSeeAll ? "TOTAL CONTRIBUTIONS" : "MY CONTRIBUTIONS"} 
-                value={fmtCurrency(canSeeAll ? (group?.totalSavings ?? 0) : (currentMember?.totalContributions ?? 0))} 
+                label="TOTAL CONTRIBUTIONS"
+                value={fmtCurrency(group?.totalSavings ?? 0)}
                 color={C.accent}
-                subtext={canSeeAll ? "group savings" : "personal savings"}
+                subtext="group savings"
               />
-              <KpiCard label="INTEREST EARNED" value={fmtCurrency(totalInterest)} color={C.gold} subtext="from loans" />
-              <KpiCard label={canSeeAll ? "INVESTMENTS" : "MY INVESTMENTS"} value={fmtCurrency(investmentsTotal)} color={C.success} subtext={canSeeAll ? "active" : "personal"} />
-              <KpiCard label={canSeeAll ? "EXPENSES" : "MY EXPENSES"} value={fmtCurrency(totalExpenses)} color={C.error} subtext={canSeeAll ? "operational" : "personal"} />
+              <KpiCard label="INTEREST EARNED" value={fmtCurrency(groupInterest)} color={C.gold} subtext="from loans" />
+              <KpiCard label="TOTAL EARNINGS" value={fmtCurrency(groupWalletEarnings)} color={C.info} subtext="credits minus debits" />
+              <KpiCard label="INVESTMENTS" value={fmtCurrency(allInvestments.reduce((sum, item) => sum + item.investmentAmount, 0))} color={C.success} subtext="group total" />
+              <KpiCard label="EXPENSES" value={fmtCurrency(groupExpenses)} color={C.error} subtext="operational" />
             </View>
 
             {/* Cash Flow Chart */}
