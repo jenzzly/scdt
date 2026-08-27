@@ -156,7 +156,7 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
               read: false,
               metadata: { meetingId: meeting.id },
               createdAt: now,
-            }).catch(console.warn);
+            }, member.email).catch(console.warn);
           });
         return meeting.id;
       },

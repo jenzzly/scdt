@@ -12,10 +12,10 @@
 //   groups.ts          group CRUD
 //   members.ts          member CRUD + email-based merge/link logic
 //   contributions.ts     contribution CRUD + approve/reject
-//   loans.ts             loan CRUD + approve/reject (disbursement/repayment
-//                         math now delegated to Cloud Functions — see
-//                         functions/src/loans.ts and the callable wrappers
-//                         at the bottom of this file)
+//   loans.ts             loan CRUD + approve/reject; disbursement and
+//                         repayment run as direct client Firestore writes
+//                         (batched, gated by firestore-rules) — there are
+//                         no Cloud Functions in this project
 //   investments.ts       investment CRUD + approve/reject
 //   wallet.ts             wallet transaction CRUD
 //   expenses.ts            expense CRUD + approve/reject

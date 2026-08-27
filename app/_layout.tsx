@@ -4,6 +4,7 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
 import * as Font from "expo-font";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import {
   PlusJakartaSans_400Regular,
   PlusJakartaSans_500Medium,
@@ -39,7 +40,7 @@ export default function RootLayout() {
   if (!fontsLoaded) return null;
 
   return (
-    <>
+    <SafeAreaProvider>
       <StatusBar style="dark" backgroundColor={Colors.surface} />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.bg } }}>
         <Stack.Screen name="(auth)" />
@@ -53,6 +54,6 @@ export default function RootLayout() {
         <Stack.Screen name="notifications" options={{ presentation: "modal" }} />
         <Stack.Screen name="group-settings" options={{ presentation: "modal" }} />
       </Stack>
-    </>
+    </SafeAreaProvider>
   );
 }

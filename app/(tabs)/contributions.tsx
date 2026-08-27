@@ -8,7 +8,7 @@ import { useRouter } from "expo-router";
 import {
   useStore, useGroupContributions, useGroupMembers,
   useCurrentUserRole, useCurrentMember, useCanSeeAllFinancial, useIsAdminView,
-  useCurrentMemberPermissions, useActiveGroup, useGroupWallet,
+  useCurrentMemberPermissions, useActiveGroup, useGroupWallet, useDataViewMode,
 } from "../../stores/useStore";
 import { SearchBar, Card, Badge, Empty, BottomModal, useToast, Select, DatePicker, TabRow } from "../../components/ui";
 import { Colors, C, T, S, R, fmtCurrency, fmtDate } from "../../utils/theme";
@@ -57,7 +57,7 @@ export default function ContributionsScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { approveContribution, rejectContribution, activeGroupId, applyContributionLateFee, recalcTotals } = useStore();
+  const { approveContribution, rejectContribution, activeGroupId, applyContributionLateFee, recalcTotals, setDataViewMode } = useStore();
   const allContributions = useGroupContributions();
   const allMembers = useGroupMembers();
   const group = useActiveGroup();
@@ -65,6 +65,8 @@ export default function ContributionsScreen() {
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
   const canSeeAll = useCanSeeAllFinancial();
+  const isAdminView = useIsAdminView();
+  const dataViewMode = useDataViewMode();
   const permissions = useCurrentMemberPermissions();
   const { show, Toast } = useToast();
 
@@ -74,7 +76,6 @@ export default function ContributionsScreen() {
   const canAdd = permissions.addContribution || isAdmin;
   const canExport = permissions.downloadReports || isAdmin;
   const canManageFees = ["admin", "accountant", "loan_officer"].includes(role);
-  const isAdminView = useIsAdminView();
 
   // Scope: use toggle for admins, members always see only their own
   const contributions = isAdminView
@@ -258,15 +259,21 @@ export default function ContributionsScreen() {
           <Text style={st.title}>Contributions</Text>
         </View>
         <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-          {canExport && (
-            <>
-              <TouchableOpacity style={st.iconBtn} onPress={() => handleExport("csv")} activeOpacity={0.8}>
-                <Text style={st.iconBtnText}>CSV</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[st.iconBtn, { backgroundColor: C.redBg }]} onPress={() => handleExport("pdf")} activeOpacity={0.8}>
-                <Text style={[st.iconBtnText, { color: C.redText }]}>PDF</Text>
-              </TouchableOpacity>
-            </>
+          {isAdmin && (
+            <TouchableOpacity 
+              style={[st.toggleBtn, dataViewMode === "admin" && st.toggleBtnActive]} 
+              onPress={() => setDataViewMode(dataViewMode === "admin" ? "mine" : "admin")}
+              activeOpacity={0.8}
+            >
+              <Text style={[st.toggleBtnText, dataViewMode === "admin" && st.toggleBtnTextActive]}>
+                {dataViewMode === "admin" ? "👥" : "👤"}
+              </Text>
+            </TouchableOpacity>
+          )}
+          {canAdd && (
+            <TouchableOpacity style={st.primaryBtn} onPress={() => router.push("/modals/add-contribution")} activeOpacity={0.8}>
+              <Text style={st.primaryBtnText}>+ Contribution</Text>
+            </TouchableOpacity>
           )}
         </View>
       </View>
@@ -306,20 +313,15 @@ export default function ContributionsScreen() {
             <View style={{ flex: 1 }}>
               <SearchBar value={search} onChange={handleSearch} placeholder="Search contributions…" />
             </View>
-            <View style={st.filterSelect}>
+            {/* <View style={st.filterSelect}>
               <Select label="Type" value={typeFilter} options={TYPE_OPTIONS} onChange={(value) => { setTypeFilter(value); setPage(1); }} />
-            </View>
-            <View style={st.filterSelect}>
-              <Select label="Sort" value={sort} options={SORT_OPTIONS} onChange={handleSort} />
+            </View> */}
+            <View style={{ flex: 1 }}>
+              <Select value={sort} options={SORT_OPTIONS} onChange={handleSort} />
             </View>
           </View>
           <View style={st.statusRow}>
             <TabRow tabs={["All","Approved","Pending","Late Fee"]} active={statusFilter === "all" ? "All" : statusFilter === "late_fee" ? "Late Fee" : statusFilter} onChange={handleTabChange} />
-            {canAdd && (
-              <TouchableOpacity style={st.addTabBtn} onPress={() => router.push("/modals/add-contribution")} activeOpacity={0.8}>
-                <Text style={st.primaryBtnText}>+ Contribution</Text>
-              </TouchableOpacity>
-            )}
           </View>
         </View>
 

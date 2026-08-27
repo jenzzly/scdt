@@ -8,6 +8,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
   KeyboardAvoidingView, ScrollView, useWindowDimensions, StatusBar,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors, S, R } from "../../utils/theme";
 
 interface ModalShellProps {
@@ -28,11 +29,23 @@ export function ModalShell({
   const { width, height } = useWindowDimensions();
   const isWeb = Platform.OS === "web";
   const isWide = isWeb && width >= 640;
+  const insets = useSafeAreaInsets();
+  // Native modal presentation (expo-router `presentation: "modal"`)
+  // doesn't always inherit the same status-bar handling as a normal
+  // screen push, and this shell previously used a hardcoded
+  // `paddingTop: 56/40` guess. On devices where that guess undershoots
+  // the real notch/status-bar height, the header (with the close
+  // button) renders partially behind the status bar — which can look
+  // like a second, misaligned button/header bleeding through from
+  // whatever's underneath. `insets.top` is the actual measured value
+  // for this device, so use it as a floor under the existing padding
+  // instead of a fixed number.
+  const headerPaddingTop = Math.max(insets.top + 8, Platform.OS === "ios" ? 56 : 40);
 
   const card = (
     <View style={[st.card, isWide && { maxWidth, width: "100%" as any, borderRadius: 20 }]}>
       {/* Header */}
-      <View style={st.header}>
+      <View style={[st.header, { paddingTop: headerPaddingTop }]}>
         <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Text style={st.cancel}>✕</Text>
         </TouchableOpacity>
@@ -106,7 +119,6 @@ const st = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: S.lg,
-    paddingTop: Platform.OS === "ios" ? 56 : 40,
     paddingBottom: S.md,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,

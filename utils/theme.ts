@@ -110,7 +110,13 @@ export const C = {
   greenText:  "#065F46",
   redBg:      "#FEF2F2",
   redText:    "#991B1B",
-  info:       "#EFF6FF",
+  // NOTE: `info` is the readable foreground/accent color (used for text,
+  // borders, icons) — it must stay a solid, high-contrast blue. `infoBg`
+  // (below) is the pale wash meant for backgrounds only. These were
+  // previously swapped in effect (info was near-white), which made any
+  // text or KPI value using `color: C.info` nearly invisible on light
+  // card backgrounds throughout Reports and Loans.
+  info:       "#1D4ED8",
   infoText:   "#1D4ED8",
   infoBg:     "#DBEAFE",
   mutedBg:    "#F1F5F9",
@@ -187,11 +193,13 @@ export function round2(n: number): number {
 //
 // These are used to show an applicant an estimated repayment schedule while
 // filling out a loan application, before anything is submitted. The
-// authoritative calculation that actually moves money — disbursement,
-// posting a repayment, computing the running balance — now lives server
-// side in Cloud Functions (functions/src/loans.ts) and is called via
-// lib/firestore/loans.ts. Do not use these two functions to compute values
-// that get written to a loan's balance/repayment fields.
+// calculation that actually moves money — disbursement, posting a
+// repayment, computing the running balance — lives in
+// lib/firestore/loans.ts (disburseLoanServer / recordRepaymentServer),
+// which runs as a direct, batched Firestore write from the client, gated
+// by firestore-rules. There are no Cloud Functions in this project. Do
+// not use these two functions to compute values that get written to a
+// loan's balance/repayment fields.
 //
 // Both methods take `ratePercent` as a per-period (monthly) rate, matching
 // how Group.loanInterestRate / brand.json's defaults.loanInterestRate are

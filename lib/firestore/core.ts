@@ -8,19 +8,19 @@ import {
   collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc,
   query, where, orderBy, limit, onSnapshot, writeBatch,
 } from "firebase/firestore";
-import { db, auth, functions } from "../firebase";
+import { db, auth } from "../firebase";
 import type {
   Group, Member, Contribution, Loan, Investment,
   WalletTransaction, Expense, Meeting, MeetingAttendee, AppNotification, AuditLog, DeletionRecord,
 } from "../../types";
 
-// Re-export the firestore primitives + db/auth/functions so domain modules
-// can do a single `from "./core"` import instead of reaching into
+// Re-export the firestore primitives + db/auth so domain modules can do
+// a single `from "./core"` import instead of reaching into
 // firebase/firestore and ../firebase separately everywhere.
 export {
   collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc,
   query, where, orderBy, limit, onSnapshot, writeBatch,
-  db, auth, functions,
+  db, auth,
 };
 export type {
   Group, Member, Contribution, Loan, Investment,
@@ -93,6 +93,7 @@ export function fromSnap<T>(snap: any): T {
 export const groupsCol      = collection(db, "groups");
 export const membershipsCol = collection(db, "groupMemberships");
 export const notifsCol      = (uid: string) => collection(db, "users", uid, "notifications");
+export const pendingEmailsCol = collection(db, "pendingEmails");
 
 export const groupDoc    = (gId: string) => doc(db, "groups", gId);
 export const membersCol  = (gId: string) => collection(db, "groups", gId, "members");

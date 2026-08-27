@@ -37,10 +37,10 @@ export default function MeetingsScreen() {
 
   const isAdmin = currentUserRole === "admin";
   const permissions = useCurrentMemberPermissions();
-  const canCancelMeeting = ["admin", "committee", "loan_officer", "accountant"].includes(currentUserRole) && permissions.updateMeetings;
-  const canClearPenalties = ["admin", "loan_officer"].includes(currentUserRole) && permissions.updateMeetings;
-  const canRecordAttendance = ["admin", "committee", "loan_officer", "accountant"].includes(currentUserRole) && permissions.updateMeetings;
-  const canScheduleMeeting = ["admin", "accountant"].includes(currentUserRole) && permissions.updateMeetings;
+  const canCancelMeeting = ["admin", "committee", "loan_officer", "accountant"].includes(currentUserRole) && (permissions.updateMeetings ?? false);
+  const canClearPenalties = ["admin", "loan_officer"].includes(currentUserRole) && (permissions.updateMeetings ?? false);
+  const canRecordAttendance = ["admin", "committee", "loan_officer", "accountant"].includes(currentUserRole) && (permissions.updateMeetings ?? false);
+  const canScheduleMeeting = ["admin", "accountant"].includes(currentUserRole) && (permissions.updateMeetings ?? false);
   const canEditMeeting = isAdmin;
   const canDeleteMeeting = isAdmin;
 
@@ -198,7 +198,7 @@ export default function MeetingsScreen() {
       </ScrollView>
 
       {/* Penalty Modal */}
-      <BottomModal visible={showPenaltyModal && !!selectedMeeting && canClearPenalties} onClose={() => setShowPenaltyModal(false)} title="Clear Penalties">
+      <BottomModal visible={showPenaltyModal && !!selectedMeeting && (canClearPenalties ?? false)} onClose={() => setShowPenaltyModal(false)} title="Clear Penalties">
         <View style={{ padding: 20 }}>
           <Text style={st.modalName}>{selectedMeeting?.title}</Text>
           <Text style={st.modalSub}>Select a member to clear their penalty</Text>
@@ -209,7 +209,7 @@ export default function MeetingsScreen() {
                 <View key={attendee.memberId} style={st.penaltyRow}>
                   <View>
                     <Text style={st.penaltyName}>{member?.fullName}</Text>
-                    <Text style={[st.penaltyAmount, { color: C.debit }]}>{fmtCurrency(attendee.penaltyAmount)}</Text>
+                    <Text style={[st.penaltyAmount, { color: C.debit }]}>{fmtCurrency(attendee.penaltyAmount ?? 0)}</Text>
                   </View>
                   <TouchableOpacity style={st.clearBtn} onPress={() => handleClearPenalty(selectedMeeting!, attendee.memberId)} activeOpacity={0.8}>
                     <Text style={st.clearBtnText}>Clear</Text>
@@ -226,7 +226,7 @@ export default function MeetingsScreen() {
       </BottomModal>
 
       {/* Edit Meeting Modal */}
-      <BottomModal visible={showEditModal && !!selectedMeeting && canEditMeeting} onClose={() => { setShowEditModal(false); setSelectedMeeting(null); }} title="Edit Meeting">
+      <BottomModal visible={showEditModal && !!selectedMeeting && (canEditMeeting ?? false)} onClose={() => { setShowEditModal(false); setSelectedMeeting(null); }} title="Edit Meeting">
         <View style={{ padding: 20 }}>
           <Input
             label="Meeting Title *"

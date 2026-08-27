@@ -12,7 +12,8 @@
     "build:ios": "npm run sync-client && eas build --platform ios",
     "lint": "expo lint",
     "build:web": "npm run sync-client && npx expo export --platform web",
-    "deploy": "npm run build:web && npx wrangler deploy"
+    "deploy": "npm run build:web && npx wrangler deploy",
+    "send-pending-emails": "node scripts/send-pending-emails.js"
   },
   "dependencies": {
     "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",
@@ -76,8 +77,11 @@
     "@expo/ngrok": "^4.1.0",
     "@types/react": "~19.1.10",
     "babel-plugin-module-resolver": "^5.0.2",
+    "dotenv": "^16.4.5",
     "eslint": "^9.31.0",
     "eslint-config-expo": "~10.0.0",
+    "firebase-admin": "^12.1.0",
+    "nodemailer": "^6.9.14",
     "typescript": "~5.9.2",
     "wrangler": "^4.126.0"
   },

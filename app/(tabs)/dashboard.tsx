@@ -7,7 +7,7 @@ import { useRouter } from "expo-router";
 import {
   useStore, useActiveGroup, useGroupLoans, useGroupContributions,
   useGroupWallet, useCurrentUserRole, useCurrentMember,
-  useIsAdminView, useUnreadNotifs,
+  useIsApproverView, useIsAdminView, useUnreadNotifs,
 } from "../../stores/useStore";
 import { useCurrentMemberPermissions } from "../../stores/selectors";
 import { Colors, S, R, C, T, fmtCurrency, fmtFull, fmtDate, round2} from "../../utils/theme";
@@ -51,8 +51,12 @@ export default function DashboardScreen() {
   const wallet    = useGroupWallet();
   const role      = useCurrentUserRole();
   const currentMember = useCurrentMember();
-  const isAdminView = useIsAdminView();
   const isAdmin   = role === "admin";
+  // Roles that review other members' pending loans/contributions get a
+  // "my pending actions" list here even though the Dashboard's account
+  // card itself always shows their own personal data (see myLoans/
+  // myContribs/myWallet below, which never branch on view mode).
+  const isApproverView = useIsApproverView();
   const permissions = useCurrentMemberPermissions();
   // Contribution approval: loan_officer and accountant always can; committee needs permission
   const canApproveContributions =
@@ -62,9 +66,36 @@ export default function DashboardScreen() {
 
   useRecalcTotals();
 
-  const myLoans   = useMemo(() => isAdminView ? loans  : loans.filter(l  => l.memberId === currentMember?.id), [loans, isAdminView, currentMember]);
-  const myContribs = useMemo(() => isAdminView ? contributions : contributions.filter(c => c.memberId === currentMember?.id), [contributions, isAdminView, currentMember]);
-  const myWallet  = useMemo(() => isAdminView ? wallet : wallet.filter(t => t.memberId === currentMember?.id), [wallet, isAdminView, currentMember]);
+  // Dashboard is always the logged-in member's own data — no admin/group
+  // branch here. Group-wide figures live on the Reports tab instead.
+  const myLoans   = useMemo(() => loans.filter(l  => l.memberId === currentMember?.id), [loans, currentMember]);
+  const myContribs = useMemo(() => contributions.filter(c => c.memberId === currentMember?.id), [contributions, currentMember]);
+  const myWallet  = useMemo(() => wallet.filter(t => t.memberId === currentMember?.id), [wallet, currentMember]);
+
+  // Items awaiting THIS user's review action, for the approver roles only.
+  // Each role can only act on ONE specific status — a loan_officer
+  // reviewing "pending_committee" or an accountant reviewing
+  // "pending_loan_officer" would just be showing them work that isn't
+  // theirs to do (and previously wasn't filtered by role at all, which
+  // is why an accountant's Review view could show nothing even when
+  // loans existed, if none of them happened to be at the accountant's
+  // own step).
+  const ROLE_LOAN_STATUS: Record<string, string> = {
+    loan_officer: "pending_loan_officer",
+    committee: "pending_committee",
+    // Accountant's "review" step is disbursement, not approval — a
+    // fully-approved loan waiting to be disbursed.
+    accountant: "approved",
+  };
+  const reviewLoans = useMemo(() => {
+    if (!isApproverView) return [];
+    const targetStatus = ROLE_LOAN_STATUS[role];
+    return targetStatus ? loans.filter(l => l.status === targetStatus) : [];
+  }, [loans, isApproverView, role]);
+  const reviewContribs = useMemo(
+    () => (isApproverView && canApproveContributions) ? contributions.filter(c => c.status === "pending") : [],
+    [contributions, isApproverView, canApproveContributions],
+  );
 
   const activeLoans   = useMemo(() => myLoans.filter(l => l.status === "disbursed"), [myLoans]);
   const pendingLoans  = useMemo(() => myLoans.filter(l => l.status.startsWith("pending_")), [myLoans]);
@@ -81,24 +112,56 @@ export default function DashboardScreen() {
     return deduped.slice(0, 5);
   }, [myWallet]);
 
+  // ── Group Financial Position ──────────────────────────────────────
+  // Visible to anyone toggled to admin/review view (same visibility as
+  // the group-wide Wallet screen) — not just admin, since accountant/
+  // loan_officer/committee reviewing group work should see the same
+  // group-level picture they're acting on.
+  const canSeeGroupFinancials = useIsAdminView() || isApproverView;
+
+  // Total Net Assets = every wallet transaction, signed sum — savings,
+  // interest, penalties/late fees, other credits/debits, everything.
+  // This mirrors `group.availableBalance` (see recalcGroupTotals.ts,
+  // which computes it the same way) rather than the narrower
+  // "savings + interest" figure used previously, which silently
+  // excluded late fees, penalties, and any other/misc wallet entries.
+  const totalNetAssets = useMemo(
+    () => round2(wallet.reduce((s, t) => s + t.amount, 0)),
+    [wallet],
+  );
+  const walletContributions = useMemo(
+    () => round2(wallet.filter(t => t.type === "contribution" && t.amount > 0).reduce((s, t) => s + t.amount, 0)),
+    [wallet],
+  );
+  const walletInterest = useMemo(
+    () => round2(wallet.filter(t => (t.type === "loan_interest_income" || t.type === "interest") && t.amount > 0).reduce((s, t) => s + t.amount, 0)),
+    [wallet],
+  );
+  const walletPenalties = useMemo(
+    () => round2(wallet.filter(t => t.type === "late_fee" && t.amount > 0).reduce((s, t) => s + t.amount, 0)),
+    [wallet],
+  );
+  const walletOther = useMemo(() => {
+    const known = ["contribution", "loan_interest_income", "interest", "late_fee", "loan_disbursement", "loan_repayment", "loan_principal_recovery"];
+    return round2(wallet.filter(t => !known.includes(t.type)).reduce((s, t) => s + t.amount, 0));
+  }, [wallet]);
+  const activeMemberCount = useMemo(
+    () => members.filter(m => m.groupId === activeGroupId && m.status === "active").length,
+    [members, activeGroupId],
+  );
+
   const getMemberName = (id: string) =>
     members.find(m => m.id === id)?.fullName ?? "Unknown";
 
-  const actualBalance = useMemo(
-    () => round2(wallet.reduce((s: number, t: WalletTransaction) => s + t.amount, 0)),
-    [wallet],
-  );
-
   const loanEarnings = useMemo(() => {
-    const src = isAdminView ? loans : myLoans;
-    return src.reduce((sum, l) => {
+    return myLoans.reduce((sum, l) => {
       if (l.status === "repaid" || l.status === "disbursed") {
         const ratio = l.totalRepayable > 0 ? (l.totalInterest / l.totalRepayable) : 0;
         return sum + round2((l.amountRepaid || 0) * ratio);
       }
       return sum;
     }, 0);
-  }, [myLoans, loans, isAdminView]);
+  }, [myLoans]);
 
   const myTotalContributions = currentMember?.totalContributions ?? 0;
 
@@ -108,8 +171,6 @@ export default function DashboardScreen() {
     { label: "Invest",     icon: "◈",  route: "/modals/add-investment",   show: permissions.addInvestment },
     { label: "Expense",    icon: "↓",  route: "/modals/add-expense",      show: isAdmin },
   ].filter(a => a.show);
-
-  const totalPending = pendingLoans.length + pendingContribs.length;
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -139,57 +200,82 @@ export default function DashboardScreen() {
         contentContainerStyle={{ paddingBottom: 100, maxWidth: isWide ? 960 : undefined, alignSelf: isWide ? "center" as any : undefined, width: "100%" as any }}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Account card ── */}
+        {/* ── Account card — always the logged-in member's own data ── */}
         <View style={st.accountCard}>
           {/* subtle grid lines for texture */}
           <View style={[st.cardGrid, { pointerEvents: "none" }]} />
 
-          <Text style={st.cardLabel}>
-            {isAdminView ? "GROUP BALANCE" : "MY SAVINGS"}
-          </Text>
-          <Text style={st.cardAmount}>
-            {fmtFull(isAdminView ? actualBalance : myTotalContributions)}
-          </Text>
+          <Text style={st.cardLabel}>MY SAVINGS</Text>
+          <Text style={st.cardAmount}>{fmtFull(myTotalContributions)}</Text>
           <Text style={st.cardSub}>{group?.name ?? BRAND.defaultGroupName}</Text>
 
           <View style={st.cardPills}>
-            {isAdminView ? (
-              <>
-                <View style={st.cardPill}>
-                  <Text style={st.cardPillLabel}>SAVINGS</Text>
-                  <Text style={st.cardPillVal}>{fmtCurrency(group?.totalSavings ?? 0)}</Text>
-                </View>
-                <View style={st.cardPillDivider} />
-                <View style={st.cardPill}>
-                  <Text style={st.cardPillLabel}>LOANS</Text>
-                  <Text style={st.cardPillVal}>{fmtCurrency(group?.totalLoans ?? 0)}</Text>
-                </View>
-                <View style={st.cardPillDivider} />
-                <View style={st.cardPill}>
-                  <Text style={st.cardPillLabel}>INTEREST</Text>
-                  <Text style={st.cardPillVal}>{fmtCurrency(loanEarnings)}</Text>
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={st.cardPill}>
-                  <Text style={st.cardPillLabel}>PAYMENTS</Text>
-                  <Text style={st.cardPillVal}>{myContribs.filter(c => c.status === "approved").length}</Text>
-                </View>
-                <View style={st.cardPillDivider} />
-                <View style={st.cardPill}>
-                  <Text style={st.cardPillLabel}>ACTIVE LOANS</Text>
-                  <Text style={st.cardPillVal}>{activeLoans.length}</Text>
-                </View>
-                <View style={st.cardPillDivider} />
-                <View style={st.cardPill}>
-                  <Text style={st.cardPillLabel}>INTEREST</Text>
-                  <Text style={st.cardPillVal}>{fmtCurrency(loanEarnings)}</Text>
-                </View>
-              </>
-            )}
+            <View style={st.cardPill}>
+              <Text style={st.cardPillLabel}>PAYMENTS</Text>
+              <Text style={st.cardPillVal}>{myContribs.filter(c => c.status === "approved").length}</Text>
+            </View>
+            <View style={st.cardPillDivider} />
+            <View style={st.cardPill}>
+              <Text style={st.cardPillLabel}>ACTIVE LOANS</Text>
+              <Text style={st.cardPillVal}>{activeLoans.length}</Text>
+            </View>
+            <View style={st.cardPillDivider} />
+            <View style={st.cardPill}>
+              <Text style={st.cardPillLabel}>INTEREST</Text>
+              <Text style={st.cardPillVal}>{fmtCurrency(loanEarnings)}</Text>
+            </View>
           </View>
         </View>
+
+        {/* ── Group Financial Position — group-wide, only for roles
+             toggled to admin/review view. Total Net Assets is the full
+             signed sum of every wallet transaction (savings, interest,
+             penalties/late fees, other credits/debits — everything),
+             matching group.availableBalance's own formula, not a
+             narrower "savings + interest" figure. ── */}
+        {canSeeGroupFinancials && (
+          <View style={st.block}>
+            <SectionHeader title="Group Financial Position" />
+            <View style={[st.card, { padding: 0, overflow: "hidden" }]}>
+              <View style={{ flexDirection: "row" }}>
+                <View style={[st.gfpStat, { borderRightWidth: 1, borderRightColor: C.border, borderBottomWidth: 1, borderBottomColor: C.border }]}>
+                  <Text style={T.label}>Members</Text>
+                  <Text style={st.gfpStatValue}>{activeMemberCount}</Text>
+                  <Text style={T.small}>active</Text>
+                </View>
+                <View style={[st.gfpStat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
+                  <Text style={T.label}>Total Net Assets</Text>
+                  <Text style={[st.gfpStatValue, { color: C.primary }]}>{fmtCurrency(totalNetAssets)}</Text>
+                  <Text style={T.small}>everything in wallet</Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: "row" }}>
+                <View style={[st.gfpStat, { borderRightWidth: 1, borderRightColor: C.border, borderBottomWidth: 1, borderBottomColor: C.border }]}>
+                  <Text style={T.label}>Contributions</Text>
+                  <Text style={st.gfpStatValue}>{fmtCurrency(walletContributions)}</Text>
+                  <Text style={T.small}>total collected</Text>
+                </View>
+                <View style={[st.gfpStat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
+                  <Text style={T.label}>Interest Earned</Text>
+                  <Text style={[st.gfpStatValue, { color: C.gold }]}>{fmtCurrency(walletInterest)}</Text>
+                  <Text style={T.small}>from loan repayments</Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: "row" }}>
+                <View style={[st.gfpStat, { borderRightWidth: 1, borderRightColor: C.border }]}>
+                  <Text style={T.label}>Penalties &amp; Late Fees</Text>
+                  <Text style={[st.gfpStatValue, { color: C.error }]}>{fmtCurrency(walletPenalties)}</Text>
+                  <Text style={T.small}>collected</Text>
+                </View>
+                <View style={st.gfpStat}>
+                  <Text style={T.label}>Other</Text>
+                  <Text style={st.gfpStatValue}>{fmtCurrency(walletOther)}</Text>
+                  <Text style={T.small}>bank fees, misc credits/debits</Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* ── Quick actions ── */}
         {QUICK_ACTIONS.length > 0 && (
@@ -214,76 +300,11 @@ export default function DashboardScreen() {
 
 
 
-        {/* ── Group Financial Position ── */}
-        {(
-          <View style={st.block}>
-            <SectionHeader title="Group Financial Position" />
-            <View style={[st.statsCard, { padding: 0, overflow: 'hidden' }]}>
-              {/* Row 1 */}
-              <View style={st.statRow}>
-                <View style={[st.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label}>Members</Text>
-                  <Text style={st.statValue}>
-                    {members.filter(m => m.groupId === activeGroupId && m.status === 'active').length}
-                  </Text>
-                  <Text style={T.small}>active</Text>
-                </View>
-                <View style={st.statDivider} />
-                <View style={[st.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label}>Total Net Assets</Text>
-                  <Text style={[st.statValue, { color: C.primary, fontSize: 16 }]}>
-                    {fmtCurrency(round2((group?.totalSavings ?? 0) + (group?.totalInterestEarned ?? 0)))}
-                  </Text>
-                  <Text style={T.small}>savings + interest</Text>
-                </View>
-              </View>
-              <View style={st.statRow}>
-                <View style={[st.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label}>Contributions</Text>
-                  <Text style={[st.statValue, { fontSize: 16 }]}>
-                    {fmtCurrency(group?.totalSavings ?? 0)}
-                  </Text>
-                  <Text style={T.small}>total collected</Text>
-                </View>
-                <View style={st.statDivider} />
-                <View style={[st.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label}>Interest Earned</Text>
-                  <Text style={[st.statValue, { color: C.gold, fontSize: 16 }]}>
-                    {fmtCurrency(round2(group?.totalInterestEarned ?? 0))}
-                  </Text>
-                  <Text style={T.small}>from loan repayments</Text>
-                </View>
-              </View>
-              <View style={st.statRow}>
-                <View style={st.stat}>
-                  <Text style={T.label}>Value Per Share</Text>
-                  <Text style={[st.statValue, { color: C.primary, fontSize: 16 }]}>
-                    {(() => {
-                      const active = members.filter(m => m.groupId === activeGroupId && m.status === 'active').length;
-                      const netAssets = round2((group?.totalSavings ?? 0) + (group?.totalInterestEarned ?? 0));
-                      return active > 0 ? fmtCurrency(round2(netAssets / active)) : 'N/A';
-                    })()}
-                  </Text>
-                  <Text style={T.small}>per active member</Text>
-                </View>
-                <View style={st.statDivider} />
-                <View style={st.stat}>
-                  <Text style={T.label}>Dividend Per Share</Text>
-                  <Text style={[st.statValue, { color: C.gold, fontSize: 16 }]}>
-                    {(() => {
-                      const active = members.filter(m => m.groupId === activeGroupId && m.status === 'active').length;
-                      return active > 0 ? fmtCurrency(round2((group?.totalInterestEarned ?? 0) / active)) : 'N/A';
-                    })()}
-                  </Text>
-                  <Text style={T.small}>interest per member</Text>
-                </View>
-              </View>
-            </View>
-          </View>
-        )}
-
-        {/* ── Pending actions ── */}
-        {isAdmin && totalPending > 0 && (
+        {/* ── Pending actions — items awaiting THIS reviewer's approval.
+             Group-wide financial totals live on the Reports tab, not here;
+             this section stays because it's the logged-in user's own
+             review queue, not group data. ── */}
+        {isApproverView && (reviewLoans.length > 0 || reviewContribs.length > 0) && (
           <View style={st.block}>
             <SectionHeader
               title={`Pending Actions`}
@@ -291,7 +312,7 @@ export default function DashboardScreen() {
               actionLabel="Review all"
             />
             <View style={st.card}>
-              {pendingLoans.slice(0, 3).map((loan, i) => (
+              {reviewLoans.slice(0, 3).map((loan, i) => (
                 <React.Fragment key={loan.id}>
                   <View style={st.pendingRow}>
                     <View style={st.pendingLeft}>
@@ -299,7 +320,7 @@ export default function DashboardScreen() {
                       <View style={{ flex: 1, marginLeft: 10 }}>
                         <Text style={st.pendingName}>{getMemberName(loan.memberId)}</Text>
                         <Text style={T.small}>
-                          {fmtCurrency(loan.amount)} · {loan.status.replace("pending_", "Awaiting ").replace(/_/g, " ")}
+                          {fmtCurrency(loan.amount)} · {loan.status === "approved" ? "Ready to disburse" : loan.status.replace("pending_", "Awaiting ").replace(/_/g, " ")}
                         </Text>
                       </View>
                     </View>
@@ -308,13 +329,13 @@ export default function DashboardScreen() {
                       style={st.reviewBtn}
                       activeOpacity={0.8}
                     >
-                      <Text style={st.reviewBtnText}>Review</Text>
+                      <Text style={st.reviewBtnText}>{loan.status === "approved" ? "Disburse" : "Review"}</Text>
                     </TouchableOpacity>
                   </View>
-                  {(i < pendingLoans.slice(0, 3).length - 1 || pendingContribs.length > 0) && <Divider />}
+                  {(i < reviewLoans.slice(0, 3).length - 1 || reviewContribs.length > 0) && <Divider />}
                 </React.Fragment>
               ))}
-              {pendingContribs.slice(0, 3).map((c: Contribution, i) => (
+              {reviewContribs.slice(0, 3).map((c: Contribution, i) => (
                 <React.Fragment key={c.id}>
                   <View style={st.pendingRow}>
                     <View style={st.pendingLeft}>
@@ -334,20 +355,17 @@ export default function DashboardScreen() {
                       </TouchableOpacity>
                     )}
                   </View>
-                  {i < pendingContribs.slice(0, 3).length - 1 && <Divider />}
+                  {i < reviewContribs.slice(0, 3).length - 1 && <Divider />}
                 </React.Fragment>
               ))}
             </View>
           </View>
         )}
 
-        {/* ── Recent activity ── */}
+        {/* ── Recent activity — always the logged-in member's own wallet
+             transactions ── */}
         <View style={st.block}>
-          <SectionHeader
-            title="Recent Activity"
-            action={isAdminView ? () => router.push("/(tabs)/wallet") : undefined}
-            actionLabel="See all"
-          />
+          <SectionHeader title="Recent Activity" />
           <View style={st.card}>
             {recentTxs.length === 0 ? (
               <View style={st.empty}>
@@ -476,6 +494,10 @@ const st = StyleSheet.create({
     backgroundColor: C.surface, borderRadius: 14, borderWidth: 1, borderColor: C.border,
     overflow: "hidden",
   },
+
+  // group financial position stat grid
+  gfpStat: { flex: 1, padding: 14, gap: 3 },
+  gfpStatValue: { fontSize: 16, fontWeight: "800", color: C.text, letterSpacing: -0.3 },
 
   // pending row
   pendingRow: {

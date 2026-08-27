@@ -2,6 +2,9 @@ import { Share, Platform } from "react-native";
 import * as FileSystem from "expo-file-system";
 import * as DocumentPicker from "expo-document-picker";
 
+// Access the native module for compatibility
+const ExpoFileSystem = require("expo-file-system").default;
+
 export async function exportFullData(data: any, filename: string) {
   const jsonStr = JSON.stringify(data, null, 2);
   if (Platform.OS === "web") {
@@ -16,8 +19,8 @@ export async function exportFullData(data: any, filename: string) {
     URL.revokeObjectURL(url);
   } else {
     try {
-      const fileUri = `${FileSystem.cacheDirectory}${filename}.json`;
-      await FileSystem.writeAsStringAsync(fileUri, jsonStr, { encoding: FileSystem.EncodingType.UTF8 });
+      const fileUri = `${ExpoFileSystem.cacheDirectory}${filename}.json`;
+      await ExpoFileSystem.writeAsStringAsync(fileUri, jsonStr);
       await Share.share({ title: filename, url: fileUri });
     } catch (e) {
       console.warn("Export failed:", e);
@@ -59,7 +62,7 @@ export async function importFullData(): Promise<any> {
       });
       if (result.canceled) throw new Error("Cancelled");
       const fileUri = result.assets[0].uri;
-      const content = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.UTF8 });
+      const content = await ExpoFileSystem.readAsStringAsync(fileUri);
       return JSON.parse(content);
     } catch (e) {
       console.warn("Import failed:", e);

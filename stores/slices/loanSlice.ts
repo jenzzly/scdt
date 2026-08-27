@@ -106,7 +106,7 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
             read: false,
             metadata: { loanId: loan.id },
             createdAt: now,
-          }).catch(console.warn);
+          }, loanOfficer.email).catch(console.warn);
         }
 
         return loan.id;
@@ -136,8 +136,10 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
         } else if (step === "loan_officer") {
           newStatus = "pending_committee";
         } else if (step === "committee") {
-          newStatus = "pending_accountant";
-        } else if (step === "accountant") {
+          // Committee is the last APPROVAL step. There is no separate
+          // accountant "approval" — the accountant's action on an
+          // `approved` loan is disbursement itself (see disburseLoan
+          // below), not a third approval gate.
           newStatus = "approved";
         }
 
@@ -166,14 +168,13 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
               read: false,
               metadata: { loanId, rejectionReason: comment },
               createdAt: new Date().toISOString(),
-            }).catch(console.warn);
+            }, loanMember.email).catch(console.warn);
           }
         }
 
         if (approved && newStatus !== "approved" && newStatus !== "rejected") {
           const nextRoleMap: Record<string, string> = {
             pending_committee: "committee",
-            pending_accountant: "accountant",
           };
           const nextRole = nextRoleMap[newStatus];
           if (nextRole) {
@@ -190,26 +191,34 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
                 read: false,
                 metadata: { loanId },
                 createdAt: new Date().toISOString(),
-              }).catch(console.warn);
+              }, nextApprover.email).catch(console.warn);
             }
           }
         }
 
+        // Loan is now `approved` — fully cleared through both approval
+        // steps (loan_officer, committee), ready for disbursement.
+        // Notify BOTH the accountant (who actually disburses) and admin
+        // (who can also disburse — see disburseLoan/canDisburse), so
+        // whichever role is available/watching sees it.
         if (newStatus === "approved") {
-          const admin = members.find(
-            (m) => m.role === "admin" && m.status === "active" && m.groupId === activeGroupId
+          const disbursers = members.filter(
+            (m) => (m.role === "accountant" || m.role === "admin")
+              && m.status === "active" && m.groupId === activeGroupId
           );
-          if (admin?.userId) {
-            FS.addNotification(admin.userId, {
-              userId: admin.userId,
-              groupId: activeGroupId,
-              type: "loan_ready_to_disburse",
-              title: "Loan Ready for Disbursement",
-              message: `Loan of ${loan.amount} RWF has been fully approved and is ready to disburse`,
-              read: false,
-              metadata: { loanId },
-              createdAt: new Date().toISOString(),
-            }).catch(console.warn);
+          for (const disburser of disbursers) {
+            if (disburser.userId) {
+              FS.addNotification(disburser.userId, {
+                userId: disburser.userId,
+                groupId: activeGroupId,
+                type: "loan_ready_to_disburse",
+                title: "Loan Ready for Disbursement",
+                message: `Loan of ${loan.amount} RWF has been fully approved and is ready to disburse`,
+                read: false,
+                metadata: { loanId },
+                createdAt: new Date().toISOString(),
+              }, disburser.email).catch(console.warn);
+            }
           }
         }
       },
@@ -235,7 +244,7 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
               read: false,
               metadata: { loanId },
               createdAt: now,
-            }).catch(console.warn);
+            }, loanMember.email).catch(console.warn);
           }
         }
       },

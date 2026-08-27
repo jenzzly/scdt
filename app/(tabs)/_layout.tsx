@@ -24,7 +24,8 @@ try {
 }
 
 const { Home, CreditCard, Wallet, BarChart3, Settings, Calendar, LogOut, DollarSign } = Icons || {};
-import { useStore, useCurrentUserRole, useCurrentMember, useDataViewMode } from "../../stores/useStore";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useStore, useCurrentUserRole, useCurrentMember, useDataViewMode, useHasViewToggle } from "../../stores/useStore";
 import { useAuth } from "../../hooks/useAuth";
 import { useFirebaseSync, useNotificationSync } from "../../hooks/useFirebaseSync";
 import { useNetworkStatus } from "../../hooks/useNetworkStatus";
@@ -197,7 +198,9 @@ export default function TabsLayout() {
   const setDataViewMode = useStore((s) => s.setDataViewMode);
   const currentUserRole = useCurrentUserRole();
   const currentMember = useCurrentMember();
+  const hasViewToggle = useHasViewToggle();
   const isOnline = useNetworkStatus();
+  const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const { signOut } = useAuth();
 
@@ -223,14 +226,19 @@ export default function TabsLayout() {
     }, undefined, true);
   };
 
-  const viewModeSwitch = currentUserRole === "admin" ? (
+  // Admin gets the full "Admin view" toggle. loan_officer/committee/
+  // accountant get the same switch, but it only reveals their own
+  // approval queue (see useIsApproverView) — label it accordingly so
+  // it's clear this isn't full admin access.
+  const viewModeSwitchLabel = currentUserRole === "admin" ? "Admin view" : "Approve view";
+  const viewModeSwitch = hasViewToggle ? (
     <TouchableOpacity
       style={[shared.viewModeSwitch, dataViewMode === "admin" && shared.viewModeSwitchActive]}
       onPress={() => setDataViewMode(dataViewMode === "admin" ? "mine" : "admin")}
       activeOpacity={0.8}
     >
       <Text style={[shared.viewModeText, dataViewMode === "admin" && shared.viewModeTextActive]}>
-        {dataViewMode === "admin" ? "Admin view" : "Mine view"}
+        {dataViewMode === "admin" ? viewModeSwitchLabel : "Mine view"}
       </Text>
     </TouchableOpacity>
   ) : null;
@@ -324,10 +332,17 @@ export default function TabsLayout() {
   }
 
   // ── Mobile layout ─────────────────────────
+  // Only the offlineBanner/viewModeSwitch strip gets the safe-area inset
+  // here — each screen underneath (dashboard.tsx, loans.tsx, etc.)
+  // already has its own hardcoded top padding for the status bar/notch.
+  // Adding insets.top to this whole wrapper would stack on top of that
+  // per-screen padding and push every screen down twice.
   return (
     <View style={{ flex: 1, backgroundColor: Colors.bg }}>
-      {offlineBanner}
-      {viewModeSwitch}
+      <View style={{ paddingTop: insets.top, backgroundColor: Colors.bg }}>
+        {offlineBanner}
+        {viewModeSwitch}
+      </View>
       <Tabs
         screenOptions={{
           headerShown: false,
@@ -345,10 +360,16 @@ export default function TabsLayout() {
             }}
           />
         ))}
-        {/* Wallet is accessible by route but hidden from mobile tab bar */}
+        {/* Wallet is accessible by route (web sidebar, direct push) but
+            excluded from the mobile tab bar entirely. `href: null` is the
+            correct way to do this — it removes the route from the tab
+            bar's layout entirely. The previous `tabBarButton: () => null`
+            only hid the button; current React Navigation still reserves
+            an empty slot for it, which is what was throwing off the
+            equal-width spacing of the other 6 tabs. */}
         <Tabs.Screen
           name="wallet"
-          options={{ tabBarButton: () => null }}
+          options={{ href: null }}
         />
       </Tabs>
     </View>
@@ -476,11 +497,16 @@ const tb = StyleSheet.create({
     shadowRadius: 8,
     elevation: 12,
   },
-  itemStyle: { flex: 1, minWidth: 0, maxWidth: "16.666%" as any, paddingHorizontal: 0 },
+  // Equal-width, compact tabs: `flex: 1` on every visible tab item is
+  // sufficient on its own to divide the bar evenly — no need for a
+  // hardcoded maxWidth tied to a specific tab count (that broke silently
+  // any time a tab was added/removed, and the two constraints fighting
+  // each other is what produced uneven/"weird" spacing on some widths).
+  itemStyle: { flex: 1, minWidth: 0, paddingHorizontal: 0 },
   item: {
     flex: 1,
-    width: "100%" as any,
     minWidth: 0,
+    maxWidth: "100%" as any,
     alignItems: "center",
     justifyContent: "center",
     gap: 2,

@@ -237,6 +237,7 @@ export async function disburseLoanServer(groupId: string, loanId: string): Promi
     const loanUpdate = {
       status:           "disbursed" as const,
       disbursementDate: now,
+      disbursedBy:      userInfo.userId,
       // Initialise daily-accrual tracking fields
       accruedInterest:    0,
       lastAccrualDate:    todayDate,

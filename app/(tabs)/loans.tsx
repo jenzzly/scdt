@@ -66,7 +66,7 @@ const STATUS_LABEL: Record<string, string> = {
   pending_loan_officer: "Awaiting Officer",
   pending_committee:    "Awaiting Committee",
   pending_accountant:   "Awaiting Accountant",
-  approved:             "Approved",
+  approved:             "Ready to Disburse",
   disbursed:            "Active",
   repaid:               "Repaid",
   rejected:             "Rejected",
@@ -102,25 +102,30 @@ const INVESTMENT_PENDING_STATUSES = ["pending_committee", "pending"];
 const PENDING_STATUSES = [
   "pending_loan_officer",
   "pending_committee",
-  "pending_accountant",
 ];
 
 const APPROVAL_STEPS = [
   { key: "pending_loan_officer", label: "Loan Officer", icon: "👤" },
   { key: "pending_committee", label: "Committee", icon: "📋" },
-  { key: "pending_accountant", label: "Accountant", icon: "💰" },
 ];
 
 function getActableStep(loanStatus: string, role: string): string | null {
   if (role === "admin") {
     if (loanStatus === "pending_loan_officer") return "loan_officer";
     if (loanStatus === "pending_committee")    return "committee";
-    if (loanStatus === "pending_accountant")   return "accountant";
   }
   if (role === "loan_officer" && loanStatus === "pending_loan_officer") return "loan_officer";
   if (role === "committee"    && loanStatus === "pending_committee")    return "committee";
-  if (role === "accountant"   && loanStatus === "pending_accountant")   return "accountant";
   return null;
+}
+
+// Disbursement is a separate action from approval — the accountant (or
+// admin) acts on a loan that's already `approved` (cleared both
+// approval steps above), not a "pending_" status. The role check lives
+// here; call sites still separately check `loan.status === "approved"`
+// before showing the disburse button (see LoanCard/LoanDetailModal).
+function canDisburseRole(role: string): boolean {
+  return role === "accountant" || role === "admin";
 }
 
 function getApprovalStepIndex(status: string): number {
@@ -930,7 +935,7 @@ export default function LoansScreen() {
                     member={getMember(loan.memberId)}
                     actableStep={step}
                     isAdmin={isAdmin}
-                    canDisburse={role === "accountant"}
+                    canDisburse={canDisburseRole(role)}
                     isPending={isPending}
                     onApprove={() => {
                       if (!step) return;
@@ -1447,7 +1452,7 @@ export default function LoansScreen() {
         }}
         isAdmin={isAdmin}
         isPending={selectedLoan ? PENDING_STATUSES.includes(selectedLoan.status) : false}
-        canDisburse={role === "accountant"}
+        canDisburse={canDisburseRole(role)}
       />
 
       <Toast />
@@ -1604,7 +1609,7 @@ function LoanCard({
         </TouchableOpacity>
       )}
 
-            {canDisburse && (
+            {canDisburse &&(
         <TouchableOpacity style={styles.deleteBtn} onPress={onDelete} activeOpacity={0.8}>
           <Text style={styles.deleteBtnText}>🗑 Delete Loan</Text>
         </TouchableOpacity>

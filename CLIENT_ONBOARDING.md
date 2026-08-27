@@ -102,13 +102,18 @@ Deploy the `dist/` output per-client (e.g. one Vercel/Firebase Hosting
 project per client, or one project with `CLIENT_ID` set as a build-time env
 var per deployment target).
 
-## Cloud Functions
+## Email notifications
 
-Each client's Firebase project also needs the Cloud Functions deployed
-(loan disbursement/repayment — see `functions/README.md`):
+This project has no server/Cloud Functions component — everything runs
+as a static site/app plus direct Firestore access, on purpose, to keep
+hosting free.
 
-```bash
-cd functions
-firebase use <client-id>          # firebase use --add the first time
-firebase deploy --only functions
-```
+In-app notifications work immediately (Firestore-backed, no setup
+needed). For each client's group to also receive notification emails,
+run the standalone email script periodically — see
+`scripts/send-pending-emails.js` for full setup instructions
+(service account key, Resend API key, optional free cron via GitHub
+Actions). It reads that client's Firestore project directly, so point
+`GOOGLE_APPLICATION_CREDENTIALS` / `scripts/serviceAccountKey.json` at
+the right client project before running it, the same way you'd target
+`firebase use <client-id>` for anything else client-specific.

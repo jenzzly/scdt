@@ -496,6 +496,69 @@ export default function ReportsScreen() {
               <KpiCard label="EXPENSES" value={fmtCurrency(groupExpenses)} color={C.error} subtext="operational" />
             </View>
 
+            {/* Group Financial Position — moved here from Dashboard, which
+                is now strictly the logged-in member's own data. Group-wide
+                figures belong on Reports, alongside the other group KPIs
+                above. Admin-only, matching the rest of this screen. */}
+            {canSeeAll && (
+              <View style={styles.chartCard}>
+                <Text style={styles.chartTitle}>Group Financial Position</Text>
+                <View style={{ flexDirection: "row" }}>
+                  <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border }]}>
+                    <Text style={T.label}>Members</Text>
+                    <Text style={gfp.statValue}>
+                      {allMembers.filter(m => m.status === "active").length}
+                    </Text>
+                    <Text style={T.small}>active</Text>
+                  </View>
+                  <View style={gfp.stat}>
+                    <Text style={T.label}>Total Net Assets</Text>
+                    <Text style={[gfp.statValue, { color: C.primary }]}>
+                      {fmtCurrency(round2((group?.totalSavings ?? 0) + (group?.totalInterestEarned ?? 0)))}
+                    </Text>
+                    <Text style={T.small}>savings + interest</Text>
+                  </View>
+                </View>
+                <View style={{ flexDirection: "row", borderTopWidth: 1, borderTopColor: C.border }}>
+                  <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border }]}>
+                    <Text style={T.label}>Contributions</Text>
+                    <Text style={gfp.statValue}>{fmtCurrency(group?.totalSavings ?? 0)}</Text>
+                    <Text style={T.small}>total collected</Text>
+                  </View>
+                  <View style={gfp.stat}>
+                    <Text style={T.label}>Interest Earned</Text>
+                    <Text style={[gfp.statValue, { color: C.gold }]}>
+                      {fmtCurrency(round2(group?.totalInterestEarned ?? 0))}
+                    </Text>
+                    <Text style={T.small}>from loan repayments</Text>
+                  </View>
+                </View>
+                <View style={{ flexDirection: "row", borderTopWidth: 1, borderTopColor: C.border }}>
+                  <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border }]}>
+                    <Text style={T.label}>Value Per Share</Text>
+                    <Text style={[gfp.statValue, { color: C.primary }]}>
+                      {(() => {
+                        const active = allMembers.filter(m => m.status === "active").length;
+                        const netAssets = round2((group?.totalSavings ?? 0) + (group?.totalInterestEarned ?? 0));
+                        return active > 0 ? fmtCurrency(round2(netAssets / active)) : "N/A";
+                      })()}
+                    </Text>
+                    <Text style={T.small}>per active member</Text>
+                  </View>
+                  <View style={gfp.stat}>
+                    <Text style={T.label}>Dividend Per Share</Text>
+                    <Text style={[gfp.statValue, { color: C.gold }]}>
+                      {(() => {
+                        const active = allMembers.filter(m => m.status === "active").length;
+                        return active > 0 ? fmtCurrency(round2((group?.totalInterestEarned ?? 0) / active)) : "N/A";
+                      })()}
+                    </Text>
+                    <Text style={T.small}>interest per member</Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
             {/* Cash Flow Chart */}
             <View style={styles.chartCard}>
               <Text style={styles.chartTitle}>Cash Flow (Last 6 Months)</Text>
@@ -1068,6 +1131,13 @@ function EarningsTab({
 
 // Helper Components
 const Divider = () => <View style={{ height: 1, backgroundColor: C.borderLight, marginHorizontal: 16 }} />;
+
+// Group Financial Position stat grid — small, local style set for the
+// block moved here from Dashboard.
+const gfp = StyleSheet.create({
+  stat: { flex: 1, padding: 14, gap: 3 },
+  statValue: { fontSize: 16, fontWeight: "800", color: C.text, letterSpacing: -0.3 },
+});
 
 const styles = StyleSheet.create({
   header: {

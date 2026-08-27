@@ -8,7 +8,7 @@ import { round2 } from "../utils/theme";
 import type { StoreState } from "./storeTypes";
 
 export function recalcGroupTotals(
-  state: Pick<StoreState, "groups" | "walletTransactions" | "contributions" | "loans" | "investments" | "members">
+  state: Pick<StoreState, "groups" | "walletTransactions" | "contributions" | "loans" | "investments" | "members" | "expenses">
 ): Partial<StoreState> {
   const updatedGroups = state.groups.map((g) => {
     const gwt = state.walletTransactions.filter((t) => t.groupId === g.id);

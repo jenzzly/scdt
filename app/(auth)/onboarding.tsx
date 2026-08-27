@@ -23,7 +23,7 @@ const SLIDES = [
     title: "Track Your Savings",
     description: "Record monthly contributions, view your personal savings balance, and stay on top of the group's total funds in real time.",
     color: Colors.accent,
-    gradient: ["#0D9488", "#0F766E", "#0A5C52"],
+    gradient: ["#0D9488", "#0F766E", "#0A5C52"] as const,
     features: [
       "Real-time balance updates",
       "Contribution history",
@@ -36,7 +36,7 @@ const SLIDES = [
     title: "Smart Loan Management",
     description: "Apply for loans, track repayments with progress bars, and monitor outstanding balances — all in one transparent place.",
     color: "#F59E0B",
-    gradient: ["#F59E0B", "#D97706", "#B45309"],
+    gradient: ["#F59E0B", "#D97706", "#B45309"] as const,
     features: [
       "3-step approval process",
       "Auto-calculated interest",
@@ -49,7 +49,7 @@ const SLIDES = [
     title: "Smart Investments",
     description: "Grow your wealth with group investments. Track returns, monitor performance, and make informed financial decisions.",
     color: "#7C3AED",
-    gradient: ["#7C3AED", "#6D28D9", "#5B21B6"],
+    gradient: ["#7C3AED", "#6D28D9", "#5B21B6"] as const,
     features: [
       "Investment tracking",
       "ROI calculations",
@@ -62,7 +62,7 @@ const SLIDES = [
     title: "Reports & Insights",
     description: "View savings charts, member statements, and investment tracking to keep the entire group financially accountable.",
     color: Colors.primary,
-    gradient: ["#1A3C5E", "#0D2840", "#081A2A"],
+    gradient: ["#1A3C5E", "#0D2840", "#081A2A"] as const,
     features: [
       "Export CSV/PDF",
       "Visual analytics",

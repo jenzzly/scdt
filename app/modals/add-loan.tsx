@@ -129,6 +129,9 @@ export default function AddLoanModal() {
         repaymentMonths: parseInt(months),
         applicationDate: new Date().toISOString(),
         firstPaymentDate: new Date().toISOString(),
+        accruedInterest: 0,
+        lastAccrualDate: new Date().toISOString().slice(0, 10),
+        totalInterestPaid: 0,
       });
       show(isResubmit ? "Loan resubmitted — awaiting loan officer approval" : "Loan application submitted — awaiting loan officer approval");
       router.back();
@@ -194,7 +197,7 @@ export default function AddLoanModal() {
             <View key={index} style={styles.penaltyItem}>
               <View style={styles.penaltyItemHeader}>
                 <Text style={styles.penaltyItemTitle}>{penalty.meetingTitle}</Text>
-                <Text style={styles.penaltyItemAmount}>{fmtCurrency(penalty.penaltyAmount)}</Text>
+                <Text style={styles.penaltyItemAmount}>{fmtCurrency(penalty.penaltyAmount ?? 0)}</Text>
               </View>
               <Text style={styles.penaltyItemDate}>{new Date(penalty.meetingDate).toLocaleDateString()}</Text>
               <Text style={styles.penaltyItemStatus}>Status: {penalty.status}</Text>

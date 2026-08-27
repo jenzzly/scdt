@@ -161,7 +161,7 @@ export default function AddInvestmentModal() {
                 <View style={styles.investmentInfo}>
                   <Text style={styles.investmentName}>{inv.investmentName}</Text>
                   <Text style={styles.investmentAmount}>{fmtCurrency(inv.investmentAmount)}</Text>
-                  <Text style={styles.investmentType}>{inv.investmentType.replace('_', ' ')}</Text>
+                  <Text style={styles.investmentType}>{(inv.investmentType || 'unknown').replace('_', ' ')}</Text>
                 </View>
                 <TouchableOpacity 
                   style={styles.closeBtn}

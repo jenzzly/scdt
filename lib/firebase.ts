@@ -11,7 +11,6 @@ import {
 import { getFirestore, enableNetwork, disableNetwork } from "firebase/firestore";
 import { getDatabase } from "firebase/database";
 import { getStorage } from "firebase/storage";
-import { getFunctions } from "firebase/functions";
 import { Platform } from "react-native";
 import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
@@ -80,7 +79,11 @@ const database = getDatabase(app, firebaseConfig.databaseURL);
 // Storage
 const storage = getStorage(app);
 
-// Cloud Functions (loan disbursement/repayment — see functions/src/loans.ts)
-const functions = getFunctions(app);
+// NOTE: this project deliberately has no Firebase Cloud Functions —
+// loan disbursement/repayment run as direct client Firestore writes
+// (see lib/firestore/loans.ts), gated by firestore-rules, and email
+// notifications go through scripts/send-pending-emails.js, a
+// standalone Node script — not a Cloud Function. There is nothing left
+// that calls `firebase/functions`, so it isn't initialized here.
 
-export { app, auth, db, database, storage, functions, enableNetwork, disableNetwork };
+export { app, auth, db, database, storage, enableNetwork, disableNetwork };

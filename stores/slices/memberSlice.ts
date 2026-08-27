@@ -38,7 +38,7 @@ export const createMemberSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
                 read: false,
                 metadata: { memberId: member.id },
                 createdAt: new Date().toISOString(),
-              }).catch(console.warn);
+              }, admin.email).catch(console.warn);
             });
           get().setSyncStatus("synced");
           return result;
@@ -117,7 +117,7 @@ export const createMemberSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
               read: false,
               metadata: { memberId },
               createdAt: new Date().toISOString(),
-            }).catch(console.warn);
+            }, member.email).catch(console.warn);
           }
         }
       },

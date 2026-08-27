@@ -55,7 +55,7 @@ service cloud.firestore {
 
     function canManageLoans(groupId) {
       return isActiveMember(groupId)
-        && memberRole(groupId) in ["admin", "accountant", "loan_officer"];
+        && memberRole(groupId) in ["admin", "accountant", "loan_officer", "committee"];
     }
 
     function memberDocRef(groupId) {
@@ -92,7 +92,9 @@ service cloud.firestore {
     }
 
     function canApproveContributions(groupId) {
-      return isAdminOrAccountant(groupId) || hasPermission(groupId, 'approveContributions');
+      return isAdminOrAccountant(groupId)
+        || (isActiveMember(groupId) && memberRole(groupId) == "loan_officer")
+        || hasPermission(groupId, 'approveContributions');
     }
 
     function canApproveLoans(groupId) {
@@ -100,7 +102,8 @@ service cloud.firestore {
     }
 
     function canManageMeetings(groupId) {
-      return isAdminOrAccountant(groupId) || hasPermission(groupId, 'manageMeetings') || hasPermission(groupId, 'updateMeetings');
+      return (isActiveMember(groupId) && memberRole(groupId) in ["admin", "accountant", "loan_officer", "committee"])
+        || hasPermission(groupId, 'manageMeetings') || hasPermission(groupId, 'updateMeetings');
     }
 
     function canDeleteRecords(groupId) {
@@ -236,7 +239,9 @@ service cloud.firestore {
           || request.resource.data.system == true
         );
 
-        allow update: if isAdminOrAccountant(groupId) || hasPermission(groupId, 'approveInvestments');
+        allow update: if isAdminOrAccountant(groupId)
+          || (isActiveMember(groupId) && memberRole(groupId) == "committee")
+          || hasPermission(groupId, 'approveInvestments');
         allow delete: if canDeleteRecords(groupId);
       }
 
@@ -299,6 +304,24 @@ service cloud.firestore {
       allow create: if isAuth();
       allow update: if isAuth() && uid() == userId;
       allow delete: if isAuth() && uid() == userId;
+    }
+
+    // ─────────────────────────────
+    // PENDING EMAILS
+    // ─────────────────────────────
+    // A top-level queue: every in-app notification also writes one of
+    // these. A separate Node script (scripts/send-pending-emails.js),
+    // run manually or on a free cron (e.g. GitHub Actions schedule),
+    // reads this collection with the Firebase Admin SDK — which bypasses
+    // these rules entirely via a service account — sends the email via
+    // Resend/nodemailer, then marks the doc sent. The client only ever
+    // needs to create these, never read/list them back (that would let
+    // any signed-in user read everyone's queued email addresses).
+    match /pendingEmails/{id} {
+      allow read:   if false;
+      allow create: if isAuth();
+      allow update: if false;
+      allow delete: if false;
     }
   }
 }

@@ -162,7 +162,7 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
               read: false,
               metadata: { investmentId, returnAmount, profit },
               createdAt: now,
-            }).catch(console.warn);
+            }, admin.email).catch(console.warn);
           }
         } catch (error) {
           // Rollback on error

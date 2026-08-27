@@ -217,6 +217,28 @@ export const useIsAdminView = () => {
   return role === "admin" && dataViewMode === "admin";
 };
 
+// Roles that review other members' loan/investment/meeting approvals
+// (committee, loan_officer, accountant) get the same "mine vs admin"
+// toggle as admin, but flipping it only reveals their own approval
+// queue — never full group financials, member management, etc. Use
+// this instead of useIsAdminView anywhere that should show a reviewer
+// their pending-approval work without granting admin-level visibility.
+export const APPROVER_ROLES: MemberRole[] = ["loan_officer", "committee", "accountant"];
+
+export const useIsApproverView = () => {
+  const role = useCurrentUserRole();
+  const dataViewMode = useDataViewMode();
+  return APPROVER_ROLES.includes(role) && dataViewMode === "admin";
+};
+
+// True whenever the current role has ANY "mine vs admin"-style toggle
+// available — admin (full) or an approver role (scoped). Use this to
+// decide whether to render the toggle switch itself.
+export const useHasViewToggle = () => {
+  const role = useCurrentUserRole();
+  return role === "admin" || APPROVER_ROLES.includes(role);
+};
+
 export const useCanSeeAllFinancial = () => {
   const role = useCurrentUserRole();
   const financialRoles: MemberRole[] = ["admin", "accountant", "loan_officer", "committee"];

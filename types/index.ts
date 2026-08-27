@@ -6,7 +6,7 @@ export type MemberStatus = "active" | "inactive" | "pending" | "suspended" | "ex
 export type LoanStatus = 
   | "pending_loan_officer" 
   | "pending_committee" 
-  | "pending_accountant" 
+  | "pending_accountant"  // legacy — no longer produced; kept so old records still type-check
   | "approved" 
   | "rejected" 
   | "disbursed" 
@@ -264,6 +264,7 @@ export interface Loan {
   applicationDate: string;
   approvalDate?: string;
   disbursementDate?: string;
+  disbursedBy?: ID;
   expectedEndDate?: string;
   completionDate?: string;
   approvedBy?: ID;

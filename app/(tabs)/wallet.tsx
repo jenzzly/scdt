@@ -8,7 +8,7 @@ import { useRouter } from "expo-router";
 import {
   useActiveGroup, useGroupWallet, useGroupMembers,
   useCurrentUserRole, useCurrentMember,
-  useIsAdminView,
+  useIsAdminView, useIsApproverView,
 } from "../../stores/useStore";
 import { TabRow, SearchBar, useToast } from "../../components/ui";
 import { Colors, S, R, C, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
@@ -69,7 +69,21 @@ export default function WalletScreen() {
   const { show, Toast } = useToast();
 
   const isAdmin   = role === "admin";
-  const canSeeAll = useIsAdminView();
+  // Wallet is the group's full financial ledger — anyone toggled to
+  // "admin"/"review" view (admin, or an approver role reviewing group
+  // work) sees every transaction, not just their own. Previously this
+  // only checked admin-view, so e.g. an accountant — whose whole job is
+  // the group's money — only ever saw their own personal transactions
+  // here, never the group ledger they're meant to oversee.
+  //
+  // Both hooks must be called unconditionally, every render, on their
+  // own lines — combining them as `useIsAdminView() || useIsApproverView()`
+  // is a conditional hook call: `||` short-circuits, so the second hook
+  // only runs on some renders, which corrupts React's hooks queue
+  // ("should have a queue" / invalid hook call).
+  const isAdminView = useIsAdminView();
+  const isApproverViewMode = useIsApproverView();
+  const canSeeAll = isAdminView || isApproverViewMode;
 
   const txs = useMemo(() =>
     canSeeAll ? allTxs : allTxs.filter(t => t.memberId === currentMember?.id),
