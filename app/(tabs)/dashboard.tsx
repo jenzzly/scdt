@@ -7,7 +7,7 @@ import { useRouter } from "expo-router";
 import {
   useStore, useActiveGroup, useGroupLoans, useGroupContributions,
   useGroupWallet, useCurrentUserRole, useCurrentMember,
-  useIsApproverView, useIsAdminView, useUnreadNotifs,
+  useIsApproverView, useUnreadNotifs,
 } from "../../stores/useStore";
 import { useCurrentMemberPermissions } from "../../stores/selectors";
 import { Colors, S, R, C, T, fmtCurrency, fmtFull, fmtDate, round2} from "../../utils/theme";
@@ -112,44 +112,6 @@ export default function DashboardScreen() {
     return deduped.slice(0, 5);
   }, [myWallet]);
 
-  // ── Group Financial Position ──────────────────────────────────────
-  // Visible to anyone toggled to admin/review view (same visibility as
-  // the group-wide Wallet screen) — not just admin, since accountant/
-  // loan_officer/committee reviewing group work should see the same
-  // group-level picture they're acting on.
-  const canSeeGroupFinancials = useIsAdminView() || isApproverView;
-
-  // Total Net Assets = every wallet transaction, signed sum — savings,
-  // interest, penalties/late fees, other credits/debits, everything.
-  // This mirrors `group.availableBalance` (see recalcGroupTotals.ts,
-  // which computes it the same way) rather than the narrower
-  // "savings + interest" figure used previously, which silently
-  // excluded late fees, penalties, and any other/misc wallet entries.
-  const totalNetAssets = useMemo(
-    () => round2(wallet.reduce((s, t) => s + t.amount, 0)),
-    [wallet],
-  );
-  const walletContributions = useMemo(
-    () => round2(wallet.filter(t => t.type === "contribution" && t.amount > 0).reduce((s, t) => s + t.amount, 0)),
-    [wallet],
-  );
-  const walletInterest = useMemo(
-    () => round2(wallet.filter(t => (t.type === "loan_interest_income" || t.type === "interest") && t.amount > 0).reduce((s, t) => s + t.amount, 0)),
-    [wallet],
-  );
-  const walletPenalties = useMemo(
-    () => round2(wallet.filter(t => t.type === "late_fee" && t.amount > 0).reduce((s, t) => s + t.amount, 0)),
-    [wallet],
-  );
-  const walletOther = useMemo(() => {
-    const known = ["contribution", "loan_interest_income", "interest", "late_fee", "loan_disbursement", "loan_repayment", "loan_principal_recovery"];
-    return round2(wallet.filter(t => !known.includes(t.type)).reduce((s, t) => s + t.amount, 0));
-  }, [wallet]);
-  const activeMemberCount = useMemo(
-    () => members.filter(m => m.groupId === activeGroupId && m.status === "active").length,
-    [members, activeGroupId],
-  );
-
   const getMemberName = (id: string) =>
     members.find(m => m.id === id)?.fullName ?? "Unknown";
 
@@ -226,56 +188,6 @@ export default function DashboardScreen() {
             </View>
           </View>
         </View>
-
-        {/* ── Group Financial Position — group-wide, only for roles
-             toggled to admin/review view. Total Net Assets is the full
-             signed sum of every wallet transaction (savings, interest,
-             penalties/late fees, other credits/debits — everything),
-             matching group.availableBalance's own formula, not a
-             narrower "savings + interest" figure. ── */}
-        {canSeeGroupFinancials && (
-          <View style={st.block}>
-            <SectionHeader title="Group Financial Position" />
-            <View style={[st.card, { padding: 0, overflow: "hidden" }]}>
-              <View style={{ flexDirection: "row" }}>
-                <View style={[st.gfpStat, { borderRightWidth: 1, borderRightColor: C.border, borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label}>Members</Text>
-                  <Text style={st.gfpStatValue}>{activeMemberCount}</Text>
-                  <Text style={T.small}>active</Text>
-                </View>
-                <View style={[st.gfpStat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label}>Total Net Assets</Text>
-                  <Text style={[st.gfpStatValue, { color: C.primary }]}>{fmtCurrency(totalNetAssets)}</Text>
-                  <Text style={T.small}>everything in wallet</Text>
-                </View>
-              </View>
-              <View style={{ flexDirection: "row" }}>
-                <View style={[st.gfpStat, { borderRightWidth: 1, borderRightColor: C.border, borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label}>Contributions</Text>
-                  <Text style={st.gfpStatValue}>{fmtCurrency(walletContributions)}</Text>
-                  <Text style={T.small}>total collected</Text>
-                </View>
-                <View style={[st.gfpStat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label}>Interest Earned</Text>
-                  <Text style={[st.gfpStatValue, { color: C.gold }]}>{fmtCurrency(walletInterest)}</Text>
-                  <Text style={T.small}>from loan repayments</Text>
-                </View>
-              </View>
-              <View style={{ flexDirection: "row" }}>
-                <View style={[st.gfpStat, { borderRightWidth: 1, borderRightColor: C.border }]}>
-                  <Text style={T.label}>Penalties &amp; Late Fees</Text>
-                  <Text style={[st.gfpStatValue, { color: C.error }]}>{fmtCurrency(walletPenalties)}</Text>
-                  <Text style={T.small}>collected</Text>
-                </View>
-                <View style={st.gfpStat}>
-                  <Text style={T.label}>Other</Text>
-                  <Text style={st.gfpStatValue}>{fmtCurrency(walletOther)}</Text>
-                  <Text style={T.small}>bank fees, misc credits/debits</Text>
-                </View>
-              </View>
-            </View>
-          </View>
-        )}
 
         {/* ── Quick actions ── */}
         {QUICK_ACTIONS.length > 0 && (
@@ -494,10 +406,6 @@ const st = StyleSheet.create({
     backgroundColor: C.surface, borderRadius: 14, borderWidth: 1, borderColor: C.border,
     overflow: "hidden",
   },
-
-  // group financial position stat grid
-  gfpStat: { flex: 1, padding: 14, gap: 3 },
-  gfpStatValue: { fontSize: 16, fontWeight: "800", color: C.text, letterSpacing: -0.3 },
 
   // pending row
   pendingRow: {

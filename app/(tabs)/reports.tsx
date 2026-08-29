@@ -496,68 +496,67 @@ export default function ReportsScreen() {
               <KpiCard label="EXPENSES" value={fmtCurrency(groupExpenses)} color={C.error} subtext="operational" />
             </View>
 
-            {/* Group Financial Position — moved here from Dashboard, which
-                is now strictly the logged-in member's own data. Group-wide
-                figures belong on Reports, alongside the other group KPIs
-                above. Admin-only, matching the rest of this screen. */}
-            {canSeeAll && (
-              <View style={styles.chartCard}>
-                <Text style={styles.chartTitle}>Group Financial Position</Text>
-                <View style={{ flexDirection: "row" }}>
-                  <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border }]}>
-                    <Text style={T.label}>Members</Text>
-                    <Text style={gfp.statValue}>
-                      {allMembers.filter(m => m.status === "active").length}
-                    </Text>
-                    <Text style={T.small}>active</Text>
-                  </View>
-                  <View style={gfp.stat}>
-                    <Text style={T.label}>Total Net Assets</Text>
-                    <Text style={[gfp.statValue, { color: C.primary }]}>
-                      {fmtCurrency(round2((group?.totalSavings ?? 0) + (group?.totalInterestEarned ?? 0)))}
-                    </Text>
-                    <Text style={T.small}>savings + interest</Text>
-                  </View>
+            {/* Group Financial Position — the whole group's numbers,
+                which is what this Overview tab is for. Total Net Assets
+                is the full signed sum of every wallet transaction
+                (savings, interest, penalties/late fees, other
+                credits/debits — everything), the same formula
+                group.availableBalance already uses internally (see
+                stores/recalcGroupTotals.ts), not a narrower
+                "savings + interest" figure. */}
+            <View style={styles.chartCard}>
+              <Text style={styles.chartTitle}>Group Financial Position</Text>
+              <View style={{ flexDirection: "row" }}>
+                <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border, borderBottomWidth: 1, borderBottomColor: C.border }]}>
+                  <Text style={T.label}>Members</Text>
+                  <Text style={gfp.statValue}>{allMembers.filter(m => m.status === "active").length}</Text>
+                  <Text style={T.small}>active</Text>
                 </View>
-                <View style={{ flexDirection: "row", borderTopWidth: 1, borderTopColor: C.border }}>
-                  <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border }]}>
-                    <Text style={T.label}>Contributions</Text>
-                    <Text style={gfp.statValue}>{fmtCurrency(group?.totalSavings ?? 0)}</Text>
-                    <Text style={T.small}>total collected</Text>
-                  </View>
-                  <View style={gfp.stat}>
-                    <Text style={T.label}>Interest Earned</Text>
-                    <Text style={[gfp.statValue, { color: C.gold }]}>
-                      {fmtCurrency(round2(group?.totalInterestEarned ?? 0))}
-                    </Text>
-                    <Text style={T.small}>from loan repayments</Text>
-                  </View>
-                </View>
-                <View style={{ flexDirection: "row", borderTopWidth: 1, borderTopColor: C.border }}>
-                  <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border }]}>
-                    <Text style={T.label}>Value Per Share</Text>
-                    <Text style={[gfp.statValue, { color: C.primary }]}>
-                      {(() => {
-                        const active = allMembers.filter(m => m.status === "active").length;
-                        const netAssets = round2((group?.totalSavings ?? 0) + (group?.totalInterestEarned ?? 0));
-                        return active > 0 ? fmtCurrency(round2(netAssets / active)) : "N/A";
-                      })()}
-                    </Text>
-                    <Text style={T.small}>per active member</Text>
-                  </View>
-                  <View style={gfp.stat}>
-                    <Text style={T.label}>Dividend Per Share</Text>
-                    <Text style={[gfp.statValue, { color: C.gold }]}>
-                      {(() => {
-                        const active = allMembers.filter(m => m.status === "active").length;
-                        return active > 0 ? fmtCurrency(round2((group?.totalInterestEarned ?? 0) / active)) : "N/A";
-                      })()}
-                    </Text>
-                    <Text style={T.small}>interest per member</Text>
-                  </View>
+                <View style={[gfp.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
+                  <Text style={T.label}>Total Net Assets</Text>
+                  <Text style={[gfp.statValue, { color: C.primary }]}>
+                    {fmtCurrency(round2(allWallet.reduce((s, t) => s + t.amount, 0)))}
+                  </Text>
+                  <Text style={T.small}>everything in wallet</Text>
                 </View>
               </View>
-            )}
+              <View style={{ flexDirection: "row" }}>
+                <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border, borderBottomWidth: 1, borderBottomColor: C.border }]}>
+                  <Text style={T.label}>Contributions</Text>
+                  <Text style={gfp.statValue}>
+                    {fmtCurrency(round2(allWallet.filter(t => t.type === "contribution" && t.amount > 0).reduce((s, t) => s + t.amount, 0)))}
+                  </Text>
+                  <Text style={T.small}>total collected</Text>
+                </View>
+                <View style={[gfp.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
+                  <Text style={T.label}>Interest Earned</Text>
+                  <Text style={[gfp.statValue, { color: C.gold }]}>
+                    {fmtCurrency(round2(allWallet.filter(t => (t.type === "loan_interest_income" || t.type === "interest") && t.amount > 0).reduce((s, t) => s + t.amount, 0)))}
+                  </Text>
+                  <Text style={T.small}>from loan repayments</Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: "row" }}>
+                <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border }]}>
+                  <Text style={T.label}>Penalties &amp; Late Fees</Text>
+                  <Text style={[gfp.statValue, { color: C.error }]}>
+                    {fmtCurrency(round2(allWallet.filter(t => t.type === "late_fee" && t.amount > 0).reduce((s, t) => s + t.amount, 0)))}
+                  </Text>
+                  <Text style={T.small}>collected</Text>
+                </View>
+                <View style={gfp.stat}>
+                  <Text style={T.label}>Other</Text>
+                  <Text style={gfp.statValue}>
+                    {(() => {
+                      const known = ["contribution", "loan_interest_income", "interest", "late_fee", "loan_disbursement", "loan_repayment", "loan_principal_recovery"];
+                      const other = round2(allWallet.filter(t => !known.includes(t.type)).reduce((s, t) => s + t.amount, 0));
+                      return fmtCurrency(other);
+                    })()}
+                  </Text>
+                  <Text style={T.small}>bank fees, misc credits/debits</Text>
+                </View>
+              </View>
+            </View>
 
             {/* Cash Flow Chart */}
             <View style={styles.chartCard}>
@@ -1132,8 +1131,7 @@ function EarningsTab({
 // Helper Components
 const Divider = () => <View style={{ height: 1, backgroundColor: C.borderLight, marginHorizontal: 16 }} />;
 
-// Group Financial Position stat grid — small, local style set for the
-// block moved here from Dashboard.
+// Group Financial Position stat grid — small, local style set.
 const gfp = StyleSheet.create({
   stat: { flex: 1, padding: 14, gap: 3 },
   statValue: { fontSize: 16, fontWeight: "800", color: C.text, letterSpacing: -0.3 },

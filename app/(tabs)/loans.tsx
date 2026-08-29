@@ -5,7 +5,7 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, StatusB
 import { useRouter } from "expo-router";
 import {
   useStore, useGroupLoans, useGroupMembers,
-  useCurrentUserRole, useCurrentMember, useIsAdminView,
+  useCurrentUserRole, useCurrentMember, useIsAdminView,useIsApproverView
 } from "../../stores/useStore";
 import { useGroupInvestments, useGroupWallet, useCurrentMemberPermissions } from "../../stores/selectors";
 import {
@@ -128,6 +128,13 @@ function canDisburseRole(role: string): boolean {
   return role === "accountant" || role === "admin";
 }
 
+function canApproveRole(role: string, step: string): boolean {
+  if (role === "admin") return true;
+  if (role === "loan_officer" && step === "pending_loan_officer") return true;
+  if (role === "committee" && step === "pending_committee") return true;
+  return false;
+}
+
 function getApprovalStepIndex(status: string): number {
   const index = APPROVAL_STEPS.findIndex(s => s.key === status);
   return index === -1 ? APPROVAL_STEPS.length : index;
@@ -149,6 +156,7 @@ function LoanDetailModal({
   isPending,
   actableStep,
   canDisburse,
+  canApprove,
 }: {
   visible: boolean;
   loan: Loan | null;
@@ -164,6 +172,7 @@ function LoanDetailModal({
   isPending: boolean;
   actableStep: string | null;
   canDisburse: boolean;
+  canApprove: boolean;
 }) {
   // Pair interest + principal txs into rows for the history table
   const paymentTxs = React.useMemo(() => {
@@ -399,6 +408,7 @@ export default function LoansScreen() {
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
   const permissions = useCurrentMemberPermissions();
+  const isApproverView = useIsApproverView();
   const { show, Toast } = useToast();
 
   const [tab, setTab] = useState("All");
@@ -430,7 +440,7 @@ export default function LoansScreen() {
   const getMember = (id: string) => groupMembers.find((m: Member) => m.id === id);
 
   const visibleLoans = useMemo(() => {
-    if (isAdminView) return allLoans;
+    if (isAdminView || isApproverView) return allLoans;
     return allLoans.filter((l: Loan) => l.memberId === currentMember?.id);
   }, [allLoans, isAdminView, currentMember]);
 
@@ -444,6 +454,7 @@ export default function LoansScreen() {
     if (tab === "Pending")  return list.filter((l: Loan) => PENDING_STATUSES.includes(l.status));
     if (tab === "Active")   return list.filter((l: Loan) => l.status === "disbursed");
     if (tab === "Repaid")   return list.filter((l: Loan) => l.status === "repaid");
+    if (tab === "Disburse") return list.filter((l: Loan) => l.status === "approved");
     if (tab === "Rejected") return list.filter((l: Loan) => ["rejected", "defaulted"].includes(l.status));
     return list;
   }, [visibleLoans, tab]);
@@ -602,7 +613,7 @@ export default function LoansScreen() {
     }
   };
 
-  const LOAN_TABS = isAdminView ? ["All", "Pending", "Active", "Repaid", "Rejected"] : ["All", "Active", "Repaid"];
+  const LOAN_TABS = isAdminView ? ["All", "Pending", "Active", "Repaid", "Rejected"] : ["All", "Active", "Repaid", "Rejected", "Ready to Disburse"];
   const INVEST_TABS = isAdminView ? ["All", "Pending", "Active", "Matured", "Closed"] : ["All", "Active", "Matured", "Closed"];
 
   const getFilteredItems = () => {
