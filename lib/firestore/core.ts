@@ -6,7 +6,7 @@
 // layer everything else imports from.
 import {
   collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc,
-  query, where, orderBy, limit, onSnapshot, writeBatch,
+  query, where, orderBy, limit, onSnapshot, writeBatch, increment,
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import type {
@@ -19,7 +19,7 @@ import type {
 // firebase/firestore and ../firebase separately everywhere.
 export {
   collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc,
-  query, where, orderBy, limit, onSnapshot, writeBatch,
+  query, where, orderBy, limit, onSnapshot, writeBatch, increment,
   db, auth,
 };
 export type {
@@ -92,6 +92,7 @@ export function fromSnap<T>(snap: any): T {
 // ─────────────────────────────────────────────────────────────────────────────
 export const groupsCol      = collection(db, "groups");
 export const membershipsCol = collection(db, "groupMemberships");
+export const pendingMemberLinksCol = collection(db, "pendingMemberLinks");
 export const notifsCol      = (uid: string) => collection(db, "users", uid, "notifications");
 export const pendingEmailsCol = collection(db, "pendingEmails");
 
@@ -105,6 +106,11 @@ export const expensesCol = (gId: string) => collection(db, "groups", gId, "expen
 export const meetingsCol = (gId: string) => collection(db, "groups", gId, "meetings");
 export const auditCol    = (gId: string) => collection(db, "groups", gId, "auditLogs");
 export const deletionsCol = (gId: string) => collection(db, "groups", gId, "deletions");
+export const goalPeriodsCol = (gId: string) => collection(db, "groups", gId, "contributionGoalPeriods");
+
+export function pendingMemberLinkDoc(email: string) {
+  return doc(db, "pendingMemberLinks", email.trim().toLowerCase());
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper Functions

@@ -1,149 +1,195 @@
-# What changed in this round
+# Complete changelog — full session
 
-This builds on the previous `scdt-fixes.zip` delivery (Firestore rules,
-report colors, dashboard/reports split, mobile tab bar, email queue).
-This round fixes issues that only showed up after testing that delivery.
-Replace each file below at the same path — some were already replaced
-last round and are now updated further; a few are new.
+Every file below is a full replacement — copy it to the same path in
+your project, overwriting what's there. Two are brand new
+(`scripts/send-pending-emails.js`, `scripts/.env.send-emails.example`,
+and the whole `worker-email/` folder).
 
-## 1. Loan approval: 2 approvals + 1 disbursement (not 3 approvals)
+## Loan approval flow
 
-Previously the accountant had a third "approve" step before a separate
-disbursement action. Now: **loan_officer approves → committee approves
-→ loan is `approved` → accountant (or admin) disburses directly.**
-There is no accountant "approval" step anymore — their action on an
-`approved` loan IS the disbursement.
+- **`stores/slices/loanSlice.ts`** — 2 approvals (loan_officer,
+  committee) + accountant/admin disburse directly on `approved` status,
+  no separate accountant "approval" gate. Notifications fire at every
+  step, all with email queuing.
+- **`app/(tabs)/loans.tsx`** — `canDisburseRole()` now includes admin
+  (was accountant-only). Approval stepper trimmed to 2 real steps.
+  Fixed a real bug: the status badge's text color was set to the
+  status *label* (a string like "Ready to Disburse") instead of the
+  intended *color* value.
+- **`lib/firestore/loans.ts`** — disbursement now records `disbursedBy`.
+- **`types/index.ts`** — added `Loan.disbursedBy`.
 
-- **`stores/slices/loanSlice.ts`** — `approveLoanStep`: committee's
-  approval now sets status straight to `approved` (previously went to
-  `pending_accountant` first). Removed the dead `step === "accountant"`
-  branch. The "ready to disburse" notification now goes to **both**
-  accountant and admin.
-- **`lib/firestore/loans.ts`** — `disburseLoanServer` now also records
-  `disbursedBy` on the loan (who actually disbursed it). Its core logic
-  — require `status === "approved"`, produce `status: "disbursed"` —
-  was already correct and needed no other changes.
-- **`types/index.ts`** — added `disbursedBy?: ID` to `Loan`. Left
-  `"pending_accountant"` in the `LoanStatus` union (commented as
-  legacy) so any old records with that status still type-check; it's
-  simply never produced going forward.
+## Loan status + comments visible to the borrower
 
-## 2. Accountant couldn't disburse; admin couldn't disburse either
+- **`app/(tabs)/loans.tsx`** — the comment-collection UI and storage
+  already existed (`approveLoanStep` already accepted and saved a
+  `comment`) — the gap was purely on the display side. Added a full
+  approval-progress stepper with each step's reviewer comment to
+  `LoanDetailModal`, which every viewer reaches (including the loan
+  owner), not just the approver-only modal.
 
-**Root cause:** `app/(tabs)/loans.tsx` had `canDisburse={role ===
-"accountant"}` hardcoded at both places the disburse button is
-decided — admin was never included, contradicting "admin can disburse
-as well."
+## Member deletion (root cause + fix)
 
-- **`app/(tabs)/loans.tsx`** — new `canDisburseRole(role)` helper
-  (`accountant || admin`), used at both call sites. Also trimmed
-  `PENDING_STATUSES` / `APPROVAL_STEPS` / `getActableStep` to the 2
-  real approval steps (the stepper UI on the loan detail modal already
-  reads its step count dynamically from `APPROVAL_STEPS`, so it now
-  renders as a 2-step progress bar with no other changes needed).
-  `approved` status label changed to "Ready to Disburse" for clarity.
+- **`firestore-rules/firestore.rules`** — `groupMemberships` no longer
+  relies on a `list`/query rule. Firestore evaluates `list` rules
+  against a query's entire potential result set, not per document
+  (confirmed against Firestore's own docs on "rules are not filters"),
+  so a rule scoped to "only this admin's group" was never actually
+  possible for a `where("memberId", "==", ...)` query — it was being
+  silently rejected outright, for everyone, including genuine admins.
+- **`lib/firestore/members.ts`** — `deleteMember` no longer falls back
+  to that query. It always resolves the exact `groupMemberships`
+  document ID directly (`{groupId}_{userId}`), which is a plain
+  single-document delete the rules already handle correctly. If a
+  member has no linked `userId` at all, that specific cleanup step is
+  skipped cleanly rather than attempting a doomed query — the member
+  record itself (what drives the UI) is still deleted either way.
 
-## 3. "Review view" showed nothing for accountant
+## Earnings page — redesigned, calculation fixed
 
-**Root cause:** `app/(tabs)/dashboard.tsx`'s `reviewLoans` filtered
-*any* `pending_*` status for *any* approver role, with no mapping from
-"this role" → "the specific status this role acts on." An accountant
-would only ever see something if a loan happened to be sitting at the
-now-retired `pending_accountant` status — otherwise nothing, even with
-loans genuinely waiting to be disbursed.
+- **`app/(tabs)/reports.tsx`** (`EarningsTab`) —
+  - Real calculation bug fixed: `loan_disbursement` (money going OUT —
+    a large negative number) and `loan_principal_recovery` (capital
+    simply returning, not profit) were being counted as "earnings,"
+    which could make the total wildly wrong. Real earnings now only
+    includes interest, penalties/late fees, investment returns, bank
+    fees, and other credits/debits — confirmed with you explicitly.
+    Legacy combined `loan_repayment` records are handled correctly via
+    proportional interest extraction (same math already used
+    elsewhere in the app for old data).
+  - Fixed a display bug: every transaction row was hardcoded with a
+    `+` prefix even on debits, producing strings like
+    `+-RWF 5,000.00`. Removed — `fmtCurrency` already handles the sign.
+  - Removed the "Earnings by Member" list that repeated the exact same
+    number for every member (since the split is always equal) —
+    replaced with one clear headline number plus a breakdown by type.
+  - Added responsive (`isWide`) layout for mobile vs. web.
+  - Also moved "Group Financial Position" back onto the Dashboard (per
+    an earlier request in this session) and correctly recomputed
+    "Total Net Assets" as the full signed sum of the wallet ledger.
 
-- **`app/(tabs)/dashboard.tsx`** — added an explicit `ROLE_LOAN_STATUS`
-  map: `loan_officer → pending_loan_officer`, `committee →
-  pending_committee`, `accountant → approved` (their "review" work is
-  disbursement). The pending-actions card now shows "Ready to
-  disburse" / a "Disburse" button label for the accountant's entries
-  specifically, instead of generic "Awaiting ___" / "Review" text.
+## Notification + email coverage — was very incomplete, now covers all major events
 
-## 4. Wallet didn't show all transactions for financial roles
+Every new notification call below also queues an email automatically
+(via `lib/firestore/notifications.ts`'s existing `addNotification`,
+which every call site already passes a `recipientEmail` to) — no
+separate email wiring was needed per event; the `pendingEmails` queue
+and the Cloudflare Worker that sends from it are generic.
 
-**Root cause:** `app/(tabs)/wallet.tsx` only showed the full group
-ledger when `useIsAdminView()` was true (admin-only). Accountant,
-committee, and loan_officer — even while toggled to their "review"
-view — only ever saw their own personal transactions, not the group's.
+- **`stores/slices/contributionSlice.ts`** — previously zero
+  notifications anywhere. Added: submit (needs approval) → notifies
+  admin/accountant/loan_officer; approve/reject/delete → notifies the
+  submitting member.
+- **`stores/slices/expenseSlice.ts`** — previously zero. Added: create
+  and delete → notifies other admins/accountants (not the creator).
+- **`stores/slices/investmentSlice.ts`** — previously only
+  `closeInvestment` notified (admin only). Added: create → notifies
+  committee; each approval step → notifies the next approver or the
+  creator; delete → notifies the creator. Also fixed a real bug:
+  `createInvestment` never actually set `createdBy`, so any
+  creator-facing notification would have silently found nobody to
+  notify.
+- **`stores/slices/meetingSlice.ts`** — previously only
+  `scheduleMeeting` notified. Added: cancel, delete, and reschedule
+  (date/location change) → notify all active members. Also fixed a
+  real, separate bug: a member marked **late** to a meeting had a
+  penalty amount computed and shown in the UI, but the wallet
+  transaction that actually charges it only fired for **absent**
+  members — late penalties were displayed as owed but never actually
+  collected. Both cases now correctly create the wallet transaction,
+  and the affected member is notified either way.
+- **`stores/slices/walletSlice.ts`** — added late-payment alerts for
+  both `applyLoanLateFee` (loan installment overdue — distinct from
+  meeting penalties, as requested) and `applyContributionLateFee`
+  (contribution period overdue), notifying the affected member with
+  the amount and how many days late.
 
-- **`app/(tabs)/wallet.tsx`** — now shows everyone in the group's
-  transactions when EITHER `useIsAdminView()` OR `useIsApproverView()`
-  is true, matching the same visibility rule used elsewhere.
+## Dashboard / Reports split (from earlier in this session, included for completeness)
 
-## 5. Group Financial Position: back on Dashboard, Total Net Assets fixed
+- **`app/(tabs)/dashboard.tsx`** — always the logged-in member's own
+  data; Group Financial Position lives here now (moved back from
+  Reports per your instruction), gated to admin/approver "review" view,
+  computed from the full wallet ledger (not the narrower old formula).
+- **`app/(tabs)/reports.tsx`** — Overview tab remains the group-wide
+  view; Group Financial Position section removed from here since it
+  moved back to Dashboard.
 
-- **`app/(tabs)/dashboard.tsx`** — the section is back here (previously
-  moved to Reports in the last round; now reverted per your request).
-  Visible to the same roles as the Wallet fix above (admin, or an
-  approver role in review mode) — not admin-only.
-  - **Total Net Assets** now sums **every wallet transaction, signed**
-    — savings, interest, penalties/late fees, other credits/debits,
-    everything — matching the same formula `group.availableBalance`
-    already uses internally (see `stores/recalcGroupTotals.ts`, which
-    was not changed — it was already correct). Previously this figure
-    was `group.totalSavings + group.totalInterestEarned` only, which
-    silently excluded late fees, penalties, and any other/misc entries.
-  - New breakdown rows: **Contributions**, **Interest Earned**,
-    **Penalties & Late Fees**, and **Other** (bank fees / misc
-    credits-debits), each derived directly from the wallet ledger by
-    transaction type.
+## Mobile layout fixes (from earlier in this session)
 
-No changes were needed to `app/(tabs)/reports.tsx` — it was reverted
-back to its original (pre-previous-round) state, since the section
-that had been moved there is now gone from it entirely.
+- **`app/_layout.tsx`** — wrapped the app in `SafeAreaProvider` (was
+  completely unused despite being an installed dependency).
+- **`app/(tabs)/_layout.tsx`** — the admin/review view toggle and
+  offline banner now get the real, measured safe-area inset instead of
+  rendering with no top padding at all (which likely put them under
+  the status bar/notch, i.e. invisible, on some devices). Also fixed
+  the bottom tab bar: removed a hardcoded `16.666%` width fighting with
+  `flex: 1`, and switched the hidden Wallet tab from
+  `tabBarButton: () => null` (which still reserves an empty layout
+  slot on current React Navigation — a known issue) to `href: null`
+  (which correctly excludes it).
+- **`components/ui/ModalShell.tsx`** — the shared "Add ___" modal
+  header's top padding now uses the real safe-area inset as a floor
+  under the previous hardcoded guess, so it can't undershoot on devices
+  where the guess was wrong.
 
-## 6. Mobile: admin/review view toggle invisible after login
+## Email sending — two options, both wired to the same queue
 
-**Root cause:** the app has zero safe-area handling anywhere —
-`react-native-safe-area-context` was already an installed dependency
-but never actually used. Every screen hardcodes its own top padding
-(`Platform.OS === "ios" ? 56 : 36`) as a guess, and the one place that
-had NO such padding at all was the `offlineBanner`/`viewModeSwitch`
-strip in the mobile tab layout — it rendered flush at the very top of
-the screen, meaning on notch/status-bar devices it was likely rendered
-partially or fully underneath the OS status bar, i.e. invisible.
+- **`lib/firestore/notifications.ts`**, **`lib/firestore/core.ts`** —
+  every `addNotification()` call optionally queues a `pendingEmails`
+  doc when a recipient email is passed.
+- **`scripts/send-pending-emails.js`** *(new)* — a Node script using
+  your exact Resend/nodemailer SMTP snippet; run manually or via any
+  scheduler you control.
+- **`scripts/.env.send-emails.example`** *(new)* — template for the
+  script's config.
+- **`worker-email/`** *(new, whole standalone project)* — a Cloudflare
+  Worker with its own Cron Trigger that does the same job automatically
+  on a schedule, for free, using Firestore's REST API + Web Crypto
+  (JWT signing) instead of `firebase-admin`, and Resend's HTTP API
+  instead of nodemailer — neither of the Node-only libraries run in
+  the Workers runtime. This is what you deployed at
+  `scdt-send-pending-emails.jenzzly.workers.dev` — see
+  `worker-email/README.md` for setup/redeploy instructions. It reads
+  from the same `pendingEmails` collection, so every notification added
+  in this changelog is covered automatically — no per-event wiring to
+  the Worker was needed.
+- **`firestore-rules/firestore.rules`** — `pendingEmails` collection:
+  clients can only `create`, never read/update/delete (only the
+  Worker/script, via a service account that bypasses rules, can process
+  the queue).
 
-- **`app/_layout.tsx`** — wrapped the whole app in `SafeAreaProvider`
-  (required once, at the root, for the hook below to work anywhere).
-- **`app/(tabs)/_layout.tsx`** — the `offlineBanner`/`viewModeSwitch`
-  strip now gets `paddingTop: insets.top` from `useSafeAreaInsets()` —
-  the real, measured notch/status-bar height for the actual device,
-  not a guessed constant. This is scoped to just that strip, not the
-  whole mobile layout, so it doesn't stack with (double up) each
-  screen's own existing hardcoded padding underneath it.
+## Security / cleanup
 
-## 7. Mobile: "double" add-contribution button / misaligned layout
+- **`.env`**, **`clients/scdt/.env`** — removed an exposed
+  `EXPO_PUBLIC_RESEND` key (any `EXPO_PUBLIC_*` var ships inside the
+  client bundle, publicly readable). If you haven't already, revoke
+  that key in your Resend dashboard.
+- **`lib/firebase.ts`**, **`lib/firestore/core.ts`**,
+  **`lib/firestore/index.ts`**, **`utils/theme.ts`**,
+  **`firebase.json`**, **`CLIENT_ONBOARDING.md`** — removed dead
+  Cloud-Functions-era code/references (confirmed nothing in the app
+  actually calls `httpsCallable` anywhere) so nobody chases a
+  deploy step that doesn't apply to this project.
+- **`package.json`** — added `nodemailer`, `firebase-admin`, `dotenv`
+  as devDependencies (Node-only, used exclusively by
+  `scripts/send-pending-emails.js` — never shipped in the app bundle),
+  plus a `send-pending-emails` npm script.
+- **`.gitignore`** — added `scripts/.env.send-emails`.
 
-I checked every place `add-contribution` is referenced
-(Dashboard's quick action, the Contributions tab's own button, Wallet's
-button) and found no literal duplicate button in the code — each is a
-single, correctly-gated button on its own screen. Given the same
-missing-safe-area-handling root cause as #6, my best-supported fix is
-that `components/ui/ModalShell.tsx` (the shared wrapper every "Add
-___" modal uses, including add-contribution) had the same hardcoded
-`paddingTop: 56/40` guess for its header. On a native modal
-presentation specifically (`presentation: "modal"` in expo-router),
-that guess can undershoot the real inset, letting the header — with
-its close button — render partially behind the status bar, which can
-look like a second, misaligned header/button bleeding through.
+## Deploy checklist
 
-- **`components/ui/ModalShell.tsx`** — the header's top padding is now
-  `Math.max(insets.top + 8, existing hardcoded value)` — the real
-  device inset as a floor under the previous guess, so it never
-  undershoots.
-
-**If this doesn't fully resolve what you're seeing**, I wasn't able to
-reproduce the exact visual on a device — the safe-area fix is a strong,
-well-evidenced first fix, but if it persists please send a screenshot
-or screen recording next round and I'll narrow it down precisely
-instead of continuing to infer from code alone.
-
-## Deploy checklist (same as last round, repeated for convenience)
-
-1. Replace the files listed above (and the ones from the previous
-   round, if you haven't already).
-2. `npm install` (no new dependencies this round —
-   `react-native-safe-area-context` was already present, just unused).
-3. Redeploy Firestore rules if you haven't since the last round:
-   `firebase deploy --only firestore:rules`.
-4. Rebuild/redeploy the app.
+1. Replace every file listed above at the same path.
+2. `npm install` in the main project (picks up the three new
+   devDependencies).
+3. Deploy the updated Firestore rules:
+   `firebase deploy --only firestore:rules` — the member-delete fix
+   and every earlier rules change do nothing until this runs.
+4. If you haven't already, revoke the exposed Resend key and generate
+   a fresh one.
+5. If you're using the Worker (already deployed per your message) — no
+   action needed, it already covers all the new notification types
+   automatically. If you're using the Node script instead, make sure
+   `scripts/.env.send-emails` and `scripts/serviceAccountKey.json` are
+   set up (see the script's own header comment).
+6. Rebuild/redeploy the app (`npm run deploy` for web; EAS build for
+   mobile) as usual.

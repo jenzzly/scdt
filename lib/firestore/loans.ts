@@ -19,7 +19,7 @@
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, query, orderBy,
   onSnapshot, writeBatch,
-  loansCol, walletCol, groupDoc, membershipsCol,
+  loansCol, walletCol, groupDoc, membershipsCol, groupsCol,
   getCurrentUserInfo, logError, stripUndefined, fromSnap, round2, getMembershipId,
 } from "./core";
 import type { Loan, NewRecord, WalletTransaction } from "./core";
@@ -453,9 +453,22 @@ export async function addLoan(gId: string, data: NewRecord<Loan>): Promise<strin
     const userInfo = await getCurrentUserInfo();
     const dRef = data.id ? doc(loansCol(gId), data.id) : doc(loansCol(gId));
     const now  = new Date().toISOString();
+    
+    // Get current group settings to capture historical rates
+    const groupRef = groupDoc(gId);
+    const groupSnap = await getDoc(groupRef);
+    const groupData = groupSnap.exists() ? groupSnap.data() : {};
+    
     const loanData = {
       ...stripUndefined(data as any),
       id: dRef.id,
+      // Capture historical rates at creation
+      interestRateAtCreation: data.interestRate || groupData.loanInterestRate,
+      penaltyRateAtCreation: groupData.loanPenaltyRatePct || groupData.latePenaltyRatePct,
+      interestMethodAtCreation: data.interestMethod || groupData.loanInterestMethod,
+      interestPeriodAtCreation: data.interestRatePeriod || groupData.loanInterestRatePeriod,
+      loanCreatedAt: now,
+      // Initialize daily-accrual tracking fields
       accruedInterest:    0,
       totalInterestPaid:  0,
       lastAccrualDate:    now.slice(0, 10),

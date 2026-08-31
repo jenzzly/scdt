@@ -125,6 +125,7 @@ export default function AddLoanModal() {
         purpose: purpose.trim(),
         interestRate: rate,
         interestRatePeriod, // snapshot at submission — group setting may change later
+        interestMethod, // snapshot at submission
         repaymentPlan: "monthly",
         repaymentMonths: parseInt(months),
         applicationDate: new Date().toISOString(),
@@ -132,6 +133,7 @@ export default function AddLoanModal() {
         accruedInterest: 0,
         lastAccrualDate: new Date().toISOString().slice(0, 10),
         totalInterestPaid: 0,
+        // These will be captured in addLoan with group settings
       });
       show(isResubmit ? "Loan resubmitted — awaiting loan officer approval" : "Loan application submitted — awaiting loan officer approval");
       router.back();
@@ -356,6 +358,12 @@ export default function AddLoanModal() {
               <Text style={styles.calcLbl}>Interest Method</Text>
               <Text style={styles.calcVal}>
                 {interestMethod === "reducing_balance" ? "Reducing balance" : "Flat rate"}
+              </Text>
+            </View>
+            <View style={styles.calcRow}>
+              <Text style={styles.calcLbl}>Penalty Rate</Text>
+              <Text style={styles.calcVal}>
+                {group?.loanPenaltyRatePct || group?.latePenaltyRatePct || 0}%
               </Text>
             </View>
             <View style={styles.calcRow}>

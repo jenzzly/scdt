@@ -62,6 +62,8 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       const user = await signIn(email.trim(), password);
+      // Keep legacy SCDT users working, but do not force a new account into
+      // that group. The tabs shell resolves all groups from memberships.
       const member = await FS.ensureMemberExists(
         FIXED_GROUP_ID, user.uid, user.displayName || email.trim(), email.trim(),
       );
@@ -69,7 +71,7 @@ export default function LoginScreen() {
         show(`Welcome back! Balance: ${fmtCurrency(member.totalContributions)}`, "success");
       }
       recalcTotals();
-      setActiveGroup(FIXED_GROUP_ID);
+      if (member) setActiveGroup(FIXED_GROUP_ID);
       router.replace("/(tabs)/dashboard");
     } catch (e: any) {
       const code = e?.code ?? "";

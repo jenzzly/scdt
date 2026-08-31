@@ -13,7 +13,7 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
       })),
 
       createInvestment: async (data) => {
-        const { activeGroupId, authUid } = get();
+        const { activeGroupId, authUid, members } = get();
         if (!activeGroupId) throw new Error("No active group");
         const now = new Date().toISOString();
         const defaultApprovals: InvestmentApprovals = {
@@ -26,16 +26,35 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
           status: "pending_committee",
           approvals: defaultApprovals,
           createdAt: now,
+          createdBy: authUid ?? undefined,
           updatedAt: now,
         };
         get().addInvestmentLocal(investment);
         // No wallet tx until investment is approved and opened
         FS.addInvestment(activeGroupId, investment).catch(console.warn);
+
+        // Notify committee members to review the new investment.
+        const committee = members.filter(
+          (m) => m.groupId === activeGroupId && m.status === "active" && m.role === "committee" && !!m.userId
+        );
+        for (const c of committee) {
+          FS.addNotification(c.userId!, {
+            userId: c.userId!,
+            groupId: activeGroupId,
+            type: "investment_pending",
+            title: "New Investment Awaiting Review",
+            message: `"${data.investmentName}" (${fmtCurrency(data.investmentAmount)}) needs committee review`,
+            read: false,
+            metadata: { investmentId: investment.id },
+            createdAt: now,
+          }, c.email).catch(console.warn);
+        }
+
         return investment.id;
       },
 
       approveInvestmentStep: async (investmentId, step, approved, comment) => {
-        const { activeGroupId, investments, authUid } = get();
+        const { activeGroupId, investments, authUid, members } = get();
         if (!activeGroupId) throw new Error("No active group");
         const inv = investments.find((i: Investment) => i.id === investmentId);
         if (!inv) throw new Error("Investment not found");
@@ -80,6 +99,54 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
           get().setSyncStatus("pending");
           await FS.approveInvestmentStep(activeGroupId, investmentId, step, approved, comment);
           get().setSyncStatus("synced");
+
+          const creator = members.find((m) => m.userId === (inv as any).createdBy);
+          if (!approved) {
+            // Rejected — notify whoever created it.
+            if (creator?.userId) {
+              FS.addNotification(creator.userId, {
+                userId: creator.userId,
+                groupId: activeGroupId,
+                type: "investment_rejected",
+                title: "Investment Rejected",
+                message: `"${inv.investmentName}" was rejected${comment ? `: ${comment}` : ""}`,
+                read: false,
+                metadata: { investmentId, rejectionReason: comment },
+                createdAt: new Date().toISOString(),
+              }, creator.email).catch(console.warn);
+            }
+          } else if (step === "committee") {
+            // Moved to accountant for the next step.
+            const accountants = members.filter(
+              (m) => m.groupId === activeGroupId && m.status === "active" && m.role === "accountant" && !!m.userId
+            );
+            for (const acc of accountants) {
+              FS.addNotification(acc.userId!, {
+                userId: acc.userId!,
+                groupId: activeGroupId,
+                type: "investment_pending",
+                title: "Investment Requires Your Approval",
+                message: `"${inv.investmentName}" (${fmtCurrency(inv.investmentAmount)}) is ready for your review`,
+                read: false,
+                metadata: { investmentId },
+                createdAt: new Date().toISOString(),
+              }, acc.email).catch(console.warn);
+            }
+          } else if (step === "accountant") {
+            // Fully approved and opened — notify the creator.
+            if (creator?.userId) {
+              FS.addNotification(creator.userId, {
+                userId: creator.userId,
+                groupId: activeGroupId,
+                type: "investment_approved",
+                title: "Investment Approved",
+                message: `"${inv.investmentName}" has been approved and opened`,
+                read: false,
+                metadata: { investmentId },
+                createdAt: new Date().toISOString(),
+              }, creator.email).catch(console.warn);
+            }
+          }
         } catch (e) {
           get().updateInvestmentLocal(investmentId, inv);
           get().setSyncStatus("failed", e instanceof Error ? e.message : "Failed to update investment");
@@ -181,7 +248,7 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
       },
       // ─── Delete Investment (atomic cascade to all related wallet txs) ───
       deleteInvestment: async (investmentId: ID, reason: string) => {
-        const { activeGroupId, investments, walletTransactions } = get();
+        const { activeGroupId, investments, walletTransactions, members, authName } = get();
         if (!activeGroupId) throw new Error("No active group");
 
         const investment = investments.find((i: Investment) => i.id === investmentId);
@@ -208,6 +275,20 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
           get().setSyncStatus("synced");
           // Note: audit log entry (including cascade count) is already written
           // server-side inside FS.deleteInvestmentWithRelations — no duplicate needed here.
+
+          const creator = members.find((m) => m.userId === (investment as any).createdBy);
+          if (creator?.userId) {
+            FS.addNotification(creator.userId, {
+              userId: creator.userId,
+              groupId: activeGroupId,
+              type: "investment_deleted",
+              title: "Investment Removed",
+              message: `"${investment.investmentName}" was removed by ${authName || "an admin"}${reason ? `: ${reason}` : ""}`,
+              read: false,
+              metadata: { investmentId, reason },
+              createdAt: new Date().toISOString(),
+            }, creator.email).catch(console.warn);
+          }
 
         } catch (e) {
           // Rollback on error

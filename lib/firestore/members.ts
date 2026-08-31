@@ -99,14 +99,33 @@ export async function deleteMember(
 ): Promise<void> {
   await deleteDoc(doc(membersCol(gId), mId));
 
+  // Always resolve the groupMemberships doc ID directly
+  // (`{groupId}_{userId}`) rather than querying for it by `memberId`.
+  // The membershipsCol query fallback this used to have
+  // (`where("memberId", "==", mId)`) cannot be authorized under
+  // Firestore's rules model — a `list`/query operation is evaluated
+  // against its entire potential result set, not per matched document
+  // ("rules are not filters"), so there is no way to write a
+  // groupMemberships security rule that both (a) lets an admin's
+  // query through and (b) doesn't expose every membership doc in the
+  // database to any signed-in user. That query was therefore always
+  // being silently rejected — which is why deleting a member without
+  // a linked userId (e.g. someone added but who hasn't signed up yet)
+  // failed even for a genuine admin, no matter how the rules were
+  // adjusted. A single-document delete by its exact known ID has no
+  // such problem and is already safely allowed by the rules.
+  //
+  // If userId isn't known, there's no membership doc to look up by ID
+  // and no safe way to find it any other way — skip cleanly rather
+  // than attempt a doomed query. This should be rare in practice
+  // (most members have a linked account), but if you hit it, the
+  // leftover groupMemberships doc (if any) can be found and removed
+  // manually in the Firebase console — it's harmless to leave in
+  // place otherwise, since the member doc itself (the thing that
+  // actually drives the UI) is already deleted above.
   if (userId) {
     const membershipId = getMembershipId(gId, userId);
     await deleteDoc(doc(membershipsCol, membershipId));
-  } else {
-    const mSnap = await getDocs(query(membershipsCol, where("memberId", "==", mId)));
-    const batch = writeBatch(db);
-    mSnap.forEach((s) => batch.delete(s.ref));
-    await batch.commit();
   }
 
   const g = await getGroup(gId);
@@ -122,8 +141,8 @@ export async function findAndMergeMemberByEmail(
   try {
     if (!email) return { merged: false, memberId: "", memberData: null };
     
-    
     // Query for member with matching email (case insensitive)
+    // This requires admin permissions - only admins should call this function
     const membersRef = membersCol(groupId);
     const membersQuery = query(membersRef, where("email", "==", email.toLowerCase()));
     const memberSnap = await getDocs(membersQuery);
@@ -132,7 +151,6 @@ export async function findAndMergeMemberByEmail(
       const existingMember = memberSnap.docs[0];
       const memberData = existingMember.data() as Member;
       const memberId = existingMember.id;
-      
       
       // Update member with Firebase user ID (if not already set)
       const updates: any = {
@@ -204,10 +222,23 @@ export async function ensureMemberExists(
   try {
     const membershipId = getMembershipId(gId, userId);
     const membershipRef = doc(db, "groupMemberships", membershipId);
-    const membershipSnap = await getDoc(membershipRef);
+
+    // Do not `get()` a membership before it exists. Firestore evaluates a
+    // missing document with no `resource.data`, so a strict owner-only rule
+    // correctly rejects that read. This query is constrained to the caller's
+    // uid, which the rules explicitly permit, and returns an empty snapshot
+    // for a new user rather than a permission error.
+    const membershipQuery = query(
+      membershipsCol,
+      where("userId", "==", userId),
+      where("groupId", "==", gId),
+      limit(1),
+    );
+    const membershipResults = await getDocs(membershipQuery);
+    const membershipSnap = membershipResults.docs[0];
 
     // If membership exists, user is already linked
-    if (membershipSnap.exists()) {
+    if (membershipSnap) {
       const memberId = membershipSnap.data()?.memberId;
       if (memberId) {
         const memberDoc = await getDoc(doc(membersCol(gId), memberId));
@@ -218,64 +249,34 @@ export async function ensureMemberExists(
       return null;
     }
 
-
-    // Check if member exists by email first
-    const membersRef = membersCol(gId);
-    const membersQuery = query(membersRef, where("email", "==", email.toLowerCase()));
-    const existingMemberSnap = await getDocs(membersQuery);
-    
-    let memberId: string;
-    let role = "member";
-    let existingMemberData: Member | null = null;
-    
-    // Check if we have any results
-    if (!existingMemberSnap.empty) {
-      // Use existing member document (preserve historical data)
-      const existingDoc = existingMemberSnap.docs[0];
-      memberId = existingDoc.id;
-      existingMemberData = existingDoc.data() as Member;
-      role = existingMemberData.role || "member";
-      
-      
-      // Update with Firebase user ID
-      const memberUpdateRef = doc(membersCol(gId), memberId);
-      await updateDoc(memberUpdateRef, {
-        userId: userId,
-        fullName: fullName || existingMemberData.fullName,
-        updatedAt: new Date().toISOString(),
-      });
-      
-    } else {
-      // Create new member document
-      memberId = userId;
-      const now = new Date().toISOString();
-      
-      // Check if this is the first member in the group
-      const allMembersSnap = await getDocs(membersCol(gId));
-      const isFirstMember = allMembersSnap.empty;
-      role = isFirstMember ? "admin" : "member";
-      
-      const newMemberRef = doc(membersCol(gId), memberId);
-      await setDoc(newMemberRef, {
-        id: memberId,
-        groupId: gId,
-        userId: userId,
-        fullName: fullName,
-        email: email.toLowerCase(),
-        phone: "",
-        role: role,
-        status: "active",
-        dateJoined: now,
-        totalContributions: 0,
-        totalSavings: 0,
-        loanEarnings: 0,
-        createdAt: now,
-      });
-      
-    }
-    
-    // Create or update membership document
+    // Create new member document directly without email query
+    // This avoids permission errors during bootstrap
+    const memberId = userId;
     const now = new Date().toISOString();
+    
+    // Check if this is the first member in the group
+    const allMembersSnap = await getDocs(membersCol(gId));
+    const isFirstMember = allMembersSnap.empty;
+    const role = isFirstMember ? "admin" : "member";
+    
+    const newMemberRef = doc(membersCol(gId), memberId);
+    await setDoc(newMemberRef, {
+      id: memberId,
+      groupId: gId,
+      userId: userId,
+      fullName: fullName,
+      email: email.toLowerCase(),
+      phone: "",
+      role: role,
+      status: "active",
+      dateJoined: now,
+      totalContributions: 0,
+      totalSavings: 0,
+      loanEarnings: 0,
+      createdAt: now,
+    });
+    
+    // Create membership document
     const membershipData = {
       id: membershipId,
       groupId: gId,
@@ -289,13 +290,13 @@ export async function ensureMemberExists(
     
     await setDoc(membershipRef, membershipData);
     
-    // Return the member data (with historical info if merged)
+    // Return the member data
     const finalMemberDoc = await getDoc(doc(membersCol(gId), memberId));
     if (finalMemberDoc.exists()) {
       return { ...finalMemberDoc.data(), id: finalMemberDoc.id } as Member;
     }
     
-    return existingMemberData;
+    return null;
   } catch (error) {
     console.error("[ensureMemberExists] Error:", error);
     throw error;

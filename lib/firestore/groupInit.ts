@@ -32,8 +32,9 @@ export async function initGroupData(
 
   const groupRef = doc(db, "groups", groupId);
   try {
-    const groupSnap = await getDoc(groupRef);
-    if (!groupSnap.exists()) {
+      // Do not pre-read the group: a newly-created group deliberately has no
+      // membership yet, so a protected read is denied. A merge write is safe
+      // for a founder and preserves existing settings on a retry.
       await setDoc(groupRef, {
         id: groupId,
         name: BRAND.defaultGroupName,
@@ -56,56 +57,37 @@ export async function initGroupData(
         totalInterestEarned: 0,
         memberCount: 0,
         createdAt: now,
-      });
-    }
+      }, { merge: true });
   } catch (error) {
     console.error("[initGroupData] Group error:", error);
+    throw error;
   }
 
   const memberRef = doc(db, "groups", groupId, "members", userId);
   try {
-    const memberSnap = await getDoc(memberRef);
-    if (!memberSnap.exists()) {
-      const membersQuery = query(
-        membersCol(groupId),
-        where("email", "==", email.toLowerCase()),
-        limit(1)
-      );
-      const existingMemberSnap = await getDocs(membersQuery);
-      
-      if (!existingMemberSnap.empty) {
-        const existingDoc = existingMemberSnap.docs[0];
-        await updateDoc(doc(membersCol(groupId), existingDoc.id), {
-          userId: userId,
-          updatedAt: now,
-        });
-      } else {
-        await setDoc(memberRef, {
-          id: userId,
-          groupId: groupId,
-          userId: userId,
-          fullName: currentUser.displayName || currentUser.email?.split('@')[0] || "Member",
-          email: email.toLowerCase(),
-          phone: "",
-          role: role,
-          status: "active",
-          dateJoined: now,
-          totalContributions: 0,
-          totalSavings: 0,
-          loanEarnings: 0,
-          createdAt: now,
-        });
-      }
-    }
+      await setDoc(memberRef, {
+        id: userId,
+        groupId: groupId,
+        userId: userId,
+        fullName: currentUser.displayName || currentUser.email?.split('@')[0] || "Member",
+        email: email.toLowerCase(),
+        phone: "",
+        role: role,
+        status: "active",
+        dateJoined: now,
+        totalContributions: 0,
+        totalSavings: 0,
+        loanEarnings: 0,
+        createdAt: now,
+      }, { merge: true });
   } catch (error) {
     console.error("[initGroupData] Member profile error:", error);
+    throw error;
   }
 
   const membershipId = getMembershipId(groupId, userId);
   const membershipRef = doc(db, "groupMemberships", membershipId);
   try {
-    const membershipSnap = await getDoc(membershipRef);
-    if (!membershipSnap.exists()) {
       await setDoc(membershipRef, {
         id: membershipId,
         groupId: groupId,
@@ -115,14 +97,24 @@ export async function initGroupData(
         status: "active",
         email: email.toLowerCase(),
         createdAt: now,
-      });
-    }
+      }, { merge: true });
   } catch (error) {
     console.error("[initGroupData] Membership error:", error);
     throw error;
   }
 
   return true;
+}
+
+/** Creates a private first group for a newly registered user. */
+export async function createFirstGroupForUser(userId: string, name?: string): Promise<string> {
+  const groupId = doc(db, "groups").id;
+  const created = await initGroupData(groupId, userId, "admin");
+  if (!created) throw new Error("Unable to create your first group");
+  if (name?.trim()) {
+    await updateDoc(doc(db, "groups", groupId), { name: name.trim() });
+  }
+  return groupId;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -156,4 +148,3 @@ export async function restoreGroupData(
 
   await batch.commit();
 }
-

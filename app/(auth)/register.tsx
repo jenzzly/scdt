@@ -11,7 +11,6 @@ import { useStore } from "../../stores/useStore";
 import { Input, Button, useToast } from "../../components/ui";
 import { Colors, S, R, fmtCurrency } from "../../utils/theme";
 import { BRAND } from "../../lib/brand";
-import { FIXED_GROUP_ID } from "../../stores/fixedGroup";
 import * as FS from "../../lib/firestore";
 
 export default function RegisterScreen() {
@@ -59,13 +58,8 @@ export default function RegisterScreen() {
       
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // Use ensureMemberExists which handles both new and existing members
-      const member = await FS.ensureMemberExists(
-        FIXED_GROUP_ID,
-        user.uid,
-        fullName.trim(),
-        email.trim()
-      );
+      const groupId = await FS.createFirstGroupForUser(user.uid);
+      const member = await FS.ensureMemberExists(groupId, user.uid, fullName.trim(), email.trim());
       
       if (member && member.totalContributions > 0) {
         show(`Welcome back! Your balance of ${fmtCurrency(member.totalContributions)} has been restored.`, "success");
@@ -74,7 +68,7 @@ export default function RegisterScreen() {
       }
       
       recalcTotals();
-      setActiveGroup(FIXED_GROUP_ID);
+      setActiveGroup(groupId);
       router.replace("/(tabs)/dashboard");
     } catch (e: any) {
       let msg = "Registration failed. Try again.";

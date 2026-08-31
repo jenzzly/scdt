@@ -1,7 +1,13 @@
 // types/index.ts
 export type ID = string;
 
-export type MemberRole = "admin" | "accountant" | "loan_officer" | "committee" | "member";
+// Import centralized role definitions
+import { UserRole, USER_ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, getRoleLabel, getRoleDescription, isValidRole } from "./roles";
+export type { UserRole, USER_ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, getRoleLabel, getRoleDescription, isValidRole } from "./roles";
+
+// Legacy type alias for backward compatibility
+export type MemberRole = UserRole;
+
 export type MemberStatus = "active" | "inactive" | "pending" | "suspended" | "exited";
 export type LoanStatus = 
   | "pending_loan_officer" 
@@ -94,6 +100,26 @@ export interface LoanApprovals {
 
 export type LoanInterestMethod = "flat" | "reducing_balance";
 
+export interface ContributionGoalConfig {
+  enabled: boolean;
+  minimumContribution: number;
+  targetAmount: number;
+  periodMonths: number;
+  currency: string;
+}
+
+export interface ContributionGoalPeriod {
+  id: ID;
+  groupId: ID;
+  periodStart: string;
+  periodEnd: string;
+  targetAmount: number;
+  minimumContribution: number;
+  status: "active" | "completed" | "expired";
+  createdAt: string;
+  completedAt?: string;
+}
+
 export interface Group {
   id: ID;
   name: string;
@@ -163,6 +189,13 @@ export interface Group {
   absencePenaltyMember?: number;
   /** @deprecated fixed-amount penalties — retained for backward compatibility */
   absencePenaltyOfficer?: number;
+  
+  // Contribution goal configuration
+  contributionGoal?: ContributionGoalConfig;
+  
+  // Loan penalty configuration
+  loanPenaltyRatePct?: number;          // Default penalty rate for loans
+
   totalSavings: number;
   totalLoans: number;
   availableBalance: number;
@@ -227,6 +260,8 @@ export interface Contribution {
   deletedBy?: ID;
   deletedAt?: string;
   deletionReason?: string;
+  // Goal period tracking
+  goalPeriodId?: ID;
 }
 
 export interface Loan {
@@ -244,6 +279,12 @@ export interface Loan {
    */
   interestMethod?: LoanInterestMethod;
   interestRatePeriod?: "monthly" | "annual"; // snapshot of Group.loanInterestRatePeriod at submission
+  // Historical rate capture at creation
+  interestRateAtCreation?: number;        // snapshot of the interest rate at loan creation
+  penaltyRateAtCreation?: number;         // snapshot of the penalty rate at loan creation
+  interestMethodAtCreation?: LoanInterestMethod; // snapshot of interest method at creation
+  interestPeriodAtCreation?: "monthly" | "annual"; // snapshot of interest period at creation
+  loanCreatedAt?: string;                 // loan creation/effective date for historical calculations
   repaymentPlan: "monthly" | "weekly" | "lump_sum";
   repaymentMonths: number;
   firstPaymentDate: string;

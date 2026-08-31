@@ -231,28 +231,62 @@ export default function ReportsScreen() {
   const investments = canSeeAll ? allInvestments : allInvestments.filter(i => i.createdBy === currentMember?.id);
   const wallet = canSeeAll ? allWallet : allWallet.filter(t => t.memberId === currentMember?.id);
 
-  const groupWalletEarnings = useMemo(
-    () => allWallet
-      .filter(t => t.type !== "contribution")
-      .reduce((sum, t) => sum + t.amount, 0),
-    [allWallet],
-  );
-  const groupInterest = useMemo(() => {
-    const fromLedger = allWallet
-      .filter(t => t.type === "loan_interest_income" && t.amount > 0)
-      .reduce((sum, t) => sum + t.amount, 0);
-    const legacy = allWallet
-      .filter(t => t.type === "loan_repayment" && t.amount > 0)
-      .reduce((sum, t) => {
-        const loan = allLoans.find(item => item.id === t.loanId);
-        return loan?.totalRepayable
-          ? sum + round2(t.amount * (loan.totalInterest / loan.totalRepayable))
-          : sum;
-      }, 0);
-    return round2(fromLedger + legacy);
+  // Same "true earnings" definition as EarningsTab (see that component
+  // for the full reasoning): interest, penalties/late fees, investment
+  // returns, bank fees, and other credits/debits — excluding
+  // contributions (not earnings), loan_disbursement (money going OUT,
+  // previously dragged this number down by every loan's full principal),
+  // and loan_principal_recovery (capital returning, not profit).
+  // Legacy combined loan_repayment records are split proportionally so
+  // only their interest portion counts.
+  const EARNING_TYPES_OVERVIEW = [
+    "loan_interest_income", "interest", "late_fee",
+    "investment_return", "bank_fee", "other_credit", "other_debit",
+  ];
+  const groupWalletEarnings = useMemo(() => {
+    return round2(allWallet.reduce((sum, t) => {
+      if (t.type === "loan_repayment") {
+        const loan = allLoans.find(l => l.id === t.loanId);
+        if (!loan?.totalRepayable) return sum;
+        return sum + round2(t.amount * (loan.totalInterest / loan.totalRepayable));
+      }
+      if (EARNING_TYPES_OVERVIEW.includes(t.type)) return sum + t.amount;
+      return sum;
+    }, 0));
   }, [allWallet, allLoans]);
   const groupExpenses = useMemo(
     () => allWallet.filter(t => ["bank_fee", "other_debit"].includes(t.type)).reduce((sum, t) => sum + Math.abs(t.amount), 0),
+    [allWallet],
+  );
+  // Interest only (subset of groupWalletEarnings), for the Group
+  // Financial Position "Interest Earned" row — same legacy-record
+  // handling as groupWalletEarnings, which the previous version of
+  // this row didn't have, another source of the two figures disagreeing.
+  const groupInterestOnly = useMemo(() => {
+    return round2(allWallet.reduce((sum, t) => {
+      if (t.type === "loan_repayment") {
+        const loan = allLoans.find(l => l.id === t.loanId);
+        if (!loan?.totalRepayable) return sum;
+        return sum + round2(t.amount * (loan.totalInterest / loan.totalRepayable));
+      }
+      if ((t.type === "loan_interest_income" || t.type === "interest") && t.amount > 0) return sum + t.amount;
+      return sum;
+    }, 0));
+  }, [allWallet, allLoans]);
+  const groupContributionsOnly = useMemo(
+    () => round2(allWallet.filter(t => t.type === "contribution" && t.amount > 0).reduce((s, t) => s + t.amount, 0)),
+    [allWallet],
+  );
+  const groupPenaltiesOnly = useMemo(
+    () => round2(allWallet.filter(t => t.type === "late_fee" && t.amount > 0).reduce((s, t) => s + t.amount, 0)),
+    [allWallet],
+  );
+  const groupOtherOnly = useMemo(() => {
+    const known = ["contribution", "loan_interest_income", "interest", "late_fee", "loan_disbursement", "loan_repayment", "loan_principal_recovery"];
+    return round2(allWallet.filter(t => !known.includes(t.type)).reduce((s, t) => s + t.amount, 0));
+  }, [allWallet]);
+  const groupTotalNetAssets = useMemo(
+    () => round2(allWallet.reduce((s, t) => s + t.amount, 0)),
     [allWallet],
   );
 
@@ -482,16 +516,15 @@ export default function ReportsScreen() {
         {/* Overview Tab */}
         {activeTab === "overview" && (
           <View style={styles.content}>
-            {/* KPI Row */}
+            {/* KPI Row — trimmed to figures NOT already shown in Group
+                Financial Position below (Contributions and Interest
+                Earned were duplicated in both places, sometimes with
+                different numbers due to a calculation inconsistency —
+                see groupWalletEarnings below). Group Financial Position
+                is now the one place for those; this row keeps only
+                what it doesn't cover. */}
             <View style={styles.kpiGrid}>
-              <KpiCard 
-                label="TOTAL CONTRIBUTIONS"
-                value={fmtCurrency(group?.totalSavings ?? 0)}
-                color={C.accent}
-                subtext="group savings"
-              />
-              <KpiCard label="INTEREST EARNED" value={fmtCurrency(groupInterest)} color={C.gold} subtext="from loans" />
-              <KpiCard label="TOTAL EARNINGS" value={fmtCurrency(groupWalletEarnings)} color={C.info} subtext="credits minus debits" />
+              <KpiCard label="TOTAL EARNINGS" value={fmtCurrency(groupWalletEarnings)} color={C.info} subtext="interest, fees & other — no principal" />
               <KpiCard label="INVESTMENTS" value={fmtCurrency(allInvestments.reduce((sum, item) => sum + item.investmentAmount, 0))} color={C.success} subtext="group total" />
               <KpiCard label="EXPENSES" value={fmtCurrency(groupExpenses)} color={C.error} subtext="operational" />
             </View>
@@ -515,7 +548,7 @@ export default function ReportsScreen() {
                 <View style={[gfp.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
                   <Text style={T.label}>Total Net Assets</Text>
                   <Text style={[gfp.statValue, { color: C.primary }]}>
-                    {fmtCurrency(round2(allWallet.reduce((s, t) => s + t.amount, 0)))}
+                    {fmtCurrency(groupTotalNetAssets)}
                   </Text>
                   <Text style={T.small}>everything in wallet</Text>
                 </View>
@@ -524,14 +557,14 @@ export default function ReportsScreen() {
                 <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border, borderBottomWidth: 1, borderBottomColor: C.border }]}>
                   <Text style={T.label}>Contributions</Text>
                   <Text style={gfp.statValue}>
-                    {fmtCurrency(round2(allWallet.filter(t => t.type === "contribution" && t.amount > 0).reduce((s, t) => s + t.amount, 0)))}
+                    {fmtCurrency(groupContributionsOnly)}
                   </Text>
                   <Text style={T.small}>total collected</Text>
                 </View>
                 <View style={[gfp.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
                   <Text style={T.label}>Interest Earned</Text>
                   <Text style={[gfp.statValue, { color: C.gold }]}>
-                    {fmtCurrency(round2(allWallet.filter(t => (t.type === "loan_interest_income" || t.type === "interest") && t.amount > 0).reduce((s, t) => s + t.amount, 0)))}
+                    {fmtCurrency(groupInterestOnly)}
                   </Text>
                   <Text style={T.small}>from loan repayments</Text>
                 </View>
@@ -540,18 +573,14 @@ export default function ReportsScreen() {
                 <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border }]}>
                   <Text style={T.label}>Penalties &amp; Late Fees</Text>
                   <Text style={[gfp.statValue, { color: C.error }]}>
-                    {fmtCurrency(round2(allWallet.filter(t => t.type === "late_fee" && t.amount > 0).reduce((s, t) => s + t.amount, 0)))}
+                    {fmtCurrency(groupPenaltiesOnly)}
                   </Text>
                   <Text style={T.small}>collected</Text>
                 </View>
                 <View style={gfp.stat}>
                   <Text style={T.label}>Other</Text>
                   <Text style={gfp.statValue}>
-                    {(() => {
-                      const known = ["contribution", "loan_interest_income", "interest", "late_fee", "loan_disbursement", "loan_repayment", "loan_principal_recovery"];
-                      const other = round2(allWallet.filter(t => !known.includes(t.type)).reduce((s, t) => s + t.amount, 0));
-                      return fmtCurrency(other);
-                    })()}
+                    {fmtCurrency(groupOtherOnly)}
                   </Text>
                   <Text style={T.small}>bank fees, misc credits/debits</Text>
                 </View>
@@ -970,18 +999,31 @@ function earningsHtmlTable(headers: string[], rows: any[][]) {
   return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
+// True "earnings" transaction types — actual income/cost to the group,
+// not internal capital movements. Deliberately excludes:
+//   - contribution (member savings — not earnings, excluded per the
+//     earnings definition itself)
+//   - loan_disbursement (money going OUT to fund a loan — a large
+//     negative transaction; including it previously dragged the
+//     earnings total down by the full amount of every loan given out)
+//   - loan_principal_recovery (principal simply returning as a loan is
+//     repaid — the group's own capital coming back, not profit;
+//     counting it as "earnings" would double-count money that was
+//     never spent, only lent)
+//   - withdrawal (money leaving the group's coffers — not income)
 const EARNING_TYPES = [
-  "loan_disbursement", "loan_repayment", "loan_interest_income",
-  "loan_principal_recovery", "interest", "late_fee",
-  "investment_disbursement", "investment_return", "bank_fee",
-  "other_credit", "other_debit", "withdrawal",
+  "loan_interest_income", "interest", "late_fee",
+  "investment_return", "bank_fee",
+  "other_credit", "other_debit",
 ];
 const EARNING_TYPE_LABEL: Record<string, string> = {
   loan_interest_income: "Loan Interest",
   interest:             "Interest",
+  late_fee:             "Late Fee / Penalty",
   investment_return:    "Investment Return",
-  other_credit:         "Other Credit",
   bank_fee:             "Bank Fee",
+  other_credit:         "Other Credit",
+  other_debit:          "Other Debit",
 };
 
 function EarningsTab({
@@ -989,15 +1031,28 @@ function EarningsTab({
   group, allMembers, allContributions, allLoans, allWallet, permissions,
 }: any) {
   const { show } = useToast();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 768;
   const [typeFilter, setTypeFilter] = useState<string>("all");
 
+  // A legacy `loan_repayment` transaction combines interest + principal
+  // in one number (see the comment on EARNING_TYPES above) — only the
+  // interest PORTION of it is a real earning. Everything else in
+  // EARNING_TYPES is already a pure earnings amount and used as-is.
+  const earningAmount = (t: any): number => {
+    if (t.type !== "loan_repayment") return t.amount;
+    const loan = allLoans.find((l: any) => l.id === t.loanId);
+    if (!loan || !loan.totalRepayable) return 0;
+    return round2(t.amount * (loan.totalInterest / loan.totalRepayable));
+  };
+
   const earningsTxs = useMemo(
-    () => wallet.filter((t: any) => t.type !== "contribution" && t.amount !== 0),
+    () => wallet.filter((t: any) => (EARNING_TYPES.includes(t.type) || t.type === "loan_repayment") && t.amount !== 0),
     [wallet]
   );
 
   const groupEarningsTxs = useMemo(
-    () => allWallet.filter((t: any) => t.type !== "contribution" && t.amount !== 0),
+    () => allWallet.filter((t: any) => (EARNING_TYPES.includes(t.type) || t.type === "loan_repayment") && t.amount !== 0),
     [allWallet],
   );
 
@@ -1006,25 +1061,26 @@ function EarningsTab({
     return earningsTxs.filter((t: any) => t.type === typeFilter);
   }, [earningsTxs, typeFilter]);
 
-  const totalCredited = useMemo(
-    () => groupEarningsTxs.filter((t: any) => t.amount > 0).reduce((sum: number, t: any) => sum + t.amount, 0),
-    [groupEarningsTxs],
-  );
-  const totalDebited = useMemo(
-    () => groupEarningsTxs.filter((t: any) => t.amount < 0).reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0),
-    [groupEarningsTxs],
+  // Breakdown by type — the group total split out by what actually
+  // makes it up (interest vs. penalties vs. other), so the number is
+  // legible rather than one opaque total.
+  const breakdown = useMemo(() => {
+    const byType: Record<string, number> = {};
+    for (const t of groupEarningsTxs) {
+      const key = t.type === "loan_repayment" ? "loan_interest_income" : t.type;
+      byType[key] = round2((byType[key] ?? 0) + earningAmount(t));
+    }
+    return Object.entries(byType)
+      .filter(([, amt]) => amt !== 0)
+      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  }, [groupEarningsTxs, allLoans]);
+
+  const totalEarnings = useMemo(
+    () => round2(groupEarningsTxs.reduce((sum: number, t: any) => sum + earningAmount(t), 0)),
+    [groupEarningsTxs, allLoans],
   );
   const activeMemberCount = Math.max(1, allMembers.filter((member: any) => member.status === "active").length);
-  const totalEarnings = totalCredited - totalDebited;
-  const earningsPerMember = totalEarnings / activeMemberCount;
-
-  // Distribute net wallet earnings equally across active members. Contribution
-  // credits are excluded from the wallet total above.
-  const byMember = useMemo(() => {
-    return (canSeeAll ? allMembers : members)
-      .filter((member: any) => member.status === "active")
-      .map((member: any) => ({ member, total: earningsPerMember }));
-  }, [allMembers, members, canSeeAll, earningsPerMember]);
+  const earningsPerMember = round2(totalEarnings / activeMemberCount);
 
   const getMember = (id?: string) => members.find((m: any) => m.id === id);
 
@@ -1035,31 +1091,56 @@ function EarningsTab({
       getMember(t.memberId)?.fullName ?? "—",
       EARNING_TYPE_LABEL[t.type] ?? t.type,
       t.description ?? "",
-      fmtCurrency(t.amount),
+      fmtCurrency(earningAmount(t)),
     ]);
     if (format === "csv") await exportCsv(`Earnings_Report`, headers, rows);
     else await exportPdf(`Earnings_Report`, "Earnings Report", earningsHtmlTable(headers, rows));
   };
 
   return (
-    <View style={styles.content}>
-      <View style={styles.statsGrid}>
-        <KpiCard label={canSeeAll ? "Net Group Earnings" : "My Earnings Share"} value={fmtCurrency(canSeeAll ? totalEarnings : earningsPerMember)} color={C.gold} />
-        <KpiCard label="Per Member" value={fmtCurrency(earningsPerMember)} color={C.accent} />
-        <KpiCard label="Transactions" value={String(earningsTxs.length)} color={C.teal} />
+    <View style={[styles.content, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+      {/* ── Headline: one clear number, plus the equal per-member share.
+           No more "Earnings by Member" list repeating the same number
+           for every row — with an equal split, a list only implies a
+           precision/individuality that isn't there. ── */}
+      <View style={styles.chartCard}>
+        <Text style={styles.chartTitle}>{canSeeAll ? "Net Group Earnings" : "My Earnings Share"}</Text>
+        <Text style={{
+          fontSize: isWide ? 34 : 28, fontWeight: "800", letterSpacing: -0.5, marginTop: 4,
+          color: totalEarnings >= 0 ? C.success : C.error,
+        }}>
+          {fmtCurrency(canSeeAll ? totalEarnings : earningsPerMember)}
+        </Text>
+        <Text style={[T.small, { marginTop: 2 }]}>
+          Interest, penalties &amp; other income — minus fees and debits. Contributions and loan
+          principal (disbursed or repaid) are not counted; they're capital, not earnings.
+        </Text>
+        {canSeeAll && (
+          <View style={{
+            flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+            marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: C.borderLight,
+          }}>
+            <Text style={T.label}>Split equally across {activeMemberCount} active member{activeMemberCount !== 1 ? "s" : ""}</Text>
+            <Text style={{ fontSize: 15, fontWeight: "800", color: C.accent }}>{fmtCurrency(earningsPerMember)} each</Text>
+          </View>
+        )}
       </View>
 
-      {byMember.length > 0 && (
+      {/* ── Breakdown by type — replaces the old redundant "Per Member"
+           KPI card with something that actually explains the total. ── */}
+      {breakdown.length > 0 && (
         <View style={styles.chartCard}>
-          <Text style={styles.chartTitle}>{canSeeAll ? "Earnings by Member" : "My Earnings"}</Text>
+          <Text style={styles.chartTitle}>Breakdown</Text>
           <View style={{ marginTop: 8 }}>
-            {byMember.map((row: any, i: number) => (
-              <View key={row.member.id} style={{
+            {breakdown.map(([type, amt], i) => (
+              <View key={type} style={{
                 flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-                paddingVertical: 9, borderBottomWidth: i < byMember.length - 1 ? 1 : 0, borderBottomColor: C.borderLight,
+                paddingVertical: 9, borderBottomWidth: i < breakdown.length - 1 ? 1 : 0, borderBottomColor: C.borderLight,
               }}>
-                <Text style={{ fontSize: 13, color: C.text, fontWeight: "500" }}>{row.member.fullName}</Text>
-                <Text style={{ fontSize: 13, color: C.gold, fontWeight: "700" }}>{fmtCurrency(row.total)}</Text>
+                <Text style={{ fontSize: 13, color: C.text, fontWeight: "500" }}>{EARNING_TYPE_LABEL[type] ?? type}</Text>
+                <Text style={{ fontSize: 13, fontWeight: "700", color: amt >= 0 ? C.success : C.error }}>
+                  {fmtCurrency(amt)}
+                </Text>
               </View>
             ))}
           </View>
@@ -1067,7 +1148,7 @@ function EarningsTab({
       )}
 
       {/* Download buttons */}
-      <View style={{ flexDirection: "row", gap: 10, marginTop: 4, marginBottom: 16 }}>
+      <View style={{ flexDirection: isWide ? "row" : "row", gap: 10, marginTop: 4, marginBottom: 16 }}>
         <TouchableOpacity style={[styles.exportBtn, { flex: 1 }]} onPress={() => handleDownload("csv")}>
           <Text style={styles.exportBtnText}>⬇ Download CSV</Text>
         </TouchableOpacity>
@@ -1091,7 +1172,7 @@ function EarningsTab({
         ))}
       </View>
 
-      <Text style={styles.resultsCount}>{filtered.length} earning{filtered.length !== 1 ? "s" : ""} found</Text>
+      <Text style={styles.resultsCount}>{filtered.length} transaction{filtered.length !== 1 ? "s" : ""}</Text>
 
       {filtered.length === 0 ? (
         <Empty message="No earnings recorded yet" icon="💰" />
@@ -1101,6 +1182,8 @@ function EarningsTab({
           .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
           .map((tx: any) => {
             const member = getMember(tx.memberId);
+            const amt = earningAmount(tx);
+            const isCredit = amt >= 0;
             return (
               <React.Fragment key={tx.id}>
                 <Card style={styles.loanItem}>
@@ -1114,10 +1197,20 @@ function EarningsTab({
                       <Text style={styles.loanItemMember}>{member?.fullName ?? "Group Earning"}</Text>
                       <Text style={styles.loanItemDate}>{fmtDate(tx.date)} · {tx.description}</Text>
                     </View>
-                    <Chip label={EARNING_TYPE_LABEL[tx.type] ?? tx.type} bg={C.goldBg} color={C.gold} />
+                    <Chip
+                      label={EARNING_TYPE_LABEL[tx.type] ?? tx.type}
+                      bg={isCredit ? C.greenBg : C.redBg}
+                      color={isCredit ? C.greenText : C.redText}
+                    />
                   </View>
                   <View style={{ marginTop: 8, alignItems: "flex-end" }}>
-                    <Text style={{ fontSize: 15, fontWeight: "800", color: C.gold }}>+{fmtCurrency(tx.amount)}</Text>
+                    {/* fmtCurrency already prefixes negatives with "-" —
+                        no hardcoded "+" here, which previously produced
+                        "+-RWF 5,000.00" on every debit and rendered it in
+                        the same gold/positive color as real income. */}
+                    <Text style={{ fontSize: 15, fontWeight: "800", color: isCredit ? C.success : C.error }}>
+                      {isCredit ? "+" : ""}{fmtCurrency(amt)}
+                    </Text>
                   </View>
                 </Card>
               </React.Fragment>

@@ -2,9 +2,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ─────────────────────────────
-    // AUTH
-    // ─────────────────────────────
     function isAuth() {
       return request.auth != null;
     }
@@ -13,23 +10,28 @@ service cloud.firestore {
       return request.auth.uid;
     }
 
-    // ─────────────────────────────
-    // MEMBERSHIP HELPERS
-    // ─────────────────────────────
-    function membershipDocId(groupId) {
-      return groupId + "_" + uid();
+    function authEmail() {
+      return request.auth.token.email;
     }
 
-    function membershipRef(groupId) {
-      return /databases/$(database)/documents/groupMemberships/$(membershipDocId(groupId));
+    function membershipDocId(groupId, userId) {
+      return groupId + '_' + userId;
+    }
+
+    function ownMembershipRef(groupId) {
+      return /databases/$(database)/documents/groupMemberships/$(membershipDocId(groupId, uid()));
+    }
+
+    function isOwnMembershipId(id) {
+      return isAuth() && id.matches('.*_' + uid());
     }
 
     function isMember(groupId) {
-      return isAuth() && exists(membershipRef(groupId));
+      return isAuth() && exists(ownMembershipRef(groupId));
     }
 
     function membershipData(groupId) {
-      return get(membershipRef(groupId)).data;
+      return get(ownMembershipRef(groupId)).data;
     }
 
     function memberRole(groupId) {
@@ -41,21 +43,25 @@ service cloud.firestore {
     }
 
     function isActiveMember(groupId) {
-      return isMember(groupId) && memberStatus(groupId) == "active";
+      return isMember(groupId) && memberStatus(groupId) == 'active';
     }
 
     function isAdmin(groupId) {
-      return isActiveMember(groupId) && memberRole(groupId) == "admin";
+      return isActiveMember(groupId) && memberRole(groupId) == 'admin';
     }
 
     function isAdminOrAccountant(groupId) {
       return isActiveMember(groupId)
-        && memberRole(groupId) in ["admin", "accountant"];
+        && memberRole(groupId) in ['admin', 'accountant'];
     }
 
     function canManageLoans(groupId) {
       return isActiveMember(groupId)
-        && memberRole(groupId) in ["admin", "accountant", "loan_officer", "committee"];
+        && memberRole(groupId) in ['admin', 'accountant', 'loan_officer', 'committee'];
+    }
+
+    function isAudit(groupId) {
+      return isActiveMember(groupId) && memberRole(groupId) == 'audit';
     }
 
     function memberDocRef(groupId) {
@@ -63,7 +69,7 @@ service cloud.firestore {
     }
 
     function hasMemberDoc(groupId) {
-      return exists(membershipRef(groupId))
+      return exists(ownMembershipRef(groupId))
         && ('memberId' in membershipData(groupId))
         && exists(memberDocRef(groupId));
     }
@@ -93,7 +99,7 @@ service cloud.firestore {
 
     function canApproveContributions(groupId) {
       return isAdminOrAccountant(groupId)
-        || (isActiveMember(groupId) && memberRole(groupId) == "loan_officer")
+        || (isActiveMember(groupId) && memberRole(groupId) == 'loan_officer')
         || hasPermission(groupId, 'approveContributions');
     }
 
@@ -102,7 +108,7 @@ service cloud.firestore {
     }
 
     function canManageMeetings(groupId) {
-      return (isActiveMember(groupId) && memberRole(groupId) in ["admin", "accountant", "loan_officer", "committee"])
+      return (isActiveMember(groupId) && memberRole(groupId) in ['admin', 'accountant', 'loan_officer', 'committee'])
         || hasPermission(groupId, 'manageMeetings') || hasPermission(groupId, 'updateMeetings');
     }
 
@@ -110,39 +116,45 @@ service cloud.firestore {
       return isAdmin(groupId) || hasPermission(groupId, 'deleteRecords');
     }
 
-    // ─────────────────────────────
-    // GROUPS
-    // ─────────────────────────────
+    function emailsMatch(stored) {
+      return authEmail() != null
+        && stored is string
+        && stored.lower() == authEmail().lower();
+    }
+
+    function memberUserIdUnset() {
+      return !('userId' in resource.data)
+        || resource.data.userId == null
+        || resource.data.userId == '';
+    }
+
     match /groups/{groupId} {
+      // Known group IDs can be fetched during bootstrap. Collection-wide
+      // listing is not allowed — memberships are resolved by deterministic IDs.
+      allow get: if isAuth();
+      allow list: if false;
 
-      // Any authenticated user can read (needed during initGroupData checks)
-      allow read: if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.createdBy == uid();
 
-      // Any authenticated user can create a group
-      allow create: if isAuth();
-
-      // Admins/accountants update normally.
-      // Also allow update during initial setup when membership doesn't exist yet
-      // (the founder is setting up the group before their membership doc is created).
       allow update: if isAdminOrAccountant(groupId)
         || hasPermission(groupId, 'manageSettings')
-        || (isAuth() && !exists(membershipRef(groupId)));
+        || (isAuth()
+            && resource.data.createdBy == uid()
+            && !exists(ownMembershipRef(groupId)));
 
       allow delete: if isAdmin(groupId);
 
-      // ───────── MEMBERS ─────────
       match /members/{memberId} {
+        allow read: if isMember(groupId)
+          || (isAuth() && memberId == uid())
+          || (isAuth() && resource.data.userId == uid())
+          || (isAuth() && emailsMatch(resource.data.email) && memberUserIdUnset());
 
-        allow read: if isMember(groupId);
-
-        // (a) Admin/accountant adding someone
-        // (b) User self-registering (their own userId on the doc)
-        // (c) _init placeholder for collection bootstrapping
-        // (d) system=true docs written by initGroupData
         allow create: if isAuth() && (
           isAdminOrAccountant(groupId)
           || request.resource.data.userId == uid()
-          || request.resource.data.id == "_init"
+          || request.resource.data.id == '_init'
           || request.resource.data.system == true
         );
 
@@ -152,114 +164,110 @@ service cloud.firestore {
               && resource.data.userId == uid()
               && !request.resource.data.diff(resource.data)
                   .affectedKeys()
-                  .hasAny(["role", "status", "userId", "groupId", "permissions"]));
+                  .hasAny(['role', 'status', 'userId', 'groupId', 'permissions']))
+          || (isAuth()
+              && emailsMatch(resource.data.email)
+              && memberUserIdUnset()
+              && request.resource.data.userId == uid()
+              && !request.resource.data.diff(resource.data)
+                  .affectedKeys()
+                  .hasAny(['role', 'status', 'groupId', 'permissions']));
 
         allow delete: if isAdmin(groupId) || hasPermission(groupId, 'editMembers');
       }
 
-      // ───────── CONTRIBUTIONS ─────────
-      match /contributions/{id} {
+      match /contributionGoalPeriods/{id} {
         allow read: if isMember(groupId);
 
+        allow create: if isActiveMember(groupId);
+
+        allow update: if isAdminOrAccountant(groupId)
+          || hasPermission(groupId, 'manageSettings')
+          || (isActiveMember(groupId)
+              && request.resource.data.targetAmount == resource.data.targetAmount
+              && request.resource.data.periodStart == resource.data.periodStart
+              && request.resource.data.periodEnd == resource.data.periodEnd
+              && request.resource.data.minimumContribution == resource.data.minimumContribution);
+
+        allow delete: if isAdmin(groupId);
+      }
+
+      match /contributions/{id} {
+        allow read: if isMember(groupId);
         allow create: if isAuth() && (
           canAddContribution(groupId)
-          || request.resource.data.id == "_init"
+          || request.resource.data.id == '_init'
           || request.resource.data.system == true
         );
-
         allow update: if canApproveContributions(groupId);
         allow delete: if canDeleteRecords(groupId);
       }
 
-      // ───────── LOANS ─────────
       match /loans/{id} {
         allow read: if isMember(groupId);
-
         allow create: if isAuth() && (
           canAddLoan(groupId)
-          || request.resource.data.id == "_init"
+          || request.resource.data.id == '_init'
           || request.resource.data.system == true
         );
-
         allow update: if canApproveLoans(groupId);
         allow delete: if canDeleteRecords(groupId);
       }
 
-      // ───────── WALLET TRANSACTIONS ─────────
       match /walletTransactions/{id} {
         allow read: if isMember(groupId);
-
         allow create: if isAuth() && (
           canAddContribution(groupId)
           || isAdminOrAccountant(groupId)
-          || request.resource.data.id == "_init"
+          || request.resource.data.id == '_init'
           || request.resource.data.system == true
         );
-
-        // Only admins or users with deleteRecords can update/soft-delete
-        allow update: if canDeleteRecords(groupId);
+        allow update: if canDeleteRecords(groupId) || isAdminOrAccountant(groupId);
         allow delete: if canDeleteRecords(groupId);
       }
 
-      // ───────── EXPENSES ─────────
       match /expenses/{id} {
         allow read: if isMember(groupId);
-
         allow create: if isAuth() && (
           isAdminOrAccountant(groupId)
-          || request.resource.data.id == "_init"
+          || request.resource.data.id == '_init'
           || request.resource.data.system == true
         );
-
         allow update: if isAdminOrAccountant(groupId);
         allow delete: if canDeleteRecords(groupId);
       }
 
-      // ───────── MEETINGS ─────────
       match /meetings/{id} {
         allow read: if isMember(groupId);
-
         allow create: if isAuth() && (
           canManageMeetings(groupId)
-          || request.resource.data.id == "_init"
+          || request.resource.data.id == '_init'
           || request.resource.data.system == true
         );
-
         allow update: if canManageMeetings(groupId);
         allow delete: if canDeleteRecords(groupId);
       }
 
-      // ───────── INVESTMENTS ─────────
       match /investments/{id} {
         allow read: if isMember(groupId);
-
         allow create: if isAuth() && (
           canAddInvestment(groupId)
-          || request.resource.data.id == "_init"
+          || request.resource.data.id == '_init'
           || request.resource.data.system == true
         );
-
         allow update: if isAdminOrAccountant(groupId)
-          || (isActiveMember(groupId) && memberRole(groupId) == "committee")
+          || (isActiveMember(groupId) && memberRole(groupId) == 'committee')
           || hasPermission(groupId, 'approveInvestments');
         allow delete: if canDeleteRecords(groupId);
       }
 
-      // ───────── AUDIT LOGS ─────────
       match /auditLogs/{id} {
-        allow read: if isAdminOrAccountant(groupId);
-
-        // Any authenticated user can write their own audit entries.
-        // We don't require isMember() here because during initGroupData
-        // the founder writes an audit log before membership propagates.
-        allow create: if isAuth()
-          && request.resource.data.userId == uid();
-
+        allow read: if isAdminOrAccountant(groupId) || isAudit(groupId);
+        allow create: if isAuth() && request.resource.data.userId == uid();
         allow update: if false;
         allow delete: if false;
       }
 
-      // ───────── DELETIONS ─────────
       match /deletions/{id} {
         allow read: if isMember(groupId);
         allow create: if isAdminOrAccountant(groupId);
@@ -268,37 +276,57 @@ service cloud.firestore {
       }
     }
 
-    // ─────────────────────────────
-    // GROUP MEMBERSHIPS
-    // ─────────────────────────────
     match /groupMemberships/{id} {
+      // Own deterministic IDs are readable even before the document exists
+      // (bootstrap existence check). List is allowed only for queries that
+      // constrain userId == request.auth.uid — not a global membership dump.
+      allow get: if isAuth() && (
+        isOwnMembershipId(id)
+        || (resource.data.userId == uid())
+        || isAdmin(resource.data.groupId)
+      );
 
-      // Read own docs only
-      allow read: if isAuth() && resource.data.userId == uid();
+      allow list: if isAuth() && resource.data.userId == uid();
 
-      // Create:
-      // (a) self-registration: the doc belongs to the requesting user
-      // (b) admin adding a member for another user
       allow create: if isAuth() && (
         request.resource.data.userId == uid()
         || isAdmin(request.resource.data.groupId)
       );
 
-      // Update:
-      // (a) owner can update their own membership (e.g. leaving)
-      // (b) group admin can update any membership (role/status changes)
       allow update: if isAuth() && (
+        isAdmin(resource.data.groupId)
+        || (resource.data.userId == uid()
+            && !request.resource.data.diff(resource.data)
+                .affectedKeys()
+                .hasAny(['role', 'groupId', 'userId', 'memberId']))
+      );
+
+      allow delete: if isAuth() && (
         resource.data.userId == uid()
         || isAdmin(resource.data.groupId)
       );
-
-      // Only the owner can delete their membership
-      allow delete: if isAuth() && resource.data.userId == uid();
     }
 
-    // ─────────────────────────────
-    // NOTIFICATIONS
-    // ─────────────────────────────
+    // Maps lowercase email → {groupId, memberId} so an invited user can
+    // claim an existing member record without listing the members collection.
+    match /pendingMemberLinks/{emailKey} {
+      allow get: if isAuth()
+        && authEmail() != null
+        && emailKey == authEmail().lower();
+
+      allow list: if false;
+
+      allow create: if isAuth()
+        && isAdmin(request.resource.data.groupId)
+        && request.resource.data.email is string
+        && emailKey == request.resource.data.email.lower();
+
+      allow update, delete: if isAuth() && (
+        isAdmin(resource.data.groupId)
+        || (authEmail() != null && emailKey == authEmail().lower())
+      );
+    }
+
     match /users/{userId}/notifications/{id} {
       allow read:   if isAuth() && uid() == userId;
       allow create: if isAuth();
@@ -306,17 +334,6 @@ service cloud.firestore {
       allow delete: if isAuth() && uid() == userId;
     }
 
-    // ─────────────────────────────
-    // PENDING EMAILS
-    // ─────────────────────────────
-    // A top-level queue: every in-app notification also writes one of
-    // these. A separate Node script (scripts/send-pending-emails.js),
-    // run manually or on a free cron (e.g. GitHub Actions schedule),
-    // reads this collection with the Firebase Admin SDK — which bypasses
-    // these rules entirely via a service account — sends the email via
-    // Resend/nodemailer, then marks the doc sent. The client only ever
-    // needs to create these, never read/list them back (that would let
-    // any signed-in user read everyone's queued email addresses).
     match /pendingEmails/{id} {
       allow read:   if false;
       allow create: if isAuth();

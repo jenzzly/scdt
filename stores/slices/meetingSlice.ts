@@ -22,13 +22,30 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
       deleteMeetingLocal: (id) => set((s: StoreState) => ({ meetings: s.meetings.filter((m: Meeting) => m.id !== id) })),
 
       cancelMeeting: async (meetingId: ID) => {
-        const { activeGroupId } = get();
+        const { activeGroupId, meetings, members, authName } = get();
         if (!activeGroupId) throw new Error("No active group");
         
         try {
           get().setSyncStatus("pending");
           await FS.updateMeeting(activeGroupId, meetingId, { status: "cancelled" });
           get().setSyncStatus("synced");
+
+          const meeting = meetings.find((m) => m.id === meetingId);
+          const notifyTargets = members.filter(
+            (m) => m.groupId === activeGroupId && m.status === "active" && !!m.userId
+          );
+          for (const target of notifyTargets) {
+            FS.addNotification(target.userId!, {
+              userId: target.userId!,
+              groupId: activeGroupId,
+              type: "meeting_cancelled",
+              title: "Meeting Cancelled",
+              message: `${meeting?.title ?? "A meeting"} scheduled for ${meeting?.date ?? ""} has been cancelled${authName ? ` by ${authName}` : ""}`,
+              read: false,
+              metadata: { meetingId },
+              createdAt: new Date().toISOString(),
+            }, target.email).catch(console.warn);
+          }
         } catch (error) {
           get().setSyncStatus("failed", error instanceof Error ? error.message : "Failed to cancel meeting");
           throw error;
@@ -36,15 +53,16 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
       },
 
       deleteMeeting: async (meetingId: ID, reason: string) => {
-        const { activeGroupId, authUid, meetings } = get();
+        const { activeGroupId, authUid, authName, meetings, members } = get();
         if (!activeGroupId) throw new Error("No active group");
         
         const previousMeetings = [...meetings];
         const previousWalletTxs = [...get().walletTransactions];
         
+        const meeting = meetings.find(m => m.id === meetingId);
+
         get().deleteMeetingLocal(meetingId);
         
-        const meeting = meetings.find(m => m.id === meetingId);
         if (meeting) {
           meeting.attendees.forEach(attendee => {
             if (attendee.penaltyAmount && attendee.penaltyAmount > 0) {
@@ -59,6 +77,24 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
           await FS.deleteMeetingWithRelations(activeGroupId, meetingId, reason);
           get().recalcTotals();
           get().setSyncStatus("synced");
+
+          if (meeting) {
+            const notifyTargets = members.filter(
+              (m) => m.groupId === activeGroupId && m.status === "active" && !!m.userId
+            );
+            for (const target of notifyTargets) {
+              FS.addNotification(target.userId!, {
+                userId: target.userId!,
+                groupId: activeGroupId,
+                type: "meeting_deleted",
+                title: "Meeting Removed",
+                message: `${meeting.title} (${meeting.date}) was removed by ${authName || "an admin"}${reason ? `: ${reason}` : ""}`,
+                read: false,
+                metadata: { meetingId, reason },
+                createdAt: new Date().toISOString(),
+              }, target.email).catch(console.warn);
+            }
+          }
         } catch (error) {
           const rolledBack = { ...get(), meetings: previousMeetings, walletTransactions: previousWalletTxs };
           set({
@@ -76,6 +112,30 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
           get().setSyncStatus("pending");
           await FS.updateMeeting(groupId, meetingId, data);
           get().setSyncStatus("synced");
+
+          // A date/time/location change is a reschedule worth notifying
+          // everyone about; other field-only edits (e.g. attendee
+          // updates, which go through recordAttendance separately) stay
+          // quiet to avoid noise.
+          if (data.date || data.location) {
+            const { members, meetings, authName } = get();
+            const meeting = meetings.find((m) => m.id === meetingId);
+            const notifyTargets = members.filter(
+              (m) => m.groupId === groupId && m.status === "active" && !!m.userId
+            );
+            for (const target of notifyTargets) {
+              FS.addNotification(target.userId!, {
+                userId: target.userId!,
+                groupId,
+                type: "meeting_updated",
+                title: "Meeting Rescheduled",
+                message: `${meeting?.title ?? "A meeting"} has been updated${authName ? ` by ${authName}` : ""} — check the new details`,
+                read: false,
+                metadata: { meetingId },
+                createdAt: new Date().toISOString(),
+              }, target.email).catch(console.warn);
+            }
+          }
         } catch (error) {
           get().setSyncStatus("failed", error instanceof Error ? error.message : "Failed to update meeting");
           throw error;
@@ -240,7 +300,15 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
         }
 
         const penaltyTxId = `meeting-penalty-${meetingId}-${memberId}`;
-        if (penaltyAmount > 0 && !attended) {
+        // Wallet transaction fires for ANY penalty — absent OR late —
+        // not just absence. Previously this only checked `!attended`,
+        // so a member marked "late" got a penaltyAmount computed and
+        // shown in their attendee record, but no wallet_tx was ever
+        // created for it: the penalty displayed as owed but was never
+        // actually charged in the group's ledger. Both cases go
+        // through the same tx now; the description below distinguishes
+        // which kind of penalty it was.
+        if (penaltyAmount > 0 && (!attended || status === "late")) {
           const existingPenalty = get().walletTransactions.find((t) => t.id === penaltyTxId);
           if (!existingPenalty) {
             const tx: WalletTransaction = {
@@ -250,13 +318,32 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
               sourceType: "manual",
               sourceId: meetingId,
               amount: penaltyAmount,
-              description: `Meeting absence penalty for ${member?.fullName ?? "member"} - ${meeting.title}`,
+              description: !attended
+                ? `Meeting absence penalty for ${member?.fullName ?? "member"} - ${meeting.title}`
+                : `Meeting late arrival penalty (${lateMinutes} min) for ${member?.fullName ?? "member"} - ${meeting.title}`,
               date: meeting.date,
               memberId,
               createdAt: new Date().toISOString(),
             };
             get().addWalletTxLocal(tx);
             FS.addWalletTx(activeGroupId, tx).catch(console.warn);
+            set((s: StoreState) => recalcGroupTotals(s));
+
+            // Alert the member directly — this is the "late fees,
+            // penalties" notification gap: previously a penalty could
+            // be applied with no signal to the person it applies to.
+            if (member?.userId) {
+              FS.addNotification(member.userId, {
+                userId: member.userId,
+                groupId: activeGroupId,
+                type: "penalty_applied",
+                title: !attended ? "Absence Penalty Applied" : "Late Arrival Penalty Applied",
+                message: `A penalty of ${penaltyAmount} RWF was applied for ${meeting.title} (${meeting.date})`,
+                read: false,
+                metadata: { meetingId, penaltyAmount },
+                createdAt: new Date().toISOString(),
+              }, member.email).catch(console.warn);
+            }
           }
         }
       },

@@ -5,16 +5,16 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, StatusB
 import { useRouter } from "expo-router";
 import {
   useStore, useGroupLoans, useGroupMembers,
-  useCurrentUserRole, useCurrentMember, useIsAdminView,useIsApproverView
+  useCurrentUserRole, useCurrentMember, useIsAdminView,
 } from "../../stores/useStore";
-import { useGroupInvestments, useGroupWallet, useCurrentMemberPermissions } from "../../stores/selectors";
+import { useGroupWallet, useCurrentMemberPermissions } from "../../stores/selectors";
 import {
-  TabRow, Card, Badge, Empty, LoanProgress,
+  TabRow, SearchBar, Card, Badge, Empty, LoanProgress,
   useToast, Button, BottomModal, Input,
 } from "../../components/ui";
 import { S, R, Colors, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
 import { exportPdf, generatePaymentScheduleHtml } from "../../utils/export";
-import type { Loan, Investment, WalletTransaction, Member } from "../../types";
+import type { Loan, WalletTransaction, Member } from "../../types";
 
 // ─── Tiny components ──────────────────────────────────────────────
 const Divider = () => (
@@ -73,32 +73,6 @@ const STATUS_LABEL: Record<string, string> = {
   defaulted:            "Defaulted",
 };
 
-const INVESTMENT_STATUS_LABEL: Record<string, string> = {
-  pending_committee: "Awaiting Committee",
-  pending: "Awaiting Accountant",
-  open: "Active",
-  closed: "Closed",
-  matured: "Matured",
-};
-
-const INVESTMENT_STATUS_COLOR: Record<string, string> = {
-  pending_committee: C.gold,
-  pending: C.info,
-  open: C.success,
-  closed: C.text3,
-  matured: C.gold,
-};
-
-const INVESTMENT_STATUS_BG: Record<string, string> = {
-  pending_committee: C.goldBg,
-  pending: C.infoBg,
-  open: C.greenBg,
-  closed: C.mutedBg,
-  matured: C.goldBg,
-};
-
-const INVESTMENT_PENDING_STATUSES = ["pending_committee", "pending"];
-
 const PENDING_STATUSES = [
   "pending_loan_officer",
   "pending_committee",
@@ -123,16 +97,9 @@ function getActableStep(loanStatus: string, role: string): string | null {
 // admin) acts on a loan that's already `approved` (cleared both
 // approval steps above), not a "pending_" status. The role check lives
 // here; call sites still separately check `loan.status === "approved"`
-// before showing the disburse button (see LoanCard/LoanDetailModal).
+// before showing the disburse button (see LoanRow/LoanDetailModal).
 function canDisburseRole(role: string): boolean {
   return role === "accountant" || role === "admin";
-}
-
-function canApproveRole(role: string, step: string): boolean {
-  if (role === "admin") return true;
-  if (role === "loan_officer" && step === "pending_loan_officer") return true;
-  if (role === "committee" && step === "pending_committee") return true;
-  return false;
 }
 
 function getApprovalStepIndex(status: string): number {
@@ -152,11 +119,12 @@ function LoanDetailModal({
   onDisburse,
   onApprove,
   onReject,
+  onDelete,
+  onEditResubmit,
   isAdmin,
   isPending,
   actableStep,
   canDisburse,
-  canApprove,
 }: {
   visible: boolean;
   loan: Loan | null;
@@ -168,11 +136,12 @@ function LoanDetailModal({
   onDisburse: () => void;
   onApprove: () => void;
   onReject: () => void;
+  onDelete?: () => void;
+  onEditResubmit?: () => void;
   isAdmin: boolean;
   isPending: boolean;
   actableStep: string | null;
   canDisburse: boolean;
-  canApprove: boolean;
 }) {
   // Pair interest + principal txs into rows for the history table
   const paymentTxs = React.useMemo(() => {
@@ -216,6 +185,78 @@ function LoanDetailModal({
             <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
           </View>
         </View>
+
+        {/* ── Approval Progress — visible to everyone who can see this
+             loan, including the borrower, not just approvers. Shows
+             each step's outcome and any comment the reviewer left, so
+             the loan owner can see exactly where their application
+             stands and why, before the next step happens. ── */}
+        {loan.status !== "rejected" && (
+          <View style={styles.stepsContainer}>
+            <Text style={styles.stepsTitle}>Approval Progress</Text>
+            <View style={styles.stepsRow}>
+              {APPROVAL_STEPS.map((step, index) => {
+                const currentStepIndex = getApprovalStepIndex(loan.status);
+                const isCompleted = index < currentStepIndex || loan.status === "disbursed" || loan.status === "repaid";
+                const isCurrent = index === currentStepIndex && loan.status !== "disbursed" && loan.status !== "repaid";
+                const isPendingStep = !isCompleted && !isCurrent;
+
+                return (
+                  <View key={step.key} style={styles.stepItem}>
+                    <View style={[
+                      styles.stepCircle,
+                      isCompleted && styles.stepCompleted,
+                      isCurrent && styles.stepCurrent,
+                      isPendingStep && styles.stepPending,
+                    ]}>
+                      <Text style={[
+                        styles.stepIcon,
+                        isCompleted && styles.stepIconCompleted,
+                        isCurrent && styles.stepIconCurrent,
+                      ]}>
+                        {isCompleted ? "✓" : step.icon}
+                      </Text>
+                    </View>
+                    <Text style={[
+                      styles.stepLabel,
+                      isCompleted && styles.stepLabelCompleted,
+                      isCurrent && styles.stepLabelCurrent,
+                    ]}>
+                      {step.label}
+                    </Text>
+                    {index < APPROVAL_STEPS.length - 1 && (
+                      <View style={[styles.stepLine, isCompleted && styles.stepLineCompleted]} />
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+            <Text style={styles.stepStatus}>
+              {loan.status === "pending_loan_officer" && "⏳ Awaiting Loan Officer review"}
+              {loan.status === "pending_committee" && "⏳ Awaiting Committee review"}
+              {loan.status === "approved" && "✅ Approved — awaiting disbursement"}
+              {loan.status === "disbursed" && "💰 Loan Disbursed"}
+              {loan.status === "repaid" && "✅ Fully Repaid"}
+              {loan.status === "defaulted" && "⚠️ Defaulted"}
+            </Text>
+
+            {/* Reviewer comments — shown per step, in order, only when
+                a comment was actually left. */}
+            {(["loanOfficer", "committee"] as const).map((stepKey) => {
+              const approval = (loan.approvals as any)?.[stepKey];
+              if (!approval?.comment) return null;
+              const label = stepKey === "loanOfficer" ? "Loan Officer" : "Committee";
+              return (
+                <View key={stepKey} style={detailSt.commentBox}>
+                  <Text style={detailSt.commentLabel}>
+                    {label} comment {approval.date ? `· ${fmtDate(approval.date)}` : ""}
+                  </Text>
+                  <Text style={detailSt.commentText}>{approval.comment}</Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
 
         {loan.purpose ? (
           <View style={styles.modalInfo}>
@@ -308,7 +349,25 @@ function LoanDetailModal({
             </>
           )}
         </View>
-        
+
+        {/* Rejected-loan follow-up actions — edit & resubmit is only
+            offered to the borrower or an admin (checked by the caller
+            before onEditResubmit is even passed in); delete is
+            available to anyone with disburse-level trust (accountant/
+            admin), same as before. Both used to live directly on the
+            list row; they're here now since every action lives in this
+            detail view, opened by tapping the loan. */}
+        {loan.status === "rejected" && onEditResubmit && (
+          <TouchableOpacity style={styles.editResubmitBtn} onPress={onEditResubmit} activeOpacity={0.8}>
+            <Text style={styles.editResubmitBtnText}>✏️ Edit &amp; Resubmit</Text>
+          </TouchableOpacity>
+        )}
+        {canDisburse && onDelete && (
+          <TouchableOpacity style={styles.deleteBtn} onPress={onDelete} activeOpacity={0.8}>
+            <Text style={styles.deleteBtnText}>🗑 Delete Loan</Text>
+          </TouchableOpacity>
+        )}
+
         <Button label="Close" onPress={onClose} fullWidth variant="secondary" style={{ marginTop: 12 }} />
 
         {/* Payment history — pulled from walletTxs prop */}
@@ -373,6 +432,13 @@ const detailSt = StyleSheet.create({
   cellLbl: { fontSize: 10, color: C.text3, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 },
   cellVal: { fontSize: 14, fontWeight: "700", color: C.text },
 
+  commentBox: {
+    marginTop: 10, padding: 12, borderRadius: 10,
+    backgroundColor: C.infoBg, borderWidth: 1, borderColor: "rgba(59,130,246,0.2)",
+  },
+  commentLabel: { fontSize: 11, fontWeight: "700", color: C.infoText, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 },
+  commentText:  { fontSize: 13, color: C.text, lineHeight: 18 },
+
   progressWrap:  { marginBottom: 16 },
   progressLbl:   { fontSize: 12, color: C.text3, fontWeight: "600" },
   progressTrack: { height: 8, borderRadius: 4, backgroundColor: C.border, overflow: "hidden", marginVertical: 6 },
@@ -392,46 +458,31 @@ export default function LoansScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { 
-    approveLoanStep, 
-    disburseLoan, 
-    rejectLoan, 
+  const {
+    approveLoanStep,
+    disburseLoan,
+    rejectLoan,
     deleteLoan,
-    closeInvestment,
-    deleteInvestment,
-    approveInvestmentStep,
   } = useStore();
   const allLoans = useGroupLoans();
-  const investments = useGroupInvestments();
   const walletTxs = useGroupWallet();
   const groupMembers = useGroupMembers();
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
   const permissions = useCurrentMemberPermissions();
-  const isApproverView = useIsApproverView();
   const { show, Toast } = useToast();
 
   const [tab, setTab] = useState("All");
-  const [activeSubTab, setActiveSubTab] = useState<"loans" | "investments">("loans");
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("date_desc");
+  const [page, setPage] = useState(1);
   const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
-  const [selectedInvestment, setSelectedInvestment] = useState<Investment | null>(null);
   const [approvalComment, setApprovalComment] = useState("");
   const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
-  const [showInvestmentDetail, setShowInvestmentDetail] = useState(false);
-  const [showCloseInvestmentModal, setShowCloseInvestmentModal] = useState(false);
   const [showLoanDetail, setShowLoanDetail] = useState(false);
-  const [closeReturnAmount, setCloseReturnAmount] = useState("");
-  const [closeActualReturn, setCloseActualReturn] = useState("");
-  const [closingInvestment, setClosingInvestment] = useState(false);
   const [pendingAction, setPendingAction] = useState<{
     loanId: string; step: string; approve: boolean;
-  } | null>(null);
-  // Investment approval state
-  const [showInvApprovalModal, setShowInvApprovalModal] = useState(false);
-  const [invApprovalComment, setInvApprovalComment] = useState("");
-  const [pendingInvAction, setPendingInvAction] = useState<{
-    investmentId: string; step: "committee" | "accountant"; approve: boolean;
   } | null>(null);
 
   const isAdminView = useIsAdminView();
@@ -440,40 +491,60 @@ export default function LoansScreen() {
   const getMember = (id: string) => groupMembers.find((m: Member) => m.id === id);
 
   const visibleLoans = useMemo(() => {
-    if (isAdminView || isApproverView) return allLoans;
+    if (isAdminView) return allLoans;
     return allLoans.filter((l: Loan) => l.memberId === currentMember?.id);
   }, [allLoans, isAdminView, currentMember]);
 
-  const visibleInvestments = useMemo(() => {
-    if (isAdminView) return investments;
-    return investments.filter((i: Investment) => i.createdBy === currentMember?.id);
-  }, [investments, isAdminView, currentMember]);
+  const LOAN_TABS = isAdminView ? ["All", "Pending", "Active", "Repaid", "Rejected"] : ["All", "Active", "Repaid"];
+  const SORT_OPTIONS = [
+    { value: "date_desc", label: "Newest" },
+    { value: "date_asc", label: "Oldest" },
+    { value: "amount_desc", label: "Largest" },
+  ];
+  const PAGE_SIZE = 20;
 
-  const filteredLoans = useMemo(() => {
+  const byTab = useMemo(() => {
     const list = visibleLoans;
     if (tab === "Pending")  return list.filter((l: Loan) => PENDING_STATUSES.includes(l.status));
     if (tab === "Active")   return list.filter((l: Loan) => l.status === "disbursed");
     if (tab === "Repaid")   return list.filter((l: Loan) => l.status === "repaid");
-    if (tab === "Disburse") return list.filter((l: Loan) => l.status === "approved");
     if (tab === "Rejected") return list.filter((l: Loan) => ["rejected", "defaulted"].includes(l.status));
     return list;
   }, [visibleLoans, tab]);
 
-  const filteredInvestments = useMemo(() => {
-    const list = visibleInvestments;
-    if (tab === "Active")   return list.filter((i: Investment) => i.status === "open");
-    if (tab === "Closed")   return list.filter((i: Investment) => i.status === "closed");
-    if (tab === "Matured")  return list.filter((i: Investment) => (i.status as string) === "matured");
-    if (tab === "Pending")  return list.filter((i: Investment) => INVESTMENT_PENDING_STATUSES.includes(i.status));
-    return list;
-  }, [visibleInvestments, tab]);
+  // Search + sort match Wallet's pattern exactly — free-text match
+  // against member name / purpose, then a small set of sort options,
+  // same shape as wallet.tsx's controls.
+  const filteredLoans = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let list = byTab;
+    if (q) {
+      list = list.filter((l: Loan) => {
+        const memberName = getMember(l.memberId)?.fullName?.toLowerCase() ?? "";
+        return memberName.includes(q) || (l.purpose ?? "").toLowerCase().includes(q);
+      });
+    }
+    const sorted = [...list];
+    if (sort === "date_desc") sorted.sort((a, b) => new Date(b.applicationDate).getTime() - new Date(a.applicationDate).getTime());
+    else if (sort === "date_asc") sorted.sort((a, b) => new Date(a.applicationDate).getTime() - new Date(b.applicationDate).getTime());
+    else if (sort === "amount_desc") sorted.sort((a, b) => b.amount - a.amount);
+    return sorted;
+  }, [byTab, search, sort, groupMembers]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredLoans.length / PAGE_SIZE));
+  const paginatedLoans = useMemo(
+    () => filteredLoans.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filteredLoans, page],
+  );
+
+  const handleTabChange = (t: string) => { setTab(t); setPage(1); };
+  const handleSearch = (v: string) => { setSearch(v); setPage(1); };
+  const handleSort = (v: string) => { setSort(v); setPage(1); };
 
   const outstanding = useMemo(() => visibleLoans.filter((l: Loan) => l.status === "disbursed").reduce((s: number, l: Loan) => s + l.balance, 0), [visibleLoans]);
   const totalRepaid = useMemo(() => visibleLoans.reduce((s: number, l: Loan) => s + l.amountRepaid, 0), [visibleLoans]);
   const totalDisbursed = useMemo(() => visibleLoans.filter((l: Loan) => ["disbursed", "repaid"].includes(l.status)).reduce((s: number, l: Loan) => s + l.amount, 0), [visibleLoans]);
   const pendingCount = useMemo(() => visibleLoans.filter((l: Loan) => PENDING_STATUSES.includes(l.status)).length, [visibleLoans]);
-  const totalInvested = useMemo(() => visibleInvestments.reduce((s: number, i: Investment) => s + i.investmentAmount, 0), [visibleInvestments]);
-  const totalReturns = useMemo(() => visibleInvestments.reduce((s: number, i: Investment) => s + (i.actualReturn || 0), 0), [visibleInvestments]);
 
   const handleApproval = async () => {
     if (!pendingAction) return;
@@ -493,31 +564,6 @@ export default function LoansScreen() {
       setApprovalComment("");
       setPendingAction(null);
       setSelectedLoan(null);
-    }
-  };
-
-  const handleInvestmentApproval = async () => {
-    if (!pendingInvAction) return;
-    try {
-      await approveInvestmentStep(
-        pendingInvAction.investmentId,
-        pendingInvAction.step,
-        pendingInvAction.approve,
-        invApprovalComment || undefined,
-      );
-      show(
-        pendingInvAction.approve
-          ? pendingInvAction.step === "committee" ? "Forwarded to accountant" : "Investment approved & activated"
-          : "Investment rejected",
-        pendingInvAction.approve ? "success" : "error",
-      );
-      setShowInvestmentDetail(false);
-    } catch (e: any) {
-      show(e.message || "Action failed", "error");
-    } finally {
-      setShowInvApprovalModal(false);
-      setInvApprovalComment("");
-      setPendingInvAction(null);
     }
   };
 
@@ -557,253 +603,6 @@ export default function LoansScreen() {
     );
   };
 
-  // ─── Delete Investment Function ──────────────────────────────────────
-  const handleDeleteInvestment = (investment: Investment) => {
-    showConfirm(
-      "Delete Investment",
-      `Are you sure you want to delete "${investment.investmentName}"?\n\nInvestment Amount: ${fmtCurrency(investment.investmentAmount)}\nStatus: ${INVESTMENT_STATUS_LABEL[investment.status] || investment.status}\n\n⚠️ This action cannot be undone!`,
-      async () => {
-        try {
-          // Call the deleteInvestment function from the store
-          await deleteInvestment(investment.id, "Deleted by admin");
-          show("Investment deleted successfully ✅", "success");
-          // Close any open modals
-          setShowInvestmentDetail(false);
-          setShowCloseInvestmentModal(false);
-          setSelectedInvestment(null);
-        } catch (error: any) {
-          show(error.message || "Failed to delete investment", "error");
-        }
-      },
-      undefined,
-      true
-    );
-  };
-
-  const handleCloseInvestment = async () => {
-    if (!selectedInvestment) return;
-    
-    const returnAmount = parseFloat(closeReturnAmount);
-    if (!returnAmount || returnAmount <= 0) {
-      show("Enter a valid return amount", "error");
-      return;
-    }
-    
-    let actualReturn: number | undefined;
-    if (closeActualReturn && closeActualReturn.trim() !== "") {
-      const parsed = parseFloat(closeActualReturn);
-      if (!isNaN(parsed)) {
-        actualReturn = parsed;
-      }
-    }
-    
-    setClosingInvestment(true);
-    try {
-      await closeInvestment(selectedInvestment.id, returnAmount, actualReturn);
-      show(`Investment closed! Return: ${fmtCurrency(returnAmount)}`, "success");
-      setShowCloseInvestmentModal(false);
-      setSelectedInvestment(null);
-      setCloseReturnAmount("");
-      setCloseActualReturn("");
-      setShowInvestmentDetail(false);
-    } catch (error: any) {
-      show(error.message || "Failed to close investment", "error");
-    } finally {
-      setClosingInvestment(false);
-    }
-  };
-
-  const LOAN_TABS = isAdminView ? ["All", "Pending", "Active", "Repaid", "Rejected"] : ["All", "Active", "Repaid", "Rejected", "Ready to Disburse"];
-  const INVEST_TABS = isAdminView ? ["All", "Pending", "Active", "Matured", "Closed"] : ["All", "Active", "Matured", "Closed"];
-
-  const getFilteredItems = () => {
-    if (activeSubTab === "investments") {
-      return filteredInvestments;
-    }
-    return filteredLoans;
-  };
-
-  const renderInvestmentCard = (investment: Investment) => {
-    const statusLabel = INVESTMENT_STATUS_LABEL[investment.status] || investment.status;
-    const statusColor = INVESTMENT_STATUS_COLOR[investment.status] || C.text3;
-    const statusBg = INVESTMENT_STATUS_BG[investment.status] || C.mutedBg;
-    const roi = investment.expectedReturn && investment.investmentAmount
-      ? round2(((investment.expectedReturn - investment.investmentAmount) / investment.investmentAmount) * 100)
-      : null;
-    
-    // Calculate actual ROI if investment is closed
-    let actualRoi: number | null = null;
-    let profitLoss: number | null = null;
-    if (investment.status === "closed" && investment.returnAmount !== undefined) {
-      profitLoss = round2(investment.returnAmount - investment.investmentAmount);
-      actualRoi = investment.investmentAmount > 0 
-        ? round2((profitLoss / investment.investmentAmount) * 100) 
-        : null;
-    }
-
-    return (
-      <View key={investment.id} style={styles.loanCard}>
-        <View style={styles.loanHeader}>
-          <View style={[styles.loanAvatar, { backgroundColor: C.goldBg }]}>
-            <Text style={[styles.loanAvatarText, { color: C.gold }]}>📊</Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.loanMember}>{investment.investmentName}</Text>
-            <Text style={styles.loanDate}>
-              {(investment.investmentType ?? "other").replace('_', ' ')} · {fmtDate(investment.startDate)}
-            </Text>
-          </View>
-          <View style={[styles.statusBadge, { backgroundColor: statusBg }]}>
-            <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
-          </View>
-        </View>
-
-        <View style={styles.amountsRow}>
-          <View style={styles.amountItem}>
-            <Text style={styles.amountLabel}>Invested</Text>
-            <Text style={styles.amountValue}>{fmtCurrency(investment.investmentAmount)}</Text>
-          </View>
-          <View style={styles.amountDivider} />
-          <View style={styles.amountItem}>
-            <Text style={styles.amountLabel}>Expected Return</Text>
-            <Text style={styles.amountValue}>{fmtCurrency(investment.expectedReturn || 0)}</Text>
-          </View>
-          <View style={styles.amountDivider} />
-          <View style={styles.amountItem}>
-            <Text style={styles.amountLabel}>ROI</Text>
-            <Text style={[styles.amountValue, { color: roi && roi > 0 ? C.success : C.text3 }]}>
-              {roi !== null ? `${roi > 0 ? '+' : ''}${roi}%` : '—'}
-            </Text>
-          </View>
-        </View>
-
-        {/* Show actual return for closed investments */}
-        {investment.status === "closed" && investment.returnAmount !== undefined && (
-          <View style={styles.actualReturnRow}>
-            <View style={[styles.amountItem, { borderRightWidth: 1, borderRightColor: C.borderLight }]}>
-              <Text style={styles.amountLabel}>Actual Return</Text>
-              <Text style={[styles.amountValue, { color: C.primary }]}>
-                {fmtCurrency(investment.returnAmount)}
-              </Text>
-            </View>
-            <View style={styles.amountItem}>
-              <Text style={styles.amountLabel}>Profit/Loss</Text>
-              <Text style={[
-                styles.amountValue, 
-                { color: profitLoss !== null && profitLoss >= 0 ? C.success : C.error }
-              ]}>
-                {profitLoss !== null ? fmtCurrency(profitLoss) : '—'}
-              </Text>
-            </View>
-            <View style={styles.amountItem}>
-              <Text style={styles.amountLabel}>Actual ROI</Text>
-              <Text style={[
-                styles.amountValue, 
-                { color: actualRoi !== null && actualRoi >= 0 ? C.success : C.error }
-              ]}>
-                {actualRoi !== null ? `${actualRoi > 0 ? '+' : ''}${actualRoi}%` : '—'}
-              </Text>
-            </View>
-          </View>
-        )}
-
-        {investment.description && (
-          <Text style={styles.purpose} numberOfLines={2}>
-            📝 {investment.description}
-          </Text>
-        )}
-
-        {investment.representativeName && (
-          <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-            <Text style={{ fontSize: 11, color: C.pillText }}>
-              Rep: {investment.representativeName} {investment.representativeRole ? `· ${investment.representativeRole}` : ''}
-            </Text>
-          </View>
-        )}
-
-        <View style={styles.actionRow}>
-          <TouchableOpacity 
-            style={[styles.repayBtn, { flex: 1 }]} 
-            onPress={() => {
-              setSelectedInvestment(investment);
-              setShowInvestmentDetail(true);
-            }}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.repayBtnText}>View Details</Text>
-          </TouchableOpacity>
-          
-          {/* Pending committee approval */}
-          {isAdmin && investment.status === "pending_committee" && (
-            <>
-              <TouchableOpacity
-                style={[styles.disburseBtn, { flex: 1 }]}
-                onPress={() => { setPendingInvAction({ investmentId: investment.id, step: "committee", approve: true }); setShowInvApprovalModal(true); }}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.disburseBtnText}>✓ Approve</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.deleteBtn, { flex: 0.8 }]}
-                onPress={() => { setPendingInvAction({ investmentId: investment.id, step: "committee", approve: false }); setShowInvApprovalModal(true); }}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.deleteBtnText}>✗ Reject</Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-          {/* Pending accountant approval */}
-          {isAdmin && investment.status === "pending" && (
-            <>
-              <TouchableOpacity
-                style={[styles.disburseBtn, { flex: 1 }]}
-                onPress={() => { setPendingInvAction({ investmentId: investment.id, step: "accountant", approve: true }); setShowInvApprovalModal(true); }}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.disburseBtnText}>✓ Approve</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.deleteBtn, { flex: 0.8 }]}
-                onPress={() => { setPendingInvAction({ investmentId: investment.id, step: "accountant", approve: false }); setShowInvApprovalModal(true); }}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.deleteBtnText}>✗ Reject</Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-          {isAdmin && investment.status === "open" && (
-            <TouchableOpacity 
-              style={[styles.disburseBtn, { flex: 1 }]} 
-              onPress={() => {
-                setSelectedInvestment(investment);
-                setCloseReturnAmount(String(investment.investmentAmount));
-                setCloseActualReturn("");
-                setShowCloseInvestmentModal(true);
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.disburseBtnText}>Close</Text>
-            </TouchableOpacity>
-          )}
-          
-          {/* ─── DELETE INVESTMENT BUTTON ─── */}
-          {isAdmin && (investment.status === "open" || investment.status === "pending" || investment.status === "pending_committee" || investment.status === "closed") && (
-            <TouchableOpacity 
-              style={[styles.deleteBtn, { flex: 0.7 }]} 
-              onPress={() => handleDeleteInvestment(investment)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.deleteBtnText}>🗑 Delete</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-    );
-  };
-
-  const TABS = activeSubTab === "loans" ? LOAN_TABS : INVEST_TABS;
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -812,9 +611,14 @@ export default function LoansScreen() {
       {/* Header */}
       <View style={[styles.header, isWide && { paddingHorizontal: 32 }]}>
         <View>
-          <Text style={styles.headerSub}>Manage</Text>
-          <Text style={styles.headerTitle}>Loans & Investments</Text>
+          <Text style={styles.headerSub}>{isAdminView ? "Group" : "My"}</Text>
+          <Text style={styles.headerTitle}>Loans</Text>
         </View>
+        {permissions.addLoan && (
+          <TouchableOpacity style={styles.addInlineBtn} onPress={() => router.push("/modals/add-loan")} activeOpacity={0.8}>
+            <Text style={styles.addInlineBtnText}>+ Loan</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <ScrollView
@@ -825,179 +629,118 @@ export default function LoansScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Summary card — dark navy, matching wallet */}
-        {
-          <View style={styles.balanceCard}>
-            <View style={styles.cardAccentDot} />
-            <Text style={styles.balanceLabel}>{isAdminView ? "PORTFOLIO OVERVIEW" : "MY PORTFOLIO"}</Text>
-            <Text style={styles.balanceAmount}>
-              <Text style={styles.balanceCurrency}>RWF </Text>
-              {fmtCurrency(totalDisbursed).replace("RWF ", "")}
-            </Text>
-            <Text style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{isAdminView ? "total loans disbursed" : "my loans disbursed"}</Text>
+        <View style={styles.balanceCard}>
+          <View style={styles.cardAccentDot} />
+          <Text style={styles.balanceLabel}>{isAdminView ? "PORTFOLIO OVERVIEW" : "MY PORTFOLIO"}</Text>
+          <Text style={styles.balanceAmount}>
+            <Text style={styles.balanceCurrency}>RWF </Text>
+            {fmtCurrency(totalDisbursed).replace("RWF ", "")}
+          </Text>
+          <Text style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{isAdminView ? "total loans disbursed" : "my loans disbursed"}</Text>
 
-            <View style={styles.balancePills}>
-              <View style={styles.balancePill}>
-                <Text style={styles.balancePillLabel}>OUTSTANDING</Text>
-                <Text style={[styles.balancePillValue, { color: "#F87171" }]}>{fmtCurrency(outstanding)}</Text>
-              </View>
-              <View style={styles.balancePillDivider} />
-              <View style={styles.balancePill}>
-                <Text style={styles.balancePillLabel}>REPAID</Text>
-                <Text style={[styles.balancePillValue, { color: "#34D399" }]}>{fmtCurrency(totalRepaid)}</Text>
-              </View>
-              <View style={styles.balancePillDivider} />
-              <View style={styles.balancePill}>
-                <Text style={styles.balancePillLabel}>INVESTED</Text>
-                <Text style={[styles.balancePillValue, { color: C.gold }]}>{fmtCurrency(totalInvested)}</Text>
-              </View>
-              <View style={styles.balancePillDivider} />
-              <View style={styles.balancePill}>
-                <Text style={styles.balancePillLabel}>RETURNS</Text>
-                <Text style={[styles.balancePillValue, { color: "#34D399" }]}>{fmtCurrency(totalReturns)}</Text>
+          <View style={styles.balancePills}>
+            <View style={styles.balancePill}>
+              <Text style={styles.balancePillLabel}>OUTSTANDING</Text>
+              <Text style={[styles.balancePillValue, { color: "#F87171" }]}>{fmtCurrency(outstanding)}</Text>
+            </View>
+            <View style={styles.balancePillDivider} />
+            <View style={styles.balancePill}>
+              <Text style={styles.balancePillLabel}>REPAID</Text>
+              <Text style={[styles.balancePillValue, { color: "#34D399" }]}>{fmtCurrency(totalRepaid)}</Text>
+            </View>
+            <View style={styles.balancePillDivider} />
+            <View style={styles.balancePill}>
+              <Text style={styles.balancePillLabel}>COUNT</Text>
+              <Text style={[styles.balancePillValue, { color: "#fff" }]}>{filteredLoans.length}</Text>
+            </View>
+          </View>
+
+          {(pendingCount > 0) && (
+            <View style={styles.pendingBadgeRow}>
+              <View style={styles.pendingBadge}>
+                <Text style={styles.pendingBadgeText}>⏳ {pendingCount} pending approval{pendingCount > 1 ? "s" : ""}</Text>
               </View>
             </View>
-
-            {(pendingCount > 0) && (
-              <View style={styles.pendingBadgeRow}>
-                <View style={styles.pendingBadge}>
-                  <Text style={styles.pendingBadgeText}>⏳ {pendingCount} pending approval{pendingCount > 1 ? "s" : ""}</Text>
-                </View>
-              </View>
-            )}
-          </View>
-        }
-
-        {/* Sub Tabs + Add buttons inline */}
-        <View style={styles.subTabRow}>
-          <View style={styles.subTabGroup}>
-            <TouchableOpacity
-              style={[styles.subTab, activeSubTab === "loans" && styles.subTabActive]}
-              onPress={() => { setActiveSubTab("loans"); setTab("All"); }}
-            >
-              <Text style={[styles.subTabText, activeSubTab === "loans" && styles.subTabTextActive]}>
-                💰 Loans
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.subTab, activeSubTab === "investments" && styles.subTabActive]}
-              onPress={() => { setActiveSubTab("investments"); setTab("All"); }}
-            >
-              <Text style={[styles.subTabText, activeSubTab === "investments" && styles.subTabTextActive]}>
-                📊 Investments
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            {activeSubTab === "loans" && permissions.addLoan && (
-              <TouchableOpacity
-                style={styles.addInlineBtn}
-                onPress={() => router.push("/modals/add-loan")}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.addInlineBtnText}>+ Loan</Text>
-              </TouchableOpacity>
-            )}
-            {activeSubTab === "investments" && permissions.addInvestment && (
-              <TouchableOpacity
-                style={[styles.addInlineBtn, { backgroundColor: C.gold }]}
-                onPress={() => router.push("/modals/add-investment")}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.addInlineBtnText}>+ Invest</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          )}
         </View>
 
-        {/* Filter tabs */}
-        <View style={styles.tabWrapper}>
-          <TabRow tabs={TABS} active={tab} onChange={setTab} />
+        {/* ── Controls: search + tabs + sort — matches Wallet's pattern
+             exactly, per an explicit request to make these consistent
+             across the app. ── */}
+        <View style={styles.controlsBlock}>
+          <View style={styles.controlsTop}>
+            <View style={{ flex: 1 }}>
+              <SearchBar value={search} onChange={handleSearch} placeholder="Search loans by member or purpose…" />
+            </View>
+            <View style={styles.sortRow}>
+              {SORT_OPTIONS.map(opt => (
+                <TouchableOpacity
+                  key={opt.value}
+                  style={[styles.sortChip, sort === opt.value && styles.sortChipActive]}
+                  onPress={() => handleSort(opt.value)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.sortChipText, sort === opt.value && styles.sortChipTextActive]}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+          <TabRow tabs={LOAN_TABS} active={tab} onChange={handleTabChange} />
         </View>
 
-        {/* Items List */}
+        {/* ── List — compact summary rows only. Tapping a row opens the
+             full detail modal, where every relevant action (approve,
+             reject, disburse, repayment, schedule, delete, edit &
+             resubmit) lives — nothing acts directly from the list
+             anymore. ── */}
         <View style={styles.listContainer}>
-          {getFilteredItems().length === 0 ? (
+          {paginatedLoans.length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>📋</Text>
-              <Text style={T.body}>No {tab.toLowerCase()} {activeSubTab === "loans" ? "loans" : "investments"}</Text>
-              {tab === "All" && activeSubTab === "loans" && permissions.addLoan && (
+              <Text style={T.body}>No {tab.toLowerCase()} loans{search ? " match your search" : ""}</Text>
+              {tab === "All" && !search && permissions.addLoan && (
                 <TouchableOpacity style={styles.emptyBtn} onPress={() => router.push("/modals/add-loan")}>
                   <Text style={styles.emptyBtnText}>Apply for Loan →</Text>
                 </TouchableOpacity>
               )}
-              {tab === "All" && activeSubTab === "investments" && permissions.addInvestment && (
-                <TouchableOpacity style={styles.emptyBtn} onPress={() => router.push("/modals/add-investment")}>
-                  <Text style={styles.emptyBtnText}>Add Investment →</Text>
-                </TouchableOpacity>
-              )}
             </View>
           ) : (
-            getFilteredItems().map((item) => {
-              if ('interestRate' in item) {
-                // It's a loan
-                const loan = item as Loan;
-                const step = getActableStep(loan.status, role);
-                const isPending = PENDING_STATUSES.includes(loan.status);
-                return (
-                  <React.Fragment key={loan.id}>
-                  <LoanCard
+            <View style={styles.rowList}>
+              {paginatedLoans.map((loan, i) => (
+                <React.Fragment key={loan.id}>
+                  <LoanRow
                     loan={loan}
                     member={getMember(loan.memberId)}
-                    actableStep={step}
-                    isAdmin={isAdmin}
-                    canDisburse={canDisburseRole(role)}
-                    isPending={isPending}
-                    onApprove={() => {
-                      if (!step) return;
-                      setPendingAction({ loanId: loan.id, step, approve: true });
-                      setSelectedLoan(loan);
-                      setShowApprovalModal(true);
-                    }}
-                    onReject={() => {
-                      if (!step) return;
-                      setPendingAction({ loanId: loan.id, step, approve: false });
-                      setSelectedLoan(loan);
-                      setShowApprovalModal(true);
-                    }}
-                    onDisburse={() => handleDisburse(loan.id)}
-                    onDelete={() => handleDeleteLoan(loan)}
-                    onRepayment={() =>
-                      router.push({ pathname: "/modals/record-repayment", params: { loanId: loan.id } })
-                    }
-                    onSchedule={() => {
-                      setSelectedLoan(loan);
-                      setShowScheduleModal(true);
-                    }}
-                    onViewDetails={() => {
-                      setSelectedLoan(loan);
-                      setShowLoanDetail(true);
-                    }}
-                    onEditResubmit={
-                      loan.status === "rejected" && (loan.memberId === currentMember?.id || isAdmin)
-                        ? () => router.push({
-                            pathname: "/modals/add-loan",
-                            params: {
-                              editLoanId: loan.id,
-                              prefillAmount: String(loan.amount),
-                              prefillPurpose: loan.purpose ?? "",
-                              prefillMonths: String(loan.repaymentMonths ?? 6),
-                              prefillMemberId: loan.memberId,
-                            },
-                          })
-                        : undefined
-                    }
+                    onPress={() => { setSelectedLoan(loan); setShowLoanDetail(true); }}
                   />
-                  </React.Fragment>
-                );
-              } else {
-                // It's an investment
-                return renderInvestmentCard(item);
-              }
-            })
+                  {i < paginatedLoans.length - 1 && <Divider />}
+                </React.Fragment>
+              ))}
+            </View>
+          )}
+
+          {totalPages > 1 && (
+            <View style={styles.pagination}>
+              <TouchableOpacity
+                disabled={page <= 1}
+                onPress={() => setPage(p => Math.max(1, p - 1))}
+                style={[styles.pageBtn, page <= 1 && styles.pageBtnDisabled]}
+              >
+                <Text style={[styles.pageBtnText, page <= 1 && styles.pageBtnTextDisabled]}>Prev</Text>
+              </TouchableOpacity>
+              <Text style={styles.pageLabel}>Page {page} of {totalPages}</Text>
+              <TouchableOpacity
+                disabled={page >= totalPages}
+                onPress={() => setPage(p => Math.min(totalPages, p + 1))}
+                style={[styles.pageBtn, page >= totalPages && styles.pageBtnDisabled]}
+              >
+                <Text style={[styles.pageBtnText, page >= totalPages && styles.pageBtnTextDisabled]}>Next</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </View>
       </ScrollView>
+
 
       {/* Approval Modal with Steps Visual */}
       <BottomModal
@@ -1067,8 +810,7 @@ export default function LoansScreen() {
                 <Text style={styles.stepStatus}>
                   {selectedLoan.status === "pending_loan_officer" && "⏳ Awaiting Loan Officer review"}
                   {selectedLoan.status === "pending_committee" && "⏳ Awaiting Committee review"}
-                  {selectedLoan.status === "pending_accountant" && "⏳ Awaiting Accountant review"}
-                  {selectedLoan.status === "approved" && "✅ Loan Approved"}
+                  {selectedLoan.status === "approved" && "✅ Approved — awaiting disbursement"}
                   {selectedLoan.status === "disbursed" && "💰 Loan Disbursed"}
                   {selectedLoan.status === "rejected" && "❌ Loan Rejected"}
                 </Text>
@@ -1180,243 +922,6 @@ export default function LoansScreen() {
         </View>
       </BottomModal>
 
-      {/* Investment Detail Modal */}
-      <BottomModal
-        visible={showInvestmentDetail && !!selectedInvestment}
-        onClose={() => { setShowInvestmentDetail(false); setSelectedInvestment(null); }}
-        title="Investment Details"
-      >
-        <View style={{ padding: 16 }}>
-          {selectedInvestment && (
-            <>
-              <View style={styles.modalInfo}>
-                <Text style={styles.modalMember}>{selectedInvestment.investmentName}</Text>
-                <Text style={styles.modalAmount}>{fmtCurrency(selectedInvestment.investmentAmount)}</Text>
-                <Text style={styles.modalDetail}>
-                  Type: {selectedInvestment.investmentType.replace('_', ' ')}
-                </Text>
-                <Text style={styles.modalDetail}>
-                  Expected Return: {fmtCurrency(selectedInvestment.expectedReturn || 0)}
-                </Text>
-                {!!(selectedInvestment.expectedReturn) && !!(selectedInvestment.investmentAmount) && (
-                  <Text style={[styles.modalDetail, { color: C.gold }]}>
-                    Expected ROI: {round2(((selectedInvestment.expectedReturn - selectedInvestment.investmentAmount) / selectedInvestment.investmentAmount) * 100)}%
-                  </Text>
-                )}
-                <Text style={styles.modalDetail}>
-                  Status: {INVESTMENT_STATUS_LABEL[selectedInvestment.status] || selectedInvestment.status}
-                </Text>
-                
-                {/* Show actual return details if closed */}
-                {selectedInvestment.status === "closed" && selectedInvestment.returnAmount !== undefined && (
-                  <>
-                    <View style={styles.divider} />
-                    <Text style={[styles.modalDetail, { fontWeight: "700", color: C.text, marginTop: 8 }]}>
-                      Actual Return: {fmtCurrency(selectedInvestment.returnAmount)}
-                    </Text>
-                    <Text style={[
-                      styles.modalDetail, 
-                      { 
-                        fontWeight: "700", 
-                        color: selectedInvestment.profit !== undefined && selectedInvestment.profit >= 0 
-                          ? C.success 
-                          : C.error 
-                      }
-                    ]}>
-                      {selectedInvestment.profit !== undefined && selectedInvestment.profit >= 0 ? '📈' : '📉'} 
-                      Profit/Loss: {selectedInvestment.profit !== undefined ? fmtCurrency(selectedInvestment.profit) : '—'}
-                    </Text>
-                    {selectedInvestment.actualReturn !== undefined && selectedInvestment.investmentAmount > 0 && (
-                      <Text style={[
-                        styles.modalDetail, 
-                        { 
-                          fontWeight: "700", 
-                          color: selectedInvestment.actualReturn >= 0 ? C.success : C.error 
-                        }
-                      ]}>
-                        Actual ROI: {selectedInvestment.actualReturn >= 0 ? '+' : ''}{selectedInvestment.actualReturn}%
-                      </Text>
-                    )}
-                    {selectedInvestment.closedAt && (
-                      <Text style={styles.modalDetail}>
-                        Closed: {fmtDate(selectedInvestment.closedAt)}
-                      </Text>
-                    )}
-                  </>
-                )}
-              </View>
-
-              {selectedInvestment.description && (
-                <View style={styles.modalInfo}>
-                  <Text style={styles.modalDetail}>Description:</Text>
-                  <Text style={[styles.modalPurpose, { textAlign: 'center' }]}>
-                    {selectedInvestment.description}
-                  </Text>
-                </View>
-              )}
-
-              {(selectedInvestment.representativeName || selectedInvestment.representativeRole) && (
-                <View style={styles.modalInfo}>
-                  <Text style={styles.modalDetail}>Representative:</Text>
-                  <Text style={[styles.modalPurpose, { textAlign: 'center' }]}>
-                    {selectedInvestment.representativeName}
-                    {selectedInvestment.representativeRole ? ` (${selectedInvestment.representativeRole})` : ''}
-                  </Text>
-                </View>
-              )}
-
-              {/* ─── DELETE INVESTMENT BUTTON IN DETAIL MODAL ─── */}
-              {isAdmin && (selectedInvestment.status === "open" || selectedInvestment.status === "pending" || selectedInvestment.status === "matured") && (
-                <TouchableOpacity 
-                  style={[styles.deleteBtn, { marginBottom: 12 }]} 
-                  onPress={() => {
-                    setShowInvestmentDetail(false);
-                    handleDeleteInvestment(selectedInvestment);
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.deleteBtnText}>🗑 Delete Investment</Text>
-                </TouchableOpacity>
-              )}
-
-              <Button
-                label="Close"
-                onPress={() => { setShowInvestmentDetail(false); setSelectedInvestment(null); }}
-                fullWidth
-                variant="secondary"
-              />
-            </>
-          )}
-        </View>
-      </BottomModal>
-
-      {/* Close Investment Modal */}
-      <BottomModal
-        visible={showCloseInvestmentModal}
-        onClose={() => { setShowCloseInvestmentModal(false); setSelectedInvestment(null); setCloseReturnAmount(""); setCloseActualReturn(""); }}
-        title="Close Investment"
-      >
-        <View style={{ padding: 16 }}>
-          {selectedInvestment && (
-            <>
-              <View style={styles.modalInfo}>
-                <Text style={styles.modalMember}>{selectedInvestment.investmentName}</Text>
-                <Text style={styles.modalAmount}>Invested: {fmtCurrency(selectedInvestment.investmentAmount)}</Text>
-                <Text style={styles.modalDetail}>
-                  Expected Return: {fmtCurrency(selectedInvestment.expectedReturn || 0)}
-                </Text>
-                {!!(selectedInvestment.expectedReturn) && !!(selectedInvestment.investmentAmount) && (
-                  <Text style={[styles.modalDetail, { color: C.gold }]}>
-                    Expected ROI: {round2(((selectedInvestment.expectedReturn - selectedInvestment.investmentAmount) / selectedInvestment.investmentAmount) * 100)}%
-                  </Text>
-                )}
-              </View>
-
-              <Input
-                label="Total Return Amount *"
-                value={closeReturnAmount}
-                onChangeText={setCloseReturnAmount}
-                keyboardType="numeric"
-                placeholder="Enter total return amount"
-                prefix="RWF"
-              />
-              
-              <Input
-                label="Actual Profit/Loss (Optional)"
-                value={closeActualReturn}
-                onChangeText={setCloseActualReturn}
-                keyboardType="numeric"
-                placeholder="Enter actual profit or loss"
-                prefix="RWF"
-                hint="Leave blank to use calculated profit/loss"
-              />
-
-              {!!(closeReturnAmount) && !!(selectedInvestment.investmentAmount) && (
-                <View style={styles.profitPreview}>
-                  <Text style={styles.profitLabel}>
-                    {parseFloat(closeReturnAmount) >= selectedInvestment.investmentAmount ? '📈 Profit' : '📉 Loss'}
-                  </Text>
-                  <Text style={[
-                    styles.profitAmount,
-                    { color: parseFloat(closeReturnAmount) >= selectedInvestment.investmentAmount ? C.success : C.error }
-                  ]}>
-                    {fmtCurrency(Math.abs(parseFloat(closeReturnAmount) - selectedInvestment.investmentAmount))}
-                  </Text>
-                </View>
-              )}
-
-              <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-                <Button
-                  label="Cancel"
-                  onPress={() => { setShowCloseInvestmentModal(false); setSelectedInvestment(null); setCloseReturnAmount(""); setCloseActualReturn(""); }}
-                  variant="secondary"
-                  style={{ flex: 1 }}
-                />
-                <Button
-                  label="Close Investment"
-                  onPress={handleCloseInvestment}
-                  variant="primary"
-                  style={{ flex: 1 }}
-                  loading={closingInvestment}
-                />
-              </View>
-            </>
-          )}
-        </View>
-      </BottomModal>
-
-      {/* Investment Approval Modal */}
-      <BottomModal
-        visible={showInvApprovalModal}
-        onClose={() => { setShowInvApprovalModal(false); setInvApprovalComment(""); setPendingInvAction(null); }}
-        title={pendingInvAction?.approve
-          ? pendingInvAction.step === "committee" ? "Committee Approval" : "Accountant Approval"
-          : "Reject Investment"}
-      >
-        <View style={{ padding: 16 }}>
-          {pendingInvAction && (() => {
-            const inv = investments.find(i => i.id === pendingInvAction.investmentId);
-            if (!inv) return null;
-            return (
-              <>
-                <View style={styles.modalInfo}>
-                  <Text style={styles.modalMember}>{inv.investmentName}</Text>
-                  <Text style={styles.modalAmount}>{fmtCurrency(inv.investmentAmount)}</Text>
-                  <Text style={styles.modalDetail}>
-                    {pendingInvAction.approve
-                      ? pendingInvAction.step === "committee"
-                        ? "Approve at committee level — will forward to accountant for final sign-off."
-                        : "Final accountant approval — investment will become active and debit the group wallet."
-                      : "Rejecting will close this investment request."}
-                  </Text>
-                </View>
-                <Input
-                  label={pendingInvAction.approve ? "Comment (Optional)" : "Reason for Rejection *"}
-                  value={invApprovalComment}
-                  onChangeText={setInvApprovalComment}
-                  placeholder={pendingInvAction.approve ? "Add a note..." : "Explain why..."}
-                  multiline
-                />
-                <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-                  <Button
-                    label="Cancel"
-                    onPress={() => { setShowInvApprovalModal(false); setInvApprovalComment(""); setPendingInvAction(null); }}
-                    variant="secondary"
-                    style={{ flex: 1 }}
-                  />
-                  <Button
-                    label={pendingInvAction.approve ? "Approve" : "Reject"}
-                    onPress={handleInvestmentApproval}
-                    variant={pendingInvAction.approve ? "primary" : "danger"}
-                    style={{ flex: 1 }}
-                  />
-                </View>
-              </>
-            );
-          })()}
-        </View>
-      </BottomModal>
-
       {/* Loan Detail Modal */}
       <LoanDetailModal
         visible={showLoanDetail}
@@ -1461,6 +966,21 @@ export default function LoansScreen() {
             }
           }
         }}
+        onDelete={selectedLoan ? () => handleDeleteLoan(selectedLoan) : undefined}
+        onEditResubmit={
+          selectedLoan && selectedLoan.status === "rejected" && (selectedLoan.memberId === currentMember?.id || isAdmin)
+            ? () => router.push({
+                pathname: "/modals/add-loan",
+                params: {
+                  editLoanId: selectedLoan.id,
+                  prefillAmount: String(selectedLoan.amount),
+                  prefillPurpose: selectedLoan.purpose ?? "",
+                  prefillMonths: String(selectedLoan.repaymentMonths ?? 6),
+                  prefillMemberId: selectedLoan.memberId,
+                },
+              })
+            : undefined
+        }
         isAdmin={isAdmin}
         isPending={selectedLoan ? PENDING_STATUSES.includes(selectedLoan.status) : false}
         canDisburse={canDisburseRole(role)}
@@ -1471,161 +991,41 @@ export default function LoansScreen() {
   );
 }
 
-// LoanCard Component with View Details button
-function LoanCard({
-  loan, member, actableStep, isAdmin, isPending, canDisburse,
-  onApprove, onReject, onDisburse, onRepayment, onSchedule, onDelete, onEditResubmit,
-  onViewDetails,
-}: {
-  loan: Loan;
-  member: any;
-  actableStep: string | null;
-  isAdmin: boolean;
-  isPending: boolean;
-  canDisburse: boolean;
-  onApprove: () => void;
-  onReject: () => void;
-  onDisburse: () => void;
-  onRepayment: () => void | any;
-  onSchedule?: () => void;
-  onDelete: () => void;
-  onEditResubmit?: () => void | any;
-  onViewDetails: () => void;
-  key?: any; // React key — stripped before passing, needed for TS
-}) {
-  // repaid loans are ALWAYS 100% — never compute from amountRepaid/totalRepayable
+// ── Compact loan list row — summary only. Tapping anywhere on the row
+//    opens LoanDetailModal, where every action (approve, reject,
+//    disburse, repayment, schedule, delete, edit & resubmit) lives.
+//    Nothing acts directly from this row anymore. ──────────────────────
+function LoanRow({ loan, member, onPress }: { loan: Loan; member: any; onPress: () => void }) {
+  const statusColor = STATUS_COLOR[loan.status] || C.infoText;
+  const statusBg = STATUS_BG[loan.status] || C.mutedBg;
+  const statusLabel = STATUS_LABEL[loan.status] || loan.status;
   const pct = loan.status === "repaid"
     ? 100
     : loan.totalRepayable > 0
       ? Math.min(100, (loan.amountRepaid / loan.totalRepayable) * 100)
       : 0;
-  const statusColor = STATUS_COLOR[loan.status] || C.infoText;
-  const statusBg = STATUS_BG[loan.status] || C.mutedBg;
-  const statusLabel = STATUS_LABEL[loan.status] || loan.status;
 
   return (
-    <View style={styles.loanCard}>
-      <View style={styles.loanHeader}>
-        <View style={styles.loanAvatar}>
-          <Text style={styles.loanAvatarText}>
-            {(member?.fullName ?? "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
-          </Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.loanMember}>{member?.fullName ?? "Unknown"}</Text>
-          <Text style={styles.loanDate}>{fmtDate(loan.applicationDate)}</Text>
-        </View>
-        <View style={[styles.statusBadge, { backgroundColor: statusBg }]}>
-          <Text style={[styles.statusText, { color: statusLabel }]}>{statusLabel}</Text>
-        </View>
-      </View>
-
-      <View style={styles.amountsRow}>
-        <View style={styles.amountItem}>
-          <Text style={styles.amountLabel}>Principal</Text>
-          <Text style={styles.amountValue}>{fmtCurrency(loan.amount)}</Text>
-        </View>
-        <View style={styles.amountDivider} />
-        <View style={styles.amountItem}>
-          <Text style={styles.amountLabel}>Interest ({loan.interestRate}%)</Text>
-          <Text style={styles.amountValue}>{fmtCurrency(loan.totalInterest)}</Text>
-        </View>
-        <View style={styles.amountDivider} />
-        <View style={styles.amountItem}>
-          <Text style={styles.amountLabel}>Total Due</Text>
-          <Text style={[styles.amountValue, { color: C.primary, fontWeight: "800" }]}>
-            {fmtCurrency(loan.totalRepayable)}
-          </Text>
-        </View>
-      </View>
-
-      {["disbursed", "repaid"].includes(loan.status) && (
-        <View style={styles.progressSection}>
-          <View style={styles.progressHeader}>
-            <Text style={styles.progressLabel}>Repayment Progress</Text>
-            <Text style={[styles.progressPercent, pct >= 100 ? { color: C.success } : {}]}>{pct.toFixed(1)}%</Text>
-          </View>
-          <View style={styles.progressBar}>
-            <View style={[styles.progressFill, { width: `${Math.min(100, pct)}%` as any, backgroundColor: pct >= 100 ? C.success : C.primary }]} />
-          </View>
-          <Text style={styles.progressSub}>
-            {loan.status === "repaid"
-              ? `${fmtCurrency(loan.amountRepaid)} repaid · Fully paid ✓`
-              : `${fmtCurrency(loan.amountRepaid)} of ${fmtCurrency(loan.totalRepayable)} · ${fmtCurrency(Math.max(0, round2(loan.totalRepayable - loan.amountRepaid)))} remaining`}
-          </Text>
-        </View>
-      )}
-
-      {loan.purpose && (
-        <Text style={styles.purpose} numberOfLines={2}>
-          📝 {loan.purpose}
+    <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.7}>
+      <View style={styles.rowAvatar}>
+        <Text style={styles.rowAvatarText}>
+          {(member?.fullName ?? "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
         </Text>
-      )}
-
-      {loan.status === "rejected" && loan.rejectionReason && (
-        <View style={styles.rejectionBox}>
-          <Text style={styles.rejectionLabel}>Rejection Reason</Text>
-          <Text style={styles.rejectionText}>{loan.rejectionReason}</Text>
-        </View>
-      )}
-
-      <View style={styles.actionRow}>
-        <TouchableOpacity style={[styles.repayBtn, { flex: 1 }]} onPress={onViewDetails} activeOpacity={0.8}>
-          <Text style={styles.repayBtnText}>View Details</Text>
-        </TouchableOpacity>
-        
-        {actableStep && isPending && (
-          <>
-            <TouchableOpacity style={[styles.rejectBtn, { flex: 1 }]} onPress={onReject} activeOpacity={0.8}>
-              <Text style={styles.rejectBtnText}>Reject</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.approveBtn, { flex: 1 }]} onPress={onApprove} activeOpacity={0.8}>
-              <Text style={styles.approveBtnText}>Approve</Text>
-            </TouchableOpacity>
-          </>
-        )}
-
-        {loan.status === "approved" && (
-          <>
-            {onSchedule && (
-              <TouchableOpacity style={[styles.scheduleBtn, { flex: 1 }]} onPress={onSchedule} activeOpacity={0.8}>
-                <Text style={styles.scheduleBtnText}>Schedule</Text>
-              </TouchableOpacity>
-            )}
-            {canDisburse && (
-              <TouchableOpacity style={[styles.disburseBtn, { flex: 1 }]} onPress={onDisburse} activeOpacity={0.8}>
-                <Text style={styles.disburseBtnText}>Disburse</Text>
-              </TouchableOpacity>
-            )}
-          </>
-        )}
-
-        {loan.status === "disbursed" && (
-          <>
-            {onSchedule && (
-              <TouchableOpacity style={[styles.scheduleBtn, { flex: 1 }]} onPress={onSchedule} activeOpacity={0.8}>
-                <Text style={styles.scheduleBtnText}>Schedule</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity style={[styles.repayBtn, { flex: 1 }]} onPress={onRepayment} activeOpacity={0.8}>
-              <Text style={styles.repayBtnText}>Payment</Text>
-            </TouchableOpacity>
-          </>
-        )}
       </View>
-
-      {loan.status === "rejected" && onEditResubmit && (
-        <TouchableOpacity style={styles.editResubmitBtn} onPress={onEditResubmit} activeOpacity={0.8}>
-          <Text style={styles.editResubmitBtnText}>✏️ Edit & Resubmit</Text>
-        </TouchableOpacity>
-      )}
-
-            {canDisburse &&(
-        <TouchableOpacity style={styles.deleteBtn} onPress={onDelete} activeOpacity={0.8}>
-          <Text style={styles.deleteBtnText}>🗑 Delete Loan</Text>
-        </TouchableOpacity>
-      )}
-    </View>
+      <View style={styles.rowMid}>
+        <Text style={styles.rowTitle} numberOfLines={1}>{member?.fullName ?? "Unknown"}</Text>
+        <Text style={styles.rowMeta}>
+          {fmtDate(loan.applicationDate)}
+          {["disbursed", "repaid"].includes(loan.status) ? ` · ${pct.toFixed(0)}% repaid` : ""}
+        </Text>
+      </View>
+      <View style={{ alignItems: "flex-end" }}>
+        <Text style={styles.rowAmount}>{fmtCurrency(loan.amount)}</Text>
+        <View style={{ marginTop: 4 }}>
+          <Chip label={statusLabel} bg={statusBg} color={statusColor} />
+        </View>
+      </View>
+    </TouchableOpacity>
   );
 }
 
@@ -2232,4 +1632,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
   },
+
+  // ── New styles for the wallet-matching controls + compact row list ──
+  controlsBlock: { paddingHorizontal: 16, gap: 10, marginTop: 12 },
+  controlsTop: { flexDirection: "row", gap: 8, alignItems: "center" },
+  sortRow: { flexDirection: "row", gap: 6 },
+  sortChip: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: C.mutedBg },
+  sortChipActive: { backgroundColor: C.primary },
+  sortChipText: { fontSize: 12, fontWeight: "600", color: C.text3 },
+  sortChipTextActive: { color: "#fff" },
+
+  rowList: { backgroundColor: C.surface, borderRadius: 14, borderWidth: 1, borderColor: C.border, overflow: "hidden" },
+  row: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 13 },
+  rowAvatar: {
+    width: 36, height: 36, borderRadius: 18, backgroundColor: C.mutedBg,
+    alignItems: "center", justifyContent: "center", marginRight: 12,
+  },
+  rowAvatarText: { fontSize: 12, fontWeight: "700", color: C.text2 },
+  rowMid: { flex: 1, marginRight: 10 },
+  rowTitle: { fontSize: 14, fontWeight: "700", color: C.text },
+  rowMeta: { fontSize: 12, color: C.text3, marginTop: 2 },
+  rowAmount: { fontSize: 14, fontWeight: "800", color: C.text },
+
+  pagination: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 16,
+    paddingVertical: 20,
+  },
+  pageBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, backgroundColor: C.mutedBg },
+  pageBtnDisabled: { opacity: 0.4 },
+  pageBtnText: { fontSize: 13, fontWeight: "700", color: C.text },
+  pageBtnTextDisabled: { color: C.text3 },
+  pageLabel: { fontSize: 13, color: C.text3, fontWeight: "600" },
 });

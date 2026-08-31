@@ -189,6 +189,7 @@ export default function DashboardScreen() {
           </View>
         </View>
 
+
         {/* ── Quick actions ── */}
         {QUICK_ACTIONS.length > 0 && (
           <View style={st.block}>

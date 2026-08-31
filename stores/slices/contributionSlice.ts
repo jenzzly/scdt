@@ -14,7 +14,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
       deleteContributionLocal: (id) => set((s) => ({ contributions: s.contributions.filter((c) => c.id !== id) })),
 
       deleteContribution: async (contributionId: ID, reason: string) => {
-        const { activeGroupId, contributions, walletTransactions } = get();
+        const { activeGroupId, contributions, walletTransactions, members, authName } = get();
         if (!activeGroupId) throw new Error("No active group");
         
         const contribution = contributions.find((c) => c.id === contributionId);
@@ -35,6 +35,20 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
           await FS.deleteContributionWithRelations(activeGroupId, contributionId, reason);
           get().recalcTotals();
           get().setSyncStatus("synced");
+
+          const submitter = members.find((m) => m.id === contribution.memberId);
+          if (submitter?.userId) {
+            FS.addNotification(submitter.userId, {
+              userId: submitter.userId,
+              groupId: activeGroupId,
+              type: "contribution_deleted",
+              title: "Contribution Removed",
+              message: `Your contribution of ${contribution.amount} RWF was removed by ${authName || "an admin"}${reason ? `: ${reason}` : ""}`,
+              read: false,
+              metadata: { contributionId, reason },
+              createdAt: new Date().toISOString(),
+            }, submitter.email).catch(console.warn);
+          }
         } catch (e) {
           set((s) => ({ 
             contributions: previousContributions,
@@ -48,7 +62,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
 
       // ── Wallet Actions ───────────────────────────────────────────────────────
       recordContribution: async (data, autoApprove = true) => {
-        const { activeGroupId } = get();
+        const { activeGroupId, members } = get();
         if (!activeGroupId) throw new Error("No active group");
         const now = new Date().toISOString();
         const status = autoApprove ? "approved" : "pending";
@@ -77,6 +91,35 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
             };
             get().addWalletTxLocal(tx);
             FS.addWalletTx(activeGroupId, tx).catch(console.warn);
+          } else {
+            // Needs approval — notify whoever can approve contributions:
+            // admin, accountant, and loan_officer always can (see
+            // firestore rules canApproveContributions); committee only
+            // with an explicit permission, which isn't checked here
+            // since it's a per-member flag rather than a role — the
+            // small risk of notifying a committee member who then
+            // can't actually act is preferable to silently notifying
+            // no one when a committee member DOES have the permission.
+            const submitter = members.find((m) => m.id === data.memberId);
+            const approvers = members.filter(
+              (m) =>
+                m.groupId === activeGroupId &&
+                m.status === "active" &&
+                ["admin", "accountant", "loan_officer"].includes(m.role) &&
+                !!m.userId
+            );
+            for (const approver of approvers) {
+              FS.addNotification(approver.userId!, {
+                userId: approver.userId!,
+                groupId: activeGroupId,
+                type: "contribution_pending",
+                title: "New Contribution Awaiting Approval",
+                message: `${submitter?.fullName ?? "A member"} submitted a contribution of ${data.amount} RWF`,
+                read: false,
+                metadata: { contributionId: contribution.id },
+                createdAt: now,
+              }, approver.email).catch(console.warn);
+            }
           }
 
           get().setSyncStatus("synced");
@@ -91,7 +134,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
       },
 
       approveContribution: async (contributionId) => {
-        const { activeGroupId, contributions } = get();
+        const { activeGroupId, contributions, members } = get();
         if (!activeGroupId) return;
         const c = contributions.find((x) => x.id === contributionId);
         if (!c) return;
@@ -111,16 +154,45 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
         set((s) => recalcGroupTotals(s));
         FS.updateContribution(activeGroupId, contributionId, { status: "approved" }).catch(console.warn);
         FS.addWalletTx(activeGroupId, tx).catch(console.warn);
+
+        const submitter = members.find((m) => m.id === c.memberId);
+        if (submitter?.userId) {
+          FS.addNotification(submitter.userId, {
+            userId: submitter.userId,
+            groupId: activeGroupId,
+            type: "contribution_approved",
+            title: "Contribution Approved",
+            message: `Your contribution of ${c.amount} RWF has been approved`,
+            read: false,
+            metadata: { contributionId },
+            createdAt: new Date().toISOString(),
+          }, submitter.email).catch(console.warn);
+        }
       },
 
       rejectContribution: async (contributionId, reason) => {
-        const { activeGroupId } = get();
+        const { activeGroupId, contributions, members } = get();
         get().updateContributionLocal(contributionId, { status: "rejected", rejectionReason: reason });
         if (activeGroupId) {
           FS.updateContribution(activeGroupId, contributionId, {
             status: "rejected",
             rejectionReason: reason,
           }).catch(console.warn);
+        }
+
+        const c = contributions.find((x) => x.id === contributionId);
+        const submitter = c ? members.find((m) => m.id === c.memberId) : undefined;
+        if (activeGroupId && submitter?.userId && c) {
+          FS.addNotification(submitter.userId, {
+            userId: submitter.userId,
+            groupId: activeGroupId,
+            type: "contribution_rejected",
+            title: "Contribution Rejected",
+            message: `Your contribution of ${c.amount} RWF was rejected${reason ? `: ${reason}` : ""}`,
+            read: false,
+            metadata: { contributionId, rejectionReason: reason },
+            createdAt: new Date().toISOString(),
+          }, submitter.email).catch(console.warn);
         }
       },
 

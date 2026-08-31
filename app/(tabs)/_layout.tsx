@@ -31,6 +31,8 @@ import { useFirebaseSync, useNotificationSync } from "../../hooks/useFirebaseSyn
 import { useNetworkStatus } from "../../hooks/useNetworkStatus";
 import { Colors, S, R, showConfirm } from "../../utils/theme";
 import { BRAND } from "../../lib/brand";
+import * as FS from "../../lib/firestore";
+import { getWebNavForRole } from "../../lib/auth/permissions";
 
 // ─────────────────────────────────────────────
 // Nav config
@@ -49,6 +51,7 @@ const NAV_ICONS: Record<string, React.ComponentType<{ color?: string; size?: num
 const DESKTOP_NAV_ITEMS = [
   { label: "Dashboard",     route: "/(tabs)/dashboard"     },
   { label: "Loans",         route: "/(tabs)/loans"         },
+  { label: "Investments",   route: "/(tabs)/investments"   },
   { label: "Wallet",        route: "/(tabs)/wallet"        },
   { label: "Contributions", route: "/(tabs)/contributions" },
   { label: "Reports",       route: "/(tabs)/reports"       },
@@ -56,7 +59,7 @@ const DESKTOP_NAV_ITEMS = [
   { label: "Settings",      route: "/(tabs)/more"          },
 ];
 
-// Mobile tab bar: hide Wallet, show Contributions
+// Mobile tab bar: hide Wallet and Investments (web only), show Contributions
 const MOBILE_NAV_ITEMS = [
   { label: "Dashboard",     route: "/(tabs)/dashboard"     },
   { label: "Loans",         route: "/(tabs)/loans"         },
@@ -193,7 +196,8 @@ export default function TabsLayout() {
   const { width } = useWindowDimensions();
   const isWide = Platform.OS === "web" && width >= 768;
 
-  const { authUid, activeGroupId, authName, reset } = useStore();
+  const { authUid, activeGroupId, authName, reset, groups, setGroups, setActiveGroup } = useStore();
+  const [groupMenuOpen, setGroupMenuOpen] = React.useState(false);
   const dataViewMode = useDataViewMode();
   const setDataViewMode = useStore((s) => s.setDataViewMode);
   const currentUserRole = useCurrentUserRole();
@@ -210,6 +214,24 @@ export default function TabsLayout() {
     if (!authUid) {
       router.replace("/(auth)/login");
     }
+  }, [authUid]);
+
+  // Resolve only this user's memberships, then fetch those exact group docs.
+  // This avoids an insecure global `groups` query and makes switching groups
+  // survive logout/login without relying on a hard-coded group ID.
+  useEffect(() => {
+    if (!authUid) return;
+    let active = true;
+    FS.getGroupsByUser(authUid)
+      .then((memberGroups) => {
+        if (!active) return;
+        setGroups(memberGroups);
+        if (memberGroups.length && (!activeGroupId || !memberGroups.some((g) => g.id === activeGroupId))) {
+          setActiveGroup(memberGroups[0].id);
+        }
+      })
+      .catch((error) => console.warn("[groups] Unable to load memberships", error));
+    return () => { active = false; };
   }, [authUid]);
 
   useFirebaseSync(activeGroupId, isOnline);
@@ -230,7 +252,7 @@ export default function TabsLayout() {
   // accountant get the same switch, but it only reveals their own
   // approval queue (see useIsApproverView) — label it accordingly so
   // it's clear this isn't full admin access.
-  const viewModeSwitchLabel = currentUserRole === "admin" ? "Admin view" : "Approve view";
+  const viewModeSwitchLabel = currentUserRole === "admin" ? "Admin view" : "Review view";
   const viewModeSwitch = hasViewToggle ? (
     <TouchableOpacity
       style={[shared.viewModeSwitch, dataViewMode === "admin" && shared.viewModeSwitchActive]}
@@ -265,27 +287,38 @@ export default function TabsLayout() {
   // ── Web / Desktop layout ──────────────────
   if (isWide) {
     const initials = (authName ?? "U").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
+    const activeGroup = groups.find((g) => g.id === activeGroupId);
+    const navItems = getWebNavForRole(currentUserRole, currentMember?.permissions);
 
     return (
       <View style={shared.desktopRoot}>
         {/* Sidebar */}
         <View style={sb.sidebar}>
           {/* Brand */}
-          <View style={sb.brand}>
-            <View style={sb.brandMark}>
-              <Text style={sb.brandLetter}>S</Text>
+          <TouchableOpacity style={sb.brand} onPress={() => setGroupMenuOpen((open) => !open)} activeOpacity={0.8}>
+            <View style={sb.brandMark}><Text style={sb.brandLetter}>S</Text></View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={sb.brandName} numberOfLines={1}>{activeGroup?.name ?? BRAND.appName}</Text>
+              <Text style={sb.brandSub} numberOfLines={1}>{groups.length ? `${groups.length} group${groups.length === 1 ? "" : "s"} · switch` : "Loading groups…"}</Text>
             </View>
-            <View>
-              <Text style={sb.brandName}>{BRAND.appName}</Text>
-              <Text style={sb.brandSub}>Savings Group</Text>
+            <Text style={sb.groupChevron}>{groupMenuOpen ? "⌃" : "⌄"}</Text>
+          </TouchableOpacity>
+          {groupMenuOpen && (
+            <View style={sb.groupMenu}>
+              {groups.map((group) => (
+                <TouchableOpacity key={group.id} style={[sb.groupOption, group.id === activeGroupId && sb.groupOptionActive]} onPress={() => { setActiveGroup(group.id); setGroupMenuOpen(false); }}>
+                  <View style={sb.groupDot} /><Text style={sb.groupOptionText} numberOfLines={1}>{group.name}</Text>
+                  {group.id === activeGroupId && <Text style={sb.groupSelected}>✓</Text>}
+                </TouchableOpacity>
+              ))}
             </View>
-          </View>
+          )}
 
           {/* Nav */}
           <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={sb.navList}>
             <Text style={sb.navSection}>Navigation</Text>
             {viewModeSwitch}
-            {DESKTOP_NAV_ITEMS.map((item) => (
+            {navItems.map((item) => (
               <React.Fragment key={item.route}>
                 <SidebarItem
                   label={item.label}
@@ -320,6 +353,7 @@ export default function TabsLayout() {
           <Tabs screenOptions={{ headerShown: false, tabBarStyle: { display: "none" } }}>
             <Tabs.Screen name="dashboard"     options={{ title: "Dashboard"     }} />
             <Tabs.Screen name="loans"         options={{ title: "Loans"         }} />
+            <Tabs.Screen name="investments"   options={{ title: "Investments"   }} />
             <Tabs.Screen name="wallet"        options={{ title: "Wallet"        }} />
             <Tabs.Screen name="contributions" options={{ title: "Contributions" }} />
             <Tabs.Screen name="reports"       options={{ title: "Reports"       }} />
@@ -360,15 +394,19 @@ export default function TabsLayout() {
             }}
           />
         ))}
-        {/* Wallet is accessible by route (web sidebar, direct push) but
-            excluded from the mobile tab bar entirely. `href: null` is the
-            correct way to do this — it removes the route from the tab
-            bar's layout entirely. The previous `tabBarButton: () => null`
-            only hid the button; current React Navigation still reserves
-            an empty slot for it, which is what was throwing off the
-            equal-width spacing of the other 6 tabs. */}
+        {/* Wallet and Investments are accessible by route (web sidebar,
+            direct push) but excluded from the mobile tab bar entirely.
+            `href: null` is the correct way to do this — it removes the
+            route from the tab bar's layout entirely. A previous
+            `tabBarButton: () => null` only hid the button; current
+            React Navigation still reserves an empty slot for it, which
+            threw off the equal-width spacing of the other tabs. */}
         <Tabs.Screen
           name="wallet"
+          options={{ href: null }}
+        />
+        <Tabs.Screen
+          name="investments"
           options={{ href: null }}
         />
       </Tabs>
@@ -428,6 +466,16 @@ const sb = StyleSheet.create({
   brandLetter: { fontSize: 14, fontWeight: "800", color: "#fff" },
   brandName:   { fontSize: 14, fontWeight: "700", color: Colors.text, lineHeight: 18 },
   brandSub:    { fontSize: 10, color: Colors.text3, lineHeight: 14 },
+  groupChevron: { color: Colors.text3, fontSize: 15, paddingLeft: 4 },
+  groupMenu: {
+    marginHorizontal: 10, marginTop: 8, padding: 6, borderRadius: R.md,
+    backgroundColor: Colors.elevated, borderWidth: 1, borderColor: Colors.border,
+  },
+  groupOption: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 8, paddingVertical: 9, borderRadius: 8 },
+  groupOptionActive: { backgroundColor: Colors.primaryFaint ?? "rgba(13,148,136,0.08)" },
+  groupDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.accent },
+  groupOptionText: { flex: 1, fontSize: 12, fontWeight: "600", color: Colors.text },
+  groupSelected: { color: Colors.primary, fontWeight: "800" },
   navList:     { paddingHorizontal: 10, paddingTop: 14, paddingBottom: 10 },
   navSection: {
     fontSize: 9, fontWeight: "700", color: Colors.text3,

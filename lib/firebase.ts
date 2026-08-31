@@ -3,9 +3,9 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import {
   initializeAuth,
   getAuth,
-  getReactNativePersistence,
   setPersistence,
   browserLocalPersistence,
+  getReactNativePersistence,
   type Auth,
 } from "firebase/auth";
 import { getFirestore, enableNetwork, disableNetwork } from "firebase/firestore";
@@ -86,4 +86,4 @@ const storage = getStorage(app);
 // standalone Node script — not a Cloud Function. There is nothing left
 // that calls `firebase/functions`, so it isn't initialized here.
 
-export { app, auth, db, database, storage, enableNetwork, disableNetwork };
+export { app, auth, db, database, storage, enableNetwork, disableNetwork, firebaseConfig };

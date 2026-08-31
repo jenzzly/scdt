@@ -112,6 +112,25 @@ export const createWalletSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
           get().setSyncStatus("pending");
           await FS.addWalletTx(activeGroupId, tx);
           get().setSyncStatus("synced");
+
+          // Contribution-specific late-payment alert — same idea as
+          // applyLoanLateFee below, kept separate since it's a
+          // different overdue concept (missed contribution period vs.
+          // a loan installment) with its own message.
+          const { members } = get();
+          const member = members.find((m) => m.id === overdue.memberId);
+          if (member?.userId) {
+            FS.addNotification(member.userId, {
+              userId: member.userId,
+              groupId: activeGroupId,
+              type: "contribution_late_fee",
+              title: "Contribution Payment Overdue",
+              message: `Your ${overdue.periodLabel} contribution is ${overdue.daysLate} day${overdue.daysLate !== 1 ? "s" : ""} late — a fee of ${overdue.feeAmount} RWF has been applied`,
+              read: false,
+              metadata: { periodLabel: overdue.periodLabel, daysLate: overdue.daysLate, feeAmount: overdue.feeAmount },
+              createdAt: now,
+            }, member.email).catch(console.warn);
+          }
         } catch (e) {
           get().deleteWalletTxLocal(overdue.feeTxId);
           get().recalcTotals();
@@ -157,6 +176,24 @@ export const createWalletSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
           await FS.addWalletTx(activeGroupId, tx);
           await FS.updateLoan(activeGroupId, overdue.loanId, { lateFees: newLateFees });
           get().setSyncStatus("synced");
+
+          // Loan-specific late-payment alert — distinct from meeting
+          // absence/late-arrival penalties (see meetingSlice.ts), which
+          // are about attendance, not repayment.
+          const { members } = get();
+          const member = members.find((m) => m.id === overdue.memberId);
+          if (member?.userId) {
+            FS.addNotification(member.userId, {
+              userId: member.userId,
+              groupId: activeGroupId,
+              type: "loan_late_fee",
+              title: "Loan Payment Overdue",
+              message: `Installment #${overdue.installmentIndex + 1} is ${overdue.daysLate} day${overdue.daysLate !== 1 ? "s" : ""} late — a fee of ${overdue.feeAmount} RWF has been applied`,
+              read: false,
+              metadata: { loanId: overdue.loanId, installmentIndex: overdue.installmentIndex, daysLate: overdue.daysLate, feeAmount: overdue.feeAmount },
+              createdAt: now,
+            }, member.email).catch(console.warn);
+          }
         } catch (e) {
           get().deleteWalletTxLocal(overdue.feeTxId);
           get().updateLoanLocal(overdue.loanId, { lateFees: loan.lateFees || 0 });

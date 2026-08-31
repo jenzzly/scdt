@@ -581,8 +581,17 @@ export default function GroupSettingsScreen() {
   const [contribLateFeeStart, setContribLateFeeStart] = useState(group?.contributionLateFeeStartDate ?? "");
   const [loanLateFeePct,      setLoanLateFeePct]       = useState(String(group?.loanLateFeeRatePct ?? 5));
   const [loanLateFeeGrace,    setLoanLateFeeGrace]     = useState(String(group?.loanLateFeeGraceDays ?? 3));
-  const [saving,         setSaving]         = useState(false);
-  const [refreshing,     setRefreshing]     = useState(false);
+  // Periodic contribution goal — a savings TARGET every N months (e.g.
+  // 600,000 every 6 months), separate from the recurring minimum
+  // contributionAmount above. Uses the new ContributionGoalConfig structure.
+  const [goalEnabled,        setGoalEnabled]        = useState(group?.contributionGoal?.enabled ?? false);
+  const [goalMinimumContrib, setGoalMinimumContrib] = useState(String(group?.contributionGoal?.minimumContribution ?? group?.contributionAmount ?? 50000));
+  const [goalTargetAmount,   setGoalTargetAmount]   = useState(String(group?.contributionGoal?.targetAmount ?? 600000));
+  const [goalPeriodMonths,   setGoalPeriodMonths]   = useState(String(group?.contributionGoal?.periodMonths ?? 6));
+  // Loan penalty configuration
+  const [loanPenaltyRatePct, setLoanPenaltyRatePct] = useState(String(group?.loanPenaltyRatePct ?? group?.latePenaltyRatePct ?? 2.5));
+  const [saving,             setSaving]             = useState(false);
+  const [refreshing,         setRefreshing]         = useState(false);
 
   // Audit state
   const [activeSection, setActiveSection]   = useState<"settings" | "permissions" | "audit">("settings");
@@ -717,6 +726,12 @@ export default function GroupSettingsScreen() {
     const contributionLateFeeGraceDays = parseNum(contribLateFeeGrace);
     const loanLateFeeRatePct           = parseNum(loanLateFeePct);
     const loanLateFeeGraceDays         = parseNum(loanLateFeeGrace);
+    const loanPenaltyRatePctVal        = parseNum(loanPenaltyRatePct);
+    
+    // New contribution goal configuration
+    const goalMinimumContribVal       = parseNum(goalMinimumContrib);
+    const goalTargetAmountVal          = parseNum(goalTargetAmount);
+    const goalPeriodMonthsVal          = parseNum(goalPeriodMonths);
 
     if (contributionAmount !== undefined && contributionAmount < 0)  { show("Contribution amount cannot be negative", "error"); return; }
     if (loanInterestRate   !== undefined && (loanInterestRate < 0 || loanInterestRate > 100)) { show("Loan interest rate must be 0–100", "error"); return; }
@@ -725,8 +740,24 @@ export default function GroupSettingsScreen() {
     if (absencePenaltyOfficerRatePct !== undefined && (absencePenaltyOfficerRatePct < 0 || absencePenaltyOfficerRatePct > 100)) { show("Absence penalty rate must be 0–100%", "error"); return; }
     if (contributionLateFeeRatePct !== undefined && (contributionLateFeeRatePct < 0 || contributionLateFeeRatePct > 100)) { show("Contribution late fee rate must be 0–100%", "error"); return; }
     if (loanLateFeeRatePct !== undefined && (loanLateFeeRatePct < 0 || loanLateFeeRatePct > 100)) { show("Loan late fee rate must be 0–100%", "error"); return; }
+    if (loanPenaltyRatePctVal !== undefined && (loanPenaltyRatePctVal < 0 || loanPenaltyRatePctVal > 100)) { show("Loan penalty rate must be 0–100%", "error"); return; }
     if (contributionLateFeeGraceDays !== undefined && contributionLateFeeGraceDays < 0) { show("Grace days cannot be negative", "error"); return; }
     if (loanLateFeeGraceDays !== undefined && loanLateFeeGraceDays < 0) { show("Grace days cannot be negative", "error"); return; }
+
+    if (goalEnabled) {
+      if (goalMinimumContribVal === undefined || goalMinimumContribVal <= 0) {
+        show("Goal minimum contribution must be greater than 0", "error");
+        return;
+      }
+      if (goalTargetAmountVal === undefined || goalTargetAmountVal <= 0) {
+        show("Goal target amount must be greater than 0", "error");
+        return;
+      }
+      if (goalPeriodMonthsVal === undefined || goalPeriodMonthsVal < 1 || !Number.isInteger(goalPeriodMonthsVal)) {
+        show("Goal period must be a whole number of months (1 or more)", "error");
+        return;
+      }
+    }
 
     const trimmedStartDate = contribLateFeeStart.trim();
     if (trimmedStartDate && isNaN(new Date(trimmedStartDate).getTime())) {
@@ -749,6 +780,21 @@ export default function GroupSettingsScreen() {
       contributionLateFeeStartDate: trimmedStartDate || undefined,
       ...(loanLateFeeRatePct              !== undefined && { loanLateFeeRatePct }),
       ...(loanLateFeeGraceDays            !== undefined && { loanLateFeeGraceDays }),
+      ...(loanPenaltyRatePctVal           !== undefined && { loanPenaltyRatePct: loanPenaltyRatePctVal }),
+      // New contribution goal configuration
+      contributionGoal: goalEnabled ? {
+        enabled: true,
+        minimumContribution: goalMinimumContribVal || contributionAmount || 50000,
+        targetAmount: goalTargetAmountVal || 600000,
+        periodMonths: goalPeriodMonthsVal || 6,
+        currency: currency || "RWF",
+      } : {
+        enabled: false,
+        minimumContribution: contributionAmount || 50000,
+        targetAmount: 600000,
+        periodMonths: 6,
+        currency: currency || "RWF",
+      },
     };
 
     setSaving(true);
@@ -908,6 +954,72 @@ export default function GroupSettingsScreen() {
                 </View>
               </View>
 
+              <SectionHeading label="Contribution Goal" />
+              <View style={s.formCard}>
+                <Text style={{ fontSize: 12, color: C.text3, paddingHorizontal: 4, marginBottom: 12, lineHeight: 17 }}>
+                  A savings TARGET each member should reach every so often — separate
+                  from the recurring minimum above (e.g. minimum {fmtCurrency(parseFloat(contribAmount) || 0)}/{freq},
+                  but a target of a larger amount every few months). Optional — leave
+                  off if this group doesn't need it.
+                </Text>
+                <View style={s.toggleRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.toggleLabel}>Enable contribution goal</Text>
+                    <Text style={s.toggleHint}>Track progress toward a periodic target per member</Text>
+                  </View>
+                  <Switch
+                    value={goalEnabled}
+                    onValueChange={setGoalEnabled}
+                    trackColor={{ false: C.border, true: C.primary }}
+                    thumbColor="#fff"
+                  />
+                </View>
+                {goalEnabled && (
+                  <>
+                    <Divider />
+                    <View style={s.row}>
+                      <View style={{ flex: 1 }}>
+                        <Input
+                          label="Minimum contribution"
+                          value={goalMinimumContrib}
+                          onChangeText={setGoalMinimumContrib}
+                          keyboardType="numeric"
+                          prefix={currency}
+                          hint="Minimum amount each member must contribute per period"
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Input
+                          label="Target amount"
+                          value={goalTargetAmount}
+                          onChangeText={setGoalTargetAmount}
+                          keyboardType="numeric"
+                          prefix={currency}
+                          hint="Goal target amount for the period"
+                        />
+                      </View>
+                    </View>
+                    <View style={s.row}>
+                      <View style={{ flex: 1 }}>
+                        <Input
+                          label="Period length (months)"
+                          value={goalPeriodMonths}
+                          onChangeText={setGoalPeriodMonths}
+                          keyboardType="numeric"
+                          hint="Number of months per goal period"
+                        />
+                      </View>
+                    </View>
+                    {!!goalTargetAmount && !!goalPeriodMonths && (
+                      <Text style={{ fontSize: 11, color: C.text3, paddingHorizontal: 4, marginTop: 4 }}>
+                        Target: {fmtCurrency(parseFloat(goalTargetAmount) || 0)} every {goalPeriodMonths} month{goalPeriodMonths === "1" ? "" : "s"}
+                        {parseFloat(goalPeriodMonths) > 0 ? ` — ≈ ${Math.floor(12 / parseFloat(goalPeriodMonths))} goal period${Math.floor(12 / parseFloat(goalPeriodMonths)) === 1 ? "" : "s"} per year` : ""}
+                      </Text>
+                    )}
+                  </>
+                )}
+              </View>
+
               <SectionHeading label="Loan Rules" />
               <View style={s.formCard}>
                 <Select
@@ -945,6 +1057,14 @@ export default function GroupSettingsScreen() {
                     ? `${loanRate || "0"}% per year ≈ ${round2((parseFloat(loanRate) || 0) / 12)}% per month — applied to the ${loanMethod === "reducing_balance" ? "outstanding balance" : "original loan amount"}`
                     : `${loanRate || "0"}% per month ≈ ${round2((parseFloat(loanRate) || 0) * 12)}% per year — applied to the ${loanMethod === "reducing_balance" ? "outstanding balance" : "original loan amount"}`}
                 </Text>
+                <Divider />
+                <Input
+                  label="Loan penalty rate (%)"
+                  value={loanPenaltyRatePct}
+                  onChangeText={setLoanPenaltyRatePct}
+                  keyboardType="numeric"
+                  hint="Default penalty rate for loan late payments (captured at loan creation)"
+                />
               </View>
             </View>
 
@@ -1547,6 +1667,24 @@ const s = StyleSheet.create({
     backgroundColor: C.elevated,
     alignItems: "center", justifyContent: "center",
     borderWidth: 1, borderColor: C.border,
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  toggleLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: C.text,
+  },
+  toggleHint: {
+    fontSize: 12,
+    color: C.text3,
+    marginTop: 2,
   },
   backBtnText: { fontSize: 16, color: C.text2, fontWeight: "500", lineHeight: 20 },
   headerTitle: { fontSize: 16, fontWeight: "700", color: C.text },

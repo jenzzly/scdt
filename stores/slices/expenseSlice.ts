@@ -14,7 +14,7 @@ export const createExpenseSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
       deleteExpenseLocal: (id) => set((s) => ({ expenses: s.expenses.filter((e) => e.id !== id) })),
 
       addExpense: async (data) => {
-        const { activeGroupId } = get();
+        const { activeGroupId, members, authUid, authName } = get();
         if (!activeGroupId) throw new Error("No active group");
         const now = new Date().toISOString();
         const expense: Expense = { ...data, id: uid(), createdAt: now };
@@ -34,12 +34,37 @@ export const createExpenseSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
         set((s) => recalcGroupTotals(s));
         FS.addExpense(activeGroupId, expense).catch(console.warn);
         FS.addWalletTx(activeGroupId, tx).catch(console.warn);
+
+        // Notify other admins/accountants (not the person who just
+        // created it) — expenses move group money, so the rest of
+        // leadership should see it happen.
+        const notifyTargets = members.filter(
+          (m) =>
+            m.groupId === activeGroupId &&
+            m.status === "active" &&
+            ["admin", "accountant"].includes(m.role) &&
+            m.userId !== authUid &&
+            !!m.userId
+        );
+        for (const target of notifyTargets) {
+          FS.addNotification(target.userId!, {
+            userId: target.userId!,
+            groupId: activeGroupId,
+            type: "expense_added",
+            title: "New Expense Recorded",
+            message: `${authName || "Someone"} recorded an expense of ${data.amount} RWF: ${data.description}`,
+            read: false,
+            metadata: { expenseId: expense.id },
+            createdAt: now,
+          }, target.email).catch(console.warn);
+        }
+
         return expense.id;
       },
 
       // ─── Delete Expense (atomic cascade to the wallet debit it generated) ──
       deleteExpense: async (expenseId, reason) => {
-        const { activeGroupId, expenses, walletTransactions } = get();
+        const { activeGroupId, expenses, walletTransactions, members, authUid, authName } = get();
         if (!activeGroupId) throw new Error("No active group");
         const expense = expenses.find((e) => e.id === expenseId);
         if (!expense) throw new Error("Expense not found");
@@ -58,6 +83,27 @@ export const createExpenseSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
           await FS.deleteExpenseWithRelations(activeGroupId, expenseId, reason);
           get().recalcTotals();
           get().setSyncStatus("synced");
+
+          const notifyTargets = members.filter(
+            (m) =>
+              m.groupId === activeGroupId &&
+              m.status === "active" &&
+              ["admin", "accountant"].includes(m.role) &&
+              m.userId !== authUid &&
+              !!m.userId
+          );
+          for (const target of notifyTargets) {
+            FS.addNotification(target.userId!, {
+              userId: target.userId!,
+              groupId: activeGroupId,
+              type: "expense_deleted",
+              title: "Expense Removed",
+              message: `${authName || "Someone"} removed an expense of ${expense.amount} RWF: ${expense.description}${reason ? ` (${reason})` : ""}`,
+              read: false,
+              metadata: { expenseId, reason },
+              createdAt: new Date().toISOString(),
+            }, target.email).catch(console.warn);
+          }
         } catch (e) {
           set((s) => ({
             expenses: previousExpenses,
