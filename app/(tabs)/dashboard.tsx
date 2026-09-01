@@ -138,25 +138,30 @@ export default function DashboardScreen() {
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
 
-      {/* ── Top bar ── */}
-      <View style={st.topBar}>
-        <View>
-          <Text style={st.greeting}>Good day</Text>
-          <Text style={st.userName}>{authName?.split(" ")[0] ?? "User"}</Text>
+      {/* ── Top bar — mobile only. On desktop, the shared sidebar layout
+           (app/(tabs)/_layout.tsx) already renders a persistent header
+           with the page title, date, notification bell, and user
+           identity, so this greeting bar would just duplicate it. ── */}
+      {!isWide && (
+        <View style={st.topBar}>
+          <View>
+            <Text style={st.greeting}>Good day</Text>
+            <Text style={st.userName}>{authName?.split(" ")[0] ?? "User"}</Text>
+          </View>
+          <TouchableOpacity
+            style={st.notifBtn}
+            onPress={() => router.push("/notifications")}
+            activeOpacity={0.8}
+          >
+            <Text style={{ fontSize: 10 }}>N</Text>
+            {(unreadCount > 0) && (
+              <View style={st.badge}>
+                <Text style={st.badgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          style={st.notifBtn}
-          onPress={() => router.push("/notifications")}
-          activeOpacity={0.8}
-        >
-          <Text style={{ fontSize: 10 }}>N</Text>
-          {(unreadCount > 0) && (
-            <View style={st.badge}>
-              <Text style={st.badgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
+      )}
 
       <ScrollView
         contentContainerStyle={{ paddingBottom: 100, maxWidth: isWide ? 960 : undefined, alignSelf: isWide ? "center" as any : undefined, width: "100%" as any }}

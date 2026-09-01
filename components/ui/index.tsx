@@ -329,16 +329,19 @@ export const Input = forwardRef<TextInput, InputProps>(({
 
 // ── Select ────────────────────────────────────────────────────────────────────
 export function Select({
-  label, value, options, onChange, hint,
+  label, value, options, items, onChange, hint,
 }: {
   label?: string;
   value: string | number;
-  options: { label: string; value: string | number }[];
+  options?: { label: string; value: string | number }[];
+  items?: { label: string; value: string | number }[];
   onChange: (v: any) => void;
   hint?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const selected = options.find((o) => o.value === value);
+  // Accept either options or items (items is alias for options)
+  const opts = options || items || [];
+  const selected = opts.find((o) => o.value === value);
   return (
     <View style={styles.formGroup}>
       {label && <Text style={styles.formLabel}>{label}</Text>}
@@ -350,7 +353,7 @@ export function Select({
       </TouchableOpacity>
       {hint && <Text style={styles.inputHint}>{hint}</Text>}
       <BottomModal visible={open} onClose={() => setOpen(false)} title={label ?? "Select"}>
-        {options.map((o) => (
+        {opts.map((o) => (
           <TouchableOpacity
             key={String(o.value)}
             onPress={() => { onChange(o.value); setOpen(false); }}

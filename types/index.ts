@@ -1,13 +1,7 @@
 // types/index.ts
 export type ID = string;
 
-// Import centralized role definitions
-import { UserRole, USER_ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, getRoleLabel, getRoleDescription, isValidRole } from "./roles";
-export type { UserRole, USER_ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, getRoleLabel, getRoleDescription, isValidRole } from "./roles";
-
-// Legacy type alias for backward compatibility
-export type MemberRole = UserRole;
-
+export type MemberRole = "admin" | "accountant" | "loan_officer" | "committee" | "member";
 export type MemberStatus = "active" | "inactive" | "pending" | "suspended" | "exited";
 export type LoanStatus = 
   | "pending_loan_officer" 
@@ -100,26 +94,6 @@ export interface LoanApprovals {
 
 export type LoanInterestMethod = "flat" | "reducing_balance";
 
-export interface ContributionGoalConfig {
-  enabled: boolean;
-  minimumContribution: number;
-  targetAmount: number;
-  periodMonths: number;
-  currency: string;
-}
-
-export interface ContributionGoalPeriod {
-  id: ID;
-  groupId: ID;
-  periodStart: string;
-  periodEnd: string;
-  targetAmount: number;
-  minimumContribution: number;
-  status: "active" | "completed" | "expired";
-  createdAt: string;
-  completedAt?: string;
-}
-
 export interface Group {
   id: ID;
   name: string;
@@ -183,19 +157,32 @@ export interface Group {
   loanLateFeeRatePct?: number;           // % of the overdue installment amount
   loanLateFeeGraceDays?: number;         // days after due date before a fee applies
 
+  /**
+   * Periodic contribution goal — separate from the regular
+   * contributionAmount/contributionFrequency above (which is the
+   * minimum recurring payment, e.g. 50,000 monthly). This is a
+   * higher-level savings TARGET a member should reach every N months —
+   * e.g. 600,000 every 6 months — independent of how they get there
+   * (could be exactly the monthly minimum × 6, or lump sums, or a mix).
+   * Optional/group-configurable: a group not interested in this stays
+   * unaffected by leaving it unset, per client. periodMonths must be a
+   * whole number >= 1; targetAmount must be > 0. anchorDate is the
+   * period start used to compute which period "now" falls in (e.g. the
+   * group's founding date, or whenever the goal was configured) — every
+   * period is periodMonths long starting from there, tiling forward
+   * indefinitely, so "2 goals completed this year" naturally falls out
+   * of period math rather than needing a stored counter.
+   */
+  contributionGoalPeriodMonths?: number;
+  contributionGoalTargetAmount?: number;
+  contributionGoalAnchorDate?: string;
+
   /** @deprecated fixed-amount penalties — retained for backward compatibility */
   latePenaltyAmount?: number;
   /** @deprecated fixed-amount penalties — retained for backward compatibility */
   absencePenaltyMember?: number;
   /** @deprecated fixed-amount penalties — retained for backward compatibility */
   absencePenaltyOfficer?: number;
-  
-  // Contribution goal configuration
-  contributionGoal?: ContributionGoalConfig;
-  
-  // Loan penalty configuration
-  loanPenaltyRatePct?: number;          // Default penalty rate for loans
-
   totalSavings: number;
   totalLoans: number;
   availableBalance: number;
@@ -260,8 +247,6 @@ export interface Contribution {
   deletedBy?: ID;
   deletedAt?: string;
   deletionReason?: string;
-  // Goal period tracking
-  goalPeriodId?: ID;
 }
 
 export interface Loan {
@@ -279,12 +264,18 @@ export interface Loan {
    */
   interestMethod?: LoanInterestMethod;
   interestRatePeriod?: "monthly" | "annual"; // snapshot of Group.loanInterestRatePeriod at submission
-  // Historical rate capture at creation
-  interestRateAtCreation?: number;        // snapshot of the interest rate at loan creation
-  penaltyRateAtCreation?: number;         // snapshot of the penalty rate at loan creation
-  interestMethodAtCreation?: LoanInterestMethod; // snapshot of interest method at creation
-  interestPeriodAtCreation?: "monthly" | "annual"; // snapshot of interest period at creation
-  loanCreatedAt?: string;                 // loan creation/effective date for historical calculations
+  /**
+   * Snapshot of the group's loanLateFeeRatePct / loanLateFeeGraceDays at
+   * the time this loan was submitted — same reasoning as interestMethod
+   * above. Without this, changing the group's penalty rate later would
+   * retroactively change what an existing, already-disbursed loan owes
+   * in late fees, which isn't fair to a borrower who took the loan under
+   * a different policy. Optional because loans created before this
+   * field existed have neither — findOverdueInstallments falls back to
+   * the group's current rate for those (see utils/lateFees.ts).
+   */
+  lateFeeRatePct?: number;
+  lateFeeGraceDays?: number;
   repaymentPlan: "monthly" | "weekly" | "lump_sum";
   repaymentMonths: number;
   firstPaymentDate: string;

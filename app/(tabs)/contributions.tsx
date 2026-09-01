@@ -14,7 +14,8 @@ import { SearchBar, Card, Badge, Empty, BottomModal, useToast, Select, DatePicke
 import { Colors, C, T, S, R, fmtCurrency, fmtDate } from "../../utils/theme";
 import { exportCsv, exportPdf } from "../../utils/export";
 import { findOverdueContributions } from "../../utils/lateFees";
-import type { Contribution } from "../../types";
+import { getCurrentGoalPeriod } from "../../lib/firestore/contributionGoals";
+import type { Contribution, ContributionGoalPeriod } from "../../types";
 
 const STATUS_COLOR: Record<string, "teal" | "gold" | "green" | "red" | "muted"> = {
   approved: "green",
@@ -91,12 +92,26 @@ export default function ContributionsScreen() {
   const [selectedContrib, setSelectedContrib] = useState<Contribution | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [applyingFeeId, setApplyingFeeId] = useState<string | null>(null);
+  const [goalPeriod, setGoalPeriod] = useState<ContributionGoalPeriod | null>(null);
 
   // Late fee calculation
   const overdueContributions = useMemo(() => {
     if (!group) return [];
     return findOverdueContributions(group, allMembers, allContributions, allWallet);
   }, [canManageFees, group, allMembers, allContributions, allWallet]);
+
+  // Load current goal period
+  React.useEffect(() => {
+    if (!activeGroupId) return;
+    (async () => {
+      try {
+        const period = await getCurrentGoalPeriod(activeGroupId);
+        setGoalPeriod(period);
+      } catch (e) {
+        console.error("[Contributions] Failed to load goal period:", e);
+      }
+    })();
+  }, [activeGroupId]);
 
   const visibleLateFees = useMemo(
     () => {
@@ -118,6 +133,36 @@ export default function ContributionsScreen() {
     },
     [overdueContributions, allWallet, allMembers, isAdminView, currentMember],
   );
+
+  // Calculate contribution goal progress
+  const goalProgress = useMemo(() => {
+    if (!goalPeriod || !group?.contributionGoal?.enabled) return null;
+    
+    const now = new Date();
+    const periodStart = new Date(goalPeriod.periodStart);
+    const periodEnd = new Date(goalPeriod.periodEnd);
+    
+    // Filter contributions in this period
+    const periodContributions = allContributions.filter(c => {
+      const cDate = new Date(c.date);
+      return cDate >= periodStart && cDate <= periodEnd && c.status === "approved";
+    });
+    
+    const totalContributed = periodContributions.reduce((sum, c) => sum + (c.amount || 0), 0);
+    const target = goalPeriod.targetAmount;
+    const percentage = target > 0 ? Math.round((totalContributed / target) * 100) : 0;
+    const remaining = Math.max(0, target - totalContributed);
+    const daysLeft = Math.ceil((periodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    
+    return {
+      totalContributed,
+      target,
+      remaining,
+      percentage,
+      daysLeft,
+      isCompleted: totalContributed >= target,
+    };
+  }, [goalPeriod, allContributions, group?.contributionGoal?.enabled]);
 
   const handleApplyContributionFee = async (item: any) => {
     setApplyingFeeId(item.feeTxId);
@@ -306,6 +351,56 @@ export default function ContributionsScreen() {
             </View>
           </View>
         </View>
+
+        {/* ── Contribution Goals Card ── */}
+        {group?.contributionGoal?.enabled && goalProgress && (
+          <View style={[st.goalCard, isWide && { marginHorizontal: 0, maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+            <View style={st.cardAccentDot} />
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+              <View>
+                <Text style={st.goalLabel}>
+                  {goalProgress.isCompleted ? "✓ GOAL ACHIEVED" : "CONTRIBUTION GOAL"}
+                </Text>
+                <Text style={st.goalAmount}>
+                  <Text style={st.balanceCurrency}>{group?.currency ?? "RWF"} </Text>
+                  {fmtCurrency(goalProgress.totalContributed, group?.currency ?? "RWF").replace(`${group?.currency ?? "RWF"} `, "")}
+                </Text>
+              </View>
+              <View style={{ alignItems: "flex-end" }}>
+                <Text style={[st.goalPercentage, goalProgress.isCompleted && { color: Colors.green }]}>
+                  {goalProgress.percentage}%
+                </Text>
+                <Text style={st.goalDaysLeft}>
+                  {goalProgress.daysLeft > 0 ? `${goalProgress.daysLeft}d left` : "Period ended"}
+                </Text>
+              </View>
+            </View>
+            
+            {/* Progress bar */}
+            <View style={st.progressBarContainer}>
+              <View 
+                style={[st.progressBar, { width: `${Math.min(100, goalProgress.percentage)}%`, backgroundColor: goalProgress.isCompleted ? Colors.green : Colors.primary }]} 
+              />
+            </View>
+            
+            <View style={{ marginTop: 12, flexDirection: "row", gap: 12 }}>
+              <View style={st.goalStat}>
+                <Text style={st.goalStatLabel}>Target</Text>
+                <Text style={st.goalStatValue}>{fmtCurrency(goalProgress.target)}</Text>
+              </View>
+              <View style={st.goalStat}>
+                <Text style={st.goalStatLabel}>Remaining</Text>
+                <Text style={[st.goalStatValue, goalProgress.isCompleted && { color: Colors.green }]}>
+                  {fmtCurrency(goalProgress.remaining)}
+                </Text>
+              </View>
+              <View style={st.goalStat}>
+                <Text style={st.goalStatLabel}>Min Contribution</Text>
+                <Text style={st.goalStatValue}>{fmtCurrency(goalPeriod?.minimumContribution ?? 0)}</Text>
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* ── Controls: search + tabs + sort ── */}
         <View style={[st.controls, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
@@ -559,6 +654,22 @@ const st = StyleSheet.create({
   balancePillLabel: { fontSize: 9, fontWeight: "700", color: "rgba(255,255,255,0.4)", letterSpacing: 0.8, textTransform: "uppercase" },
   balancePillValue: { fontSize: 12, fontWeight: "700", marginTop: 3 },
   balancePillDivider: { width: 1, backgroundColor: "rgba(255,255,255,0.1)" },
+
+  // Goal card
+  goalCard: {
+    margin: 16, borderRadius: 20, backgroundColor: C.card, padding: 24, overflow: "hidden", marginTop: 8,
+  },
+  goalLabel: { fontSize: 10, fontWeight: "700", color: "rgba(255,255,255,0.45)", letterSpacing: 1.2, textTransform: "uppercase" },
+  goalAmount: { fontSize: 24, fontWeight: "800", color: "#fff", letterSpacing: -1, marginTop: 4 },
+  goalPercentage: { fontSize: 20, fontWeight: "800", color: C.primary },
+  goalDaysLeft: { fontSize: 10, fontWeight: "600", color: "rgba(255,255,255,0.5)", marginTop: 2 },
+  progressBarContainer: {
+    height: 8, backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 4, overflow: "hidden", marginTop: 12,
+  },
+  progressBar: { height: "100%", backgroundColor: C.primary, borderRadius: 4 },
+  goalStat: { flex: 1, alignItems: "center" },
+  goalStatLabel: { fontSize: 9, fontWeight: "700", color: "rgba(255,255,255,0.4)", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 4 },
+  goalStatValue: { fontSize: 11, fontWeight: "700", color: "#fff" },
 
   // Controls
   controls: { paddingHorizontal: 16, marginTop: 8 },

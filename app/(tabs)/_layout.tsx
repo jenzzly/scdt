@@ -20,42 +20,64 @@ try {
     Calendar: null,
     LogOut: null,
     DollarSign: null,
+    TrendingUp: null,
+    ChevronLeft: null,
+    ChevronRight: null,
+    Users: null,
+    Bell: null,
   };
 }
 
-const { Home, CreditCard, Wallet, BarChart3, Settings, Calendar, LogOut, DollarSign } = Icons || {};
+const { Home, CreditCard, Wallet, BarChart3, Settings, Calendar, LogOut, DollarSign, TrendingUp, ChevronLeft, ChevronRight, Users, Bell } = Icons || {};
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useStore, useCurrentUserRole, useCurrentMember, useDataViewMode, useHasViewToggle } from "../../stores/useStore";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useStore, useCurrentUserRole, useCurrentMember, useDataViewMode, useHasViewToggle, useUnreadNotifs } from "../../stores/useStore";
 import { useAuth } from "../../hooks/useAuth";
 import { useFirebaseSync, useNotificationSync } from "../../hooks/useFirebaseSync";
 import { useNetworkStatus } from "../../hooks/useNetworkStatus";
-import { Colors, S, R, showConfirm } from "../../utils/theme";
+import { Colors, S, R, showConfirm, fmtDateLong } from "../../utils/theme";
 import { BRAND } from "../../lib/brand";
-import * as FS from "../../lib/firestore";
-import { getWebNavForRole } from "../../lib/auth/permissions";
+
+// Route segment → page title, for the shared desktop top header.
+const PAGE_TITLES: Record<string, string> = {
+  dashboard: "Dashboard",
+  members: "Members",
+  contributions: "Contributions",
+  loans: "Loans",
+  investments: "Investments",
+  wallet: "Wallet",
+  meetings: "Meetings",
+  reports: "Reports",
+  more: "Settings",
+};
 
 // ─────────────────────────────────────────────
 // Nav config
 // ─────────────────────────────────────────────
 const NAV_ICONS: Record<string, React.ComponentType<{ color?: string; size?: number }> | null> = {
   Dashboard:     Home || null,
+  Members:       Users || null,
   Loans:         CreditCard || null,
+  Investments:   TrendingUp || null,
   Wallet:        Wallet || null,
   Contributions: DollarSign || null,
   Reports:       BarChart3 || null,
   Meetings:      Calendar || null,
-  Settings:      Settings || null,
+  Settings:      Settings || null
 };
 
-// Desktop sidebar shows everything including Wallet
+// Desktop sidebar. Members is web/desktop-only by design — see
+// MOBILE_NAV_ITEMS below, which deliberately omits it — and is placed
+// second, matching the reference layout.
 const DESKTOP_NAV_ITEMS = [
   { label: "Dashboard",     route: "/(tabs)/dashboard"     },
+  { label: "Members",       route: "/(tabs)/members"       },
+  { label: "Contributions", route: "/(tabs)/contributions" },
   { label: "Loans",         route: "/(tabs)/loans"         },
   { label: "Investments",   route: "/(tabs)/investments"   },
   { label: "Wallet",        route: "/(tabs)/wallet"        },
-  { label: "Contributions", route: "/(tabs)/contributions" },
-  { label: "Reports",       route: "/(tabs)/reports"       },
   { label: "Meetings",      route: "/(tabs)/meetings"      },
+  { label: "Reports",       route: "/(tabs)/reports"       },
   { label: "Settings",      route: "/(tabs)/more"          },
 ];
 
@@ -72,25 +94,32 @@ const MOBILE_NAV_ITEMS = [
 // ─────────────────────────────────────────────
 // Sidebar item (web)
 // ─────────────────────────────────────────────
-function SidebarItem({ label, isActive, onPress }: { label: string; isActive: boolean; onPress: () => void }) {
+function SidebarItem({ label, isActive, onPress, collapsed }: { label: string; isActive: boolean; onPress: () => void; collapsed?: boolean }) {
   const Icon = NAV_ICONS[label];
   const iconEmoji: Record<string, string> = {
     Dashboard: "🏠",
     Loans: "💳",
+    Investments: "📈",
     Wallet: "💰",
     Contributions: "💵",
     Reports: "📊",
     Meetings: "📅",
     Settings: "⚙️",
+    Members: "👥",
   };
-  
+
   return (
-    <TouchableOpacity style={[sb.item, isActive && sb.itemActive]} onPress={onPress} activeOpacity={0.7}>
+    <TouchableOpacity
+      style={[sb.item, isActive && sb.itemActive, collapsed && sb.itemCollapsed]}
+      onPress={onPress}
+      activeOpacity={0.7}
+      accessibilityLabel={label}
+    >
       <View style={[sb.iconWrap, isActive && sb.iconWrapActive]}>
         {Icon ? <Icon size={16} color={isActive ? Colors.primary : Colors.text3} /> : <Text style={{ fontSize: 16 }}>{iconEmoji[label] || "•"}</Text>}
       </View>
-      <Text style={[sb.label, isActive && sb.labelActive]}>{label}</Text>
-      {isActive && <View style={sb.activePip} />}
+      {!collapsed && <Text style={[sb.label, isActive && sb.labelActive]}>{label}</Text>}
+      {isActive && !collapsed && <View style={sb.activePip} />}
     </TouchableOpacity>
   );
 }
@@ -190,23 +219,114 @@ const pa = StyleSheet.create({
 });
 
 // ─────────────────────────────────────────────
+// Desktop top header — persistent across every web page: title, date,
+// notification bell, current user + role. The sidebar already carries
+// the user's name/avatar/sign-out for navigation purposes; this header
+// is the page-level identity strip the reference screenshots show.
+// ─────────────────────────────────────────────
+function DesktopTopHeader({
+  title, authName, role, unreadCount, onBellPress,
+}: { title: string; authName: string; role: string; unreadCount: number; onBellPress: () => void }) {
+  const initials = (authName ?? "U").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
+  const today = React.useMemo(() => fmtDateLong(), []);
+
+  return (
+    <View style={dh.root}>
+      <View>
+        <Text style={dh.title}>{title}</Text>
+        <Text style={dh.date}>{today}</Text>
+      </View>
+      <View style={dh.right}>
+        <TouchableOpacity style={dh.bellBtn} onPress={onBellPress} activeOpacity={0.7} accessibilityLabel="Notifications">
+          {Bell ? <Bell size={18} color={Colors.text2} /> : <Text style={{ fontSize: 16 }}>🔔</Text>}
+          {unreadCount > 0 && (
+            <View style={dh.badge}>
+              <Text style={dh.badgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+        <View style={dh.userBlock}>
+          <View style={dh.avatar}>
+            <Text style={dh.avatarText}>{initials}</Text>
+          </View>
+          <View>
+            <Text style={dh.userName} numberOfLines={1}>{authName ?? "User"}</Text>
+            <Text style={dh.userRole}>{role}</Text>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const dh = StyleSheet.create({
+  root: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 32, paddingVertical: 18,
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
+  },
+  title: { fontSize: 22, fontWeight: "800", color: Colors.text },
+  date: { fontSize: 13, color: Colors.text3, marginTop: 2 },
+  right: { flexDirection: "row", alignItems: "center", gap: 18 },
+  bellBtn: {
+    width: 36, height: 36, borderRadius: 10,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: Colors.elevated,
+  },
+  badge: {
+    position: "absolute", top: -4, right: -4,
+    minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 3,
+    backgroundColor: Colors.error, alignItems: "center", justifyContent: "center",
+  },
+  badgeText: { fontSize: 9, fontWeight: "800", color: "#fff" },
+  userBlock: { flexDirection: "row", alignItems: "center", gap: 10 },
+  avatar: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: Colors.primary, alignItems: "center", justifyContent: "center",
+  },
+  avatarText: { fontSize: 13, fontWeight: "800", color: "#fff" },
+  userName: { fontSize: 13, fontWeight: "700", color: Colors.text },
+  userRole: { fontSize: 11, color: Colors.text3, textTransform: "capitalize", marginTop: 1 },
+});
+
+// ─────────────────────────────────────────────
 // Root layout
 // ─────────────────────────────────────────────
 export default function TabsLayout() {
   const { width } = useWindowDimensions();
   const isWide = Platform.OS === "web" && width >= 768;
 
-  const { authUid, activeGroupId, authName, reset, groups, setGroups, setActiveGroup } = useStore();
-  const [groupMenuOpen, setGroupMenuOpen] = React.useState(false);
+  const { authUid, activeGroupId, authName, reset } = useStore();
   const dataViewMode = useDataViewMode();
   const setDataViewMode = useStore((s) => s.setDataViewMode);
   const currentUserRole = useCurrentUserRole();
   const currentMember = useCurrentMember();
   const hasViewToggle = useHasViewToggle();
   const isOnline = useNetworkStatus();
+  const unreadCount = useUnreadNotifs();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const { signOut } = useAuth();
+
+  // Sidebar collapse — web/desktop only. Persisted across sessions via
+  // AsyncStorage (a plain local device preference, not synced through
+  // Firestore — there's no need for this to follow the user across
+  // devices, and it avoids any write/rules surface for something this
+  // cosmetic).
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
+  React.useEffect(() => {
+    AsyncStorage.getItem("sidebarCollapsed").then((v) => {
+      if (v === "true") setSidebarCollapsed(true);
+    }).catch(() => {});
+  }, []);
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      AsyncStorage.setItem("sidebarCollapsed", String(next)).catch(() => {});
+      return next;
+    });
+  };
 
   // ── Auth guard — redirect to login if no session ──────────────────────────
   const router = useRouter();
@@ -214,24 +334,6 @@ export default function TabsLayout() {
     if (!authUid) {
       router.replace("/(auth)/login");
     }
-  }, [authUid]);
-
-  // Resolve only this user's memberships, then fetch those exact group docs.
-  // This avoids an insecure global `groups` query and makes switching groups
-  // survive logout/login without relying on a hard-coded group ID.
-  useEffect(() => {
-    if (!authUid) return;
-    let active = true;
-    FS.getGroupsByUser(authUid)
-      .then((memberGroups) => {
-        if (!active) return;
-        setGroups(memberGroups);
-        if (memberGroups.length && (!activeGroupId || !memberGroups.some((g) => g.id === activeGroupId))) {
-          setActiveGroup(memberGroups[0].id);
-        }
-      })
-      .catch((error) => console.warn("[groups] Unable to load memberships", error));
-    return () => { active = false; };
   }, [authUid]);
 
   useFirebaseSync(activeGroupId, isOnline);
@@ -287,43 +389,46 @@ export default function TabsLayout() {
   // ── Web / Desktop layout ──────────────────
   if (isWide) {
     const initials = (authName ?? "U").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
-    const activeGroup = groups.find((g) => g.id === activeGroupId);
-    const navItems = getWebNavForRole(currentUserRole, currentMember?.permissions);
 
     return (
       <View style={shared.desktopRoot}>
         {/* Sidebar */}
-        <View style={sb.sidebar}>
+        <View style={[sb.sidebar, sidebarCollapsed && sb.sidebarCollapsed]}>
           {/* Brand */}
-          <TouchableOpacity style={sb.brand} onPress={() => setGroupMenuOpen((open) => !open)} activeOpacity={0.8}>
-            <View style={sb.brandMark}><Text style={sb.brandLetter}>S</Text></View>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={sb.brandName} numberOfLines={1}>{activeGroup?.name ?? BRAND.appName}</Text>
-              <Text style={sb.brandSub} numberOfLines={1}>{groups.length ? `${groups.length} group${groups.length === 1 ? "" : "s"} · switch` : "Loading groups…"}</Text>
-            </View>
-            <Text style={sb.groupChevron}>{groupMenuOpen ? "⌃" : "⌄"}</Text>
-          </TouchableOpacity>
-          {groupMenuOpen && (
-            <View style={sb.groupMenu}>
-              {groups.map((group) => (
-                <TouchableOpacity key={group.id} style={[sb.groupOption, group.id === activeGroupId && sb.groupOptionActive]} onPress={() => { setActiveGroup(group.id); setGroupMenuOpen(false); }}>
-                  <View style={sb.groupDot} /><Text style={sb.groupOptionText} numberOfLines={1}>{group.name}</Text>
-                  {group.id === activeGroupId && <Text style={sb.groupSelected}>✓</Text>}
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
+          <View style={[sb.brand, sidebarCollapsed && sb.brandCollapsed]}>
+            {!sidebarCollapsed && (
+              <>
+                <View style={sb.brandMark}>
+                  <Text style={sb.brandLetter}>S</Text>
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={sb.brandName}>{BRAND.appName}</Text>
+                  <Text style={sb.brandSub}>Savings Group</Text>
+                </View>
+              </>
+            )}
+            <TouchableOpacity
+              style={sb.collapseBtn}
+              onPress={toggleSidebarCollapsed}
+              activeOpacity={0.7}
+              accessibilityLabel={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {sidebarCollapsed
+                ? (ChevronRight ? <ChevronRight size={14} color={Colors.text3} /> : <Text style={sb.collapseBtnText}>›</Text>)
+                : (ChevronLeft ? <ChevronLeft size={14} color={Colors.text3} /> : <Text style={sb.collapseBtnText}>‹</Text>)
+              }
+            </TouchableOpacity>
+          </View>
 
           {/* Nav */}
           <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={sb.navList}>
-            <Text style={sb.navSection}>Navigation</Text>
-            {viewModeSwitch}
-            {navItems.map((item) => (
+            {DESKTOP_NAV_ITEMS.map((item) => (
               <React.Fragment key={item.route}>
                 <SidebarItem
                   label={item.label}
                   isActive={!!(pathname?.includes(item.route.replace("/(tabs)/", "")))}
                   onPress={() => { router.push(item.route as any); }}
+                  collapsed={sidebarCollapsed}
                 />
               </React.Fragment>
             ))}
@@ -331,27 +436,27 @@ export default function TabsLayout() {
 
           {/* Footer */}
           <View style={sb.footer}>
-            <View style={sb.userPill}>
-              <View style={sb.avatar}>
-                <Text style={sb.avatarText}>{initials}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={sb.userName} numberOfLines={1}>{authName ?? "User"}</Text>
-                <Text style={sb.userRole}>{currentUserRole}</Text>
-              </View>
-            </View>
+            {!sidebarCollapsed && viewModeSwitch}
             <TouchableOpacity style={sb.signOutBtn} onPress={handleSignOut} activeOpacity={0.7}>
               <LogOut size={13} color={Colors.error} />
-              <Text style={sb.signOutText}>Sign out</Text>
+              {!sidebarCollapsed && <Text style={sb.signOutText}>Sign out</Text>}
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Main content */}
         <View style={shared.desktopContent}>
+          <DesktopTopHeader
+            title={PAGE_TITLES[pathname?.split("/").filter(Boolean).pop() ?? ""] ?? "Dashboard"}
+            authName={authName ?? "User"}
+            role={currentUserRole}
+            unreadCount={unreadCount}
+            onBellPress={() => router.push("/notifications")}
+          />
           {offlineBanner}
           <Tabs screenOptions={{ headerShown: false, tabBarStyle: { display: "none" } }}>
             <Tabs.Screen name="dashboard"     options={{ title: "Dashboard"     }} />
+            <Tabs.Screen name="members"       options={{ title: "Members"       }} />
             <Tabs.Screen name="loans"         options={{ title: "Loans"         }} />
             <Tabs.Screen name="investments"   options={{ title: "Investments"   }} />
             <Tabs.Screen name="wallet"        options={{ title: "Wallet"        }} />
@@ -453,11 +558,23 @@ const sb = StyleSheet.create({
     borderRightColor: Colors.border,
     flexDirection: "column",
   },
+  sidebarCollapsed: {
+    width: 68,
+  },
   brand: {
     flexDirection: "row", alignItems: "center", gap: 11,
     paddingHorizontal: 18, paddingTop: 26, paddingBottom: 20,
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
+  brandCollapsed: {
+    paddingHorizontal: 10, gap: 0, justifyContent: "center",
+  },
+  collapseBtn: {
+    width: 22, height: 22, borderRadius: 6,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: Colors.elevated,
+  },
+  collapseBtnText: { fontSize: 14, fontWeight: "700", color: Colors.text3, lineHeight: 16 },
   brandMark: {
     width: 32, height: 32, borderRadius: 8,
     backgroundColor: Colors.primary,
@@ -466,16 +583,6 @@ const sb = StyleSheet.create({
   brandLetter: { fontSize: 14, fontWeight: "800", color: "#fff" },
   brandName:   { fontSize: 14, fontWeight: "700", color: Colors.text, lineHeight: 18 },
   brandSub:    { fontSize: 10, color: Colors.text3, lineHeight: 14 },
-  groupChevron: { color: Colors.text3, fontSize: 15, paddingLeft: 4 },
-  groupMenu: {
-    marginHorizontal: 10, marginTop: 8, padding: 6, borderRadius: R.md,
-    backgroundColor: Colors.elevated, borderWidth: 1, borderColor: Colors.border,
-  },
-  groupOption: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 8, paddingVertical: 9, borderRadius: 8 },
-  groupOptionActive: { backgroundColor: Colors.primaryFaint ?? "rgba(13,148,136,0.08)" },
-  groupDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.accent },
-  groupOptionText: { flex: 1, fontSize: 12, fontWeight: "600", color: Colors.text },
-  groupSelected: { color: Colors.primary, fontWeight: "800" },
   navList:     { paddingHorizontal: 10, paddingTop: 14, paddingBottom: 10 },
   navSection: {
     fontSize: 9, fontWeight: "700", color: Colors.text3,

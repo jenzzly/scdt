@@ -55,6 +55,13 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
         // Snapshot the group's rate period at submission time — changing the
         // group setting later must NOT retroactively change existing loans.
         const interestRatePeriod = (data as any).interestRatePeriod ?? group?.loanInterestRatePeriod ?? "monthly";
+        // Same defensive fallback for the penalty-rate snapshot — if a
+        // caller doesn't pass these explicitly, fall back to the
+        // group's current setting rather than leaving them undefined
+        // (which findOverdueInstallments also falls back on, but it's
+        // clearer to resolve it once here at creation time).
+        const lateFeeRatePct = (data as any).lateFeeRatePct ?? group?.loanLateFeeRatePct;
+        const lateFeeGraceDays = (data as any).lateFeeGraceDays ?? group?.loanLateFeeGraceDays;
         const { schedule, monthlyPayment, totalInterest: rawTI, totalRepayable: rawTR } = loanSchedule({
           amount: data.amount,
           interestRate: data.interestRate,
@@ -75,6 +82,8 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
           id: uid(),
           interestMethod,
           interestRatePeriod,
+          lateFeeRatePct,
+          lateFeeGraceDays,
           schedule,
           monthlyPayment,
           totalInterest,

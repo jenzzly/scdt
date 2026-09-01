@@ -75,6 +75,20 @@ export function useFirebaseSync(
     };
 
     // ── FIX D: detect auth expiry and surface it clearly ─────────────────────
+    // IMPORTANT: this handler is used for the core, membership-gated
+    // collections (group, members, contributions, loans, investments,
+    // wallet, expenses, meetings). Per firestore.rules, every one of those
+    // is readable by `isMember(groupId)` — just having a
+    // `groupMemberships/{groupId}_{uid}` doc, regardless of role or status.
+    // A permission error here is NOT an expected, role-based restriction
+    // the way it is for auditLogs/deletionHistory below — it almost always
+    // means this user's groupMemberships doc was never created (see the
+    // ensureMemberExists / member-linking flow). Silently swallowing it
+    // previously left every total derived from these collections sitting
+    // at 0 with no indication anything had gone wrong — the dashboard
+    // just looked empty, not broken. Surface it as a real sync failure
+    // instead so the existing "failed" state (see components/ui/
+    // SyncStatusBar.tsx and the banner in (tabs)/_layout.tsx) shows up.
     const handleAuthError = (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       if (
@@ -82,11 +96,19 @@ export function useFirebaseSync(
         msg.toLowerCase().includes("auth/id-token-expired")
       ) {
         store.setSyncStatus("failed", "Session expired. Please sign in again.");
-        // Optionally call store.clearAuth() here to force a re-login:
-        // store.clearAuth();
         return;
       }
-      handlePermissionError(err);
+      if (
+        msg.toLowerCase().includes("permission") ||
+        msg.toLowerCase().includes("missing or insufficient")
+      ) {
+        store.setSyncStatus(
+          "failed",
+          "Couldn't load your group's data (permission denied). Your account may not be fully linked to this group yet — try signing out and back in, or contact your group admin.",
+        );
+        return;
+      }
+      handleSyncError(err);
     };
 
     try {

@@ -167,6 +167,11 @@ export function fmtDateShort(iso: string): string {
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 }
 
+// "Monday, 31 August 2026" — used by the desktop top header.
+export function fmtDateLong(date: Date = new Date()): string {
+  return date.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+}
+
 export function fmtPercent(value: number, decimals = 1): string {
   return `${value.toFixed(decimals)}%`;
 }

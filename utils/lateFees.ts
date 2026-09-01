@@ -162,14 +162,20 @@ export function findOverdueInstallments(
   existingWalletTxs: WalletTransaction[],
   asOf: Date = new Date(),
 ): OverdueInstallment[] {
-  const ratePct = group.loanLateFeeRatePct;
-  if (!ratePct || ratePct <= 0) return [];
-  const graceDays = group.loanLateFeeGraceDays ?? 0;
-
   const results: OverdueInstallment[] = [];
 
   for (const loan of loans) {
     if (loan.status !== "disbursed" || !loan.schedule) continue;
+
+    // Use the rate/grace period that was in effect when THIS loan was
+    // created, not whatever the group's setting is today — otherwise a
+    // later change to group.loanLateFeeRatePct would retroactively
+    // change what an existing borrower owes. Falls back to the group's
+    // current setting for loans created before this snapshot existed.
+    const ratePct = loan.lateFeeRatePct ?? group.loanLateFeeRatePct;
+    if (!ratePct || ratePct <= 0) continue;
+    const graceDays = loan.lateFeeGraceDays ?? group.loanLateFeeGraceDays ?? 0;
+
     const member = members.find((m) => m.id === loan.memberId);
 
     loan.schedule.forEach((item, index) => {

@@ -17,6 +17,45 @@ import { BRAND } from "../brand";
 // ─────────────────────────────────────────────────────────────────────────────
 // Group Initialization
 // ─────────────────────────────────────────────────────────────────────────────
+// Creates the group document with client-specific (BRAND) defaults if it
+// doesn't already exist. Split out from initGroupData below so
+// members.ts's ensureMemberExists (the actual registration/login
+// bootstrap path — initGroupData itself is not currently called from
+// there) can create the group on first-ever signup without duplicating
+// this field list a third time. `allow create: if isAuth()` on
+// `groups/{groupId}` authorizes this for any signed-in user, which is
+// what a genuinely first-ever user needs.
+export async function ensureGroupExists(groupId: string, userId: string): Promise<void> {
+  const groupRef = doc(db, "groups", groupId);
+  const groupSnap = await getDoc(groupRef);
+  if (groupSnap.exists()) return;
+
+  const now = new Date().toISOString();
+  await setDoc(groupRef, {
+    id: groupId,
+    name: BRAND.defaultGroupName,
+    currency: BRAND.defaultCurrency,
+    contributionAmount: BRAND.defaults.contributionAmount,
+    contributionFrequency: BRAND.defaults.contributionFrequency,
+    contributionDay: BRAND.defaults.contributionDay,
+    loanInterestRate: BRAND.defaults.loanInterestRate,
+    loanInterestMethod: BRAND.defaults.loanInterestMethod,
+    latePenaltyRatePct: BRAND.defaults.latePenaltyRatePct,
+    loanInterestRatePeriod: BRAND.defaults.loanInterestRatePeriod,
+    absencePenaltyMemberRatePct: BRAND.defaults.absencePenaltyMemberRatePct,
+    absencePenaltyOfficerRatePct: BRAND.defaults.absencePenaltyOfficerRatePct,
+    createdBy: userId,
+    inviteCode: "",
+    totalSavings: 0,
+    totalLoans: 0,
+    availableBalance: 0,
+    totalInvestments: 0,
+    totalInterestEarned: 0,
+    memberCount: 0,
+    createdAt: now,
+  });
+}
+
 export async function initGroupData(
   groupId: string,
   userId: string,
@@ -32,39 +71,26 @@ export async function initGroupData(
 
   const groupRef = doc(db, "groups", groupId);
   try {
-      // Do not pre-read the group: a newly-created group deliberately has no
-      // membership yet, so a protected read is denied. A merge write is safe
-      // for a founder and preserves existing settings on a retry.
-      await setDoc(groupRef, {
-        id: groupId,
-        name: BRAND.defaultGroupName,
-        currency: BRAND.defaultCurrency,
-        contributionAmount: BRAND.defaults.contributionAmount,
-        contributionFrequency: BRAND.defaults.contributionFrequency,
-        contributionDay: BRAND.defaults.contributionDay,
-        loanInterestRate: BRAND.defaults.loanInterestRate,
-        loanInterestMethod: BRAND.defaults.loanInterestMethod,
-        latePenaltyRatePct: BRAND.defaults.latePenaltyRatePct,
-        loanInterestRatePeriod: BRAND.defaults.loanInterestRatePeriod,
-        absencePenaltyMemberRatePct: BRAND.defaults.absencePenaltyMemberRatePct,
-        absencePenaltyOfficerRatePct: BRAND.defaults.absencePenaltyOfficerRatePct,
-        createdBy: userId,
-        inviteCode: "",
-        totalSavings: 0,
-        totalLoans: 0,
-        availableBalance: 0,
-        totalInvestments: 0,
-        totalInterestEarned: 0,
-        memberCount: 0,
-        createdAt: now,
-      }, { merge: true });
+    await ensureGroupExists(groupId, userId);
   } catch (error) {
     console.error("[initGroupData] Group error:", error);
-    throw error;
   }
 
   const memberRef = doc(db, "groups", groupId, "members", userId);
   try {
+    const memberSnap = await getDoc(memberRef);
+    if (!memberSnap.exists()) {
+      // No pre-membership email-lookup query here — same reasoning as
+      // ensureMemberExists in members.ts: a `list` query against
+      // members/{groupId} is rejected by the rules for a user with no
+      // membership yet ("rules are not filters; queries are all or
+      // nothing" — Firestore evaluates a list rule against the whole
+      // potential result set up front, not per document). This
+      // function isn't currently called anywhere in the app (the real
+      // bootstrap path is ensureMemberExists), but keeping it correct
+      // avoids leaving the same landmine here for whoever wires it up
+      // later. Admin-invited-member merge is a separate flow, not
+      // handled on this path.
       await setDoc(memberRef, {
         id: userId,
         groupId: groupId,
@@ -79,15 +105,17 @@ export async function initGroupData(
         totalSavings: 0,
         loanEarnings: 0,
         createdAt: now,
-      }, { merge: true });
+      });
+    }
   } catch (error) {
     console.error("[initGroupData] Member profile error:", error);
-    throw error;
   }
 
   const membershipId = getMembershipId(groupId, userId);
   const membershipRef = doc(db, "groupMemberships", membershipId);
   try {
+    const membershipSnap = await getDoc(membershipRef);
+    if (!membershipSnap.exists()) {
       await setDoc(membershipRef, {
         id: membershipId,
         groupId: groupId,
@@ -97,24 +125,14 @@ export async function initGroupData(
         status: "active",
         email: email.toLowerCase(),
         createdAt: now,
-      }, { merge: true });
+      });
+    }
   } catch (error) {
     console.error("[initGroupData] Membership error:", error);
     throw error;
   }
 
   return true;
-}
-
-/** Creates a private first group for a newly registered user. */
-export async function createFirstGroupForUser(userId: string, name?: string): Promise<string> {
-  const groupId = doc(db, "groups").id;
-  const created = await initGroupData(groupId, userId, "admin");
-  if (!created) throw new Error("Unable to create your first group");
-  if (name?.trim()) {
-    await updateDoc(doc(db, "groups", groupId), { name: name.trim() });
-  }
-  return groupId;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,3 +166,4 @@ export async function restoreGroupData(
 
   await batch.commit();
 }
+

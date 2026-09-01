@@ -181,6 +181,12 @@ function LoanDetailModal({
           <Text style={styles.modalDetail}>
             {loan.interestRate}% {(loan as any).interestRatePeriod === "annual" ? "annual" : "monthly"}{isRB ? " · daily accrual" : " flat"} · {loan.repaymentMonths} months
           </Text>
+          {!!(loan as any).lateFeeRatePct && (
+            <Text style={[styles.modalDetail, { fontSize: 12, color: C.text3, marginTop: 2 }]}>
+              Late fee: {(loan as any).lateFeeRatePct}% of overdue installment
+              {(loan as any).lateFeeGraceDays ? ` after ${(loan as any).lateFeeGraceDays}-day grace period` : ""}
+            </Text>
+          )}
           <View style={[styles.statusBadge, { backgroundColor: statusBg, alignSelf: "center", marginTop: 4 }]}>
             <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
           </View>

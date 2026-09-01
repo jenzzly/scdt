@@ -1,6 +1,6 @@
 // lib/firestore/groups.ts
 import {
-  doc, getDoc, getDocs, setDoc, updateDoc, query, where, limit, onSnapshot,
+  doc, getDoc, getDocs, setDoc, updateDoc, query, where, limit, onSnapshot, deleteField,
   groupsCol, groupDoc, stripUndefined, fromSnap, getMembershipId, membershipsCol,
 } from "./core";
 import type { Group } from "./core";
@@ -45,6 +45,21 @@ export async function getGroup(id: string): Promise<Group | null> {
 
 export async function updateGroup(id: string, data: Partial<Group>): Promise<void> {
   await updateDoc(groupDoc(id), stripUndefined(data as any));
+}
+
+// Turning the periodic contribution goal off needs the three fields
+// genuinely DELETED in Firestore, not just omitted from an update —
+// updateGroup() above strips undefined values before writing rather
+// than clearing them, so `contributionGoalPeriodMonths: undefined`
+// would be silently dropped from the request and the old value would
+// stay in the document, leaving the goal still active. deleteField()
+// is Firestore's sentinel for "actually remove this field."
+export async function clearContributionGoal(id: string): Promise<void> {
+  await updateDoc(groupDoc(id), {
+    contributionGoalPeriodMonths: deleteField(),
+    contributionGoalTargetAmount: deleteField(),
+    contributionGoalAnchorDate: deleteField(),
+  });
 }
 
 export function subscribeGroup(

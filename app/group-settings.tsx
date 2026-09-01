@@ -1,4 +1,4 @@
-// app/group-settings.tsx
+// app/group-settings.tsx - REDESIGNED
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform,
@@ -9,7 +9,7 @@ import { useStore, useActiveGroup, useGroupAuditLogs } from "../stores/useStore"
 import { useGroupMembers } from "../stores/selectors";
 import { useAuth } from "../hooks/useAuth";
 import { Input, Select, Button, useToast, Card, DatePicker } from "../components/ui";
-import { Colors, C, T, fmtDate, fmtCurrency, showConfirm, round2 } from "../utils/theme";
+import { Colors, C, T, fmtCurrency, fmtDate, showConfirm, round2 } from "../utils/theme";
 import { exportFullData, importFullData } from "../utils/importExport";
 import * as FS from "../lib/firestore";
 import type { AuditLog, MemberPermissions, Member } from "../types";
@@ -73,7 +73,9 @@ const MONTHS = [
 
 const DAYS = Array.from({ length: 31 }, (_, i) => ({ label: String(i + 1), value: i + 1 }));
 
-// Action badge config
+// ─────────────────────────────────────────────
+// Action Badge Config
+// ─────────────────────────────────────────────
 const ACTION_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
   created:  { bg: "#dbeafe", text: "#1d4ed8", label: "Created"  },
   approved: { bg: "#dcfce7", text: "#15803d", label: "Approved" },
@@ -97,35 +99,6 @@ function entityLabel(type: string): string {
 function parseNum(str: string): number | undefined {
   const v = parseFloat(str);
   return isNaN(v) ? undefined : v;
-}
-
-function filterLogsByDate(
-  logs: AuditLog[],
-  year: number | null,
-  month: number | null,
-  day: number | null,
-): AuditLog[] {
-  if (!year && !month && !day) return logs;
-  return logs.filter((log) => {
-    const d = new Date(log.timestamp);
-    if (isNaN(d.getTime())) return false;
-    if (year && d.getFullYear() !== year) return false;
-    if (month && d.getMonth() + 1 !== month) return false;
-    if (day && d.getDate() !== day) return false;
-    return true;
-  });
-}
-
-function filterLogsBySearch(logs: AuditLog[], term: string): AuditLog[] {
-  if (!term.trim()) return logs;
-  const t = term.toLowerCase();
-  return logs.filter(
-    (l) =>
-      l.userName?.toLowerCase().includes(t) ||
-      l.action?.toLowerCase().includes(t) ||
-      l.entityType?.toLowerCase().includes(t) ||
-      l.reason?.toLowerCase().includes(t),
-  );
 }
 
 // ─────────────────────────────────────────────
@@ -210,333 +183,26 @@ const fm = StyleSheet.create({
   row: { flexDirection: "row", gap: 10 },
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CategoryDropdown — replaces the horizontal scrolling chip-tab row.
-// A single tap opens a simple list; each option shows its live count.
-// ─────────────────────────────────────────────────────────────────────────────
-function CategoryDropdown({
-  options, value, onChange, counts,
-}: {
-  options: { key: string; label: string; icon: string }[];
-  value: string;
-  onChange: (v: string) => void;
-  counts: Record<string, number>;
-}) {
-  const [open, setOpen] = useState(false);
-  const current = options.find(o => o.key === value) ?? options[0];
-
+// ─────────────────────────────────────────────
+// Section Heading
+// ─────────────────────────────────────────────
+function SectionHeading({ label, description }: { label: string; description?: string }) {
   return (
-    <View style={{ position: "relative" }}>
-      <TouchableOpacity
-        style={aw.dropdownBtn}
-        onPress={() => setOpen(!open)}
-        activeOpacity={0.8}
-      >
-        <Text style={aw.dropdownBtnIcon}>{current.icon}</Text>
-        <Text style={aw.dropdownBtnText}>{current.label}</Text>
-        <View style={aw.dropdownBadge}>
-          <Text style={aw.dropdownBadgeText}>{counts[current.key] ?? 0}</Text>
-        </View>
-        <Text style={aw.dropdownChevron}>{open ? "▲" : "▼"}</Text>
-      </TouchableOpacity>
-
-      {open && (
-        <>
-          <TouchableOpacity
-            style={aw.dropdownBackdrop}
-            activeOpacity={1}
-            onPress={() => setOpen(false)}
-          />
-          <View style={aw.dropdownMenu}>
-            {options.map(opt => {
-              const isActive = opt.key === value;
-              const isAlert = opt.key === "failed" && (counts[opt.key] ?? 0) > 0;
-              return (
-                <TouchableOpacity
-                  key={opt.key}
-                  style={[aw.dropdownItem, isActive && aw.dropdownItemActive]}
-                  onPress={() => { onChange(opt.key); setOpen(false); }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={aw.dropdownItemIcon}>{opt.icon}</Text>
-                  <Text style={[aw.dropdownItemText, isActive && aw.dropdownItemTextActive]}>{opt.label}</Text>
-                  <View style={[aw.dropdownItemBadge, isAlert && aw.dropdownItemBadgeAlert]}>
-                    <Text style={[aw.dropdownItemBadgeText, isAlert && aw.dropdownItemBadgeTextAlert]}>
-                      {counts[opt.key] ?? 0}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </>
-      )}
+    <View style={sh.container}>
+      <Text style={sh.label}>{label}</Text>
+      {description && <Text style={sh.description}>{description}</Text>}
     </View>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// White-theme table row (desktop) — includes a Revert action
-// ─────────────────────────────────────────────────────────────────────────────
-function AuditTableRowWhite({ log, idx, onRevert }: { log: AuditLog; idx: number; onRevert: () => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const cfg = getActionConfig(log.action);
-  const ts  = new Date(log.timestamp);
-  const tsStr = isNaN(ts.getTime())
-    ? log.timestamp
-    : `${ts.toLocaleDateString("en-US",{ year:"numeric", month:"2-digit", day:"2-digit" })} ${ts.toLocaleTimeString("en-US",{ hour:"2-digit", minute:"2-digit", second:"2-digit" })}`;
-  const canRevert = log.action !== "reverted" && (log.action === "deleted" || log.action === "created" || !!log.before);
-
-  return (
-    <>
-      <TouchableOpacity
-        onPress={() => setExpanded(!expanded)}
-        activeOpacity={0.7}
-        style={[awr.row, idx % 2 === 1 && awr.rowAlt, expanded && awr.rowExp]}
-      >
-        <Text style={[awr.cell, { width: 170 }]} numberOfLines={1}>{tsStr}</Text>
-        <Text style={[awr.catText, { width: 120 }]} numberOfLines={1}>{entityLabel(log.entityType)}</Text>
-        <View style={{ width: 110, paddingHorizontal: 4, justifyContent: "center" }}>
-          <View style={[awr.actBadge, { backgroundColor: cfg.bg, borderColor: cfg.text + "33" }]}>
-            <Text style={[awr.actBadgeText, { color: cfg.text }]}>{cfg.label}</Text>
-          </View>
-        </View>
-        <Text style={[awr.cell, { width: 130 }]} numberOfLines={1}>{log.userName ?? log.userId ?? "—"}</Text>
-        <Text style={[awr.changeLog, { flex: 1 }]} numberOfLines={expanded ? undefined : 1}>
-          {log.reason || `${entityLabel(log.entityType)} ${log.action}`}
-        </Text>
-        <View style={{ width: 90, alignItems: "flex-end" }}>
-          {canRevert && (
-            <TouchableOpacity onPress={onRevert} hitSlop={{ top:6,bottom:6,left:6,right:6 }}>
-              <Text style={awr.revertText}>↺ Revert</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </TouchableOpacity>
-      {expanded && (
-        <View style={awr.expandWrap}>
-          {!!log.errorMessage && (
-            <View style={awr.errorBox}>
-              <Text style={awr.errorLabel}>ERROR</Text>
-              <Text style={awr.errorText}>{log.errorMessage}</Text>
-            </View>
-          )}
-          {!!log.reason && <Text style={awr.expandNote}>{log.reason}</Text>}
-          {(log.before || log.after) && (
-            <View style={awr.diffRow}>
-              {log.before && (
-                <View style={awr.diffBlock}>
-                  <Text style={[awr.diffLabel, { color: "#dc2626" }]}>← Before</Text>
-                  <Text style={awr.diffCode}>{JSON.stringify(log.before, null, 2)}</Text>
-                </View>
-              )}
-              {log.after && (
-                <View style={awr.diffBlock}>
-                  <Text style={[awr.diffLabel, { color: "#16a34a" }]}>→ After</Text>
-                  <Text style={awr.diffCode}>{JSON.stringify(log.after, null, 2)}</Text>
-                </View>
-              )}
-            </View>
-          )}
-        </View>
-      )}
-    </>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// White-theme mobile card — includes a Revert action
-// ─────────────────────────────────────────────────────────────────────────────
-function AuditRowWhite({ log, onRevert }: { log: AuditLog; onRevert: () => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const cfg = getActionConfig(log.action);
-  const ts  = new Date(log.timestamp);
-  const tsStr = isNaN(ts.getTime()) ? log.timestamp
-    : ts.toLocaleDateString("en-US",{ month:"short", day:"2-digit" }) + " " + ts.toLocaleTimeString("en-US",{ hour:"2-digit", minute:"2-digit" });
-  const canRevert = log.action !== "reverted" && (log.action === "deleted" || log.action === "created" || !!log.before);
-
-  return (
-    <TouchableOpacity onPress={() => setExpanded(!expanded)} activeOpacity={0.75} style={awr.mCard}>
-      <View style={awr.mCardTop}>
-        <View style={{ flex: 1 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 3 }}>
-            <Text style={awr.mCat}>{entityLabel(log.entityType)}</Text>
-            <View style={[awr.actBadge, { backgroundColor: cfg.bg, borderColor: cfg.text + "33" }]}>
-              <Text style={[awr.actBadgeText, { color: cfg.text }]}>{cfg.label}</Text>
-            </View>
-          </View>
-          <Text style={awr.mChangeLog} numberOfLines={expanded ? undefined : 2}>
-            {log.reason || `${entityLabel(log.entityType)} ${log.action}`}
-          </Text>
-        </View>
-        <Text style={awr.chevron}>{expanded ? "▲" : "▼"}</Text>
-      </View>
-      <View style={awr.mCardBottom}>
-        <Text style={awr.mUser}>{log.userName ?? log.userId ?? "—"}</Text>
-        <Text style={awr.mTs}>{tsStr}</Text>
-      </View>
-      {canRevert && (
-        <TouchableOpacity onPress={onRevert} style={awr.mRevertBtn} hitSlop={{ top:6,bottom:6,left:6,right:6 }}>
-          <Text style={awr.revertText}>↺ Revert this action</Text>
-        </TouchableOpacity>
-      )}
-      {expanded && (log.before || log.after || log.errorMessage) && (
-        <View style={awr.mExpand}>
-          {!!log.errorMessage && (
-            <View style={awr.errorBox}>
-              <Text style={awr.errorLabel}>ERROR</Text>
-              <Text style={awr.errorText}>{log.errorMessage}</Text>
-            </View>
-          )}
-          {log.before && (
-            <View style={[awr.diffBlock, { marginBottom: 8 }]}>
-              <Text style={[awr.diffLabel, { color: "#dc2626" }]}>← Before</Text>
-              <Text style={awr.diffCode}>{JSON.stringify(log.before, null, 2)}</Text>
-            </View>
-          )}
-          {log.after && (
-            <View style={awr.diffBlock}>
-              <Text style={[awr.diffLabel, { color: "#16a34a" }]}>→ After</Text>
-              <Text style={awr.diffCode}>{JSON.stringify(log.after, null, 2)}</Text>
-            </View>
-          )}
-        </View>
-      )}
-    </TouchableOpacity>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// White audit theme styles
-// ─────────────────────────────────────────────────────────────────────────────
-const aw = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#ffffff" },
-  toolbar: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: 16, paddingVertical: 12,
-    backgroundColor: "#ffffff", borderBottomWidth: 1, borderBottomColor: C.border,
-    flexWrap: "wrap", gap: 8,
-  },
-  toolbarCount: { fontSize: 13, fontWeight: "600", color: C.text2 },
-  toolbarRight: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1, flexWrap: "wrap" },
-  searchBox: {
-    flexDirection: "row", alignItems: "center",
-    backgroundColor: "#f8fafc", borderWidth: 1, borderColor: C.border,
-    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, minWidth: 160, maxWidth: 240,
-  },
-  searchIcon: { fontSize: 14, color: C.text3, marginRight: 6 },
-  searchInput: { flex: 1, fontSize: 13, color: C.text, minHeight: 18 },
-  filterBtn: {
-    paddingHorizontal: 12, paddingVertical: 7,
-    borderRadius: 8, borderWidth: 1, borderColor: C.border, backgroundColor: "#f8fafc",
-  },
-  filterBtnActive: { borderColor: C.primary, backgroundColor: C.primary + "10" },
-  filterBtnText: { fontSize: 12, fontWeight: "600", color: C.text2 },
-  filterBtnTextActive: { color: C.primary },
-  clearText: { fontSize: 12, color: "#dc2626", fontWeight: "600" },
-
-  dropdownBtn: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-    paddingHorizontal: 12, paddingVertical: 7,
-    borderRadius: 8, borderWidth: 1, borderColor: C.border, backgroundColor: "#f8fafc",
-  },
-  dropdownBtnIcon: { fontSize: 13 },
-  dropdownBtnText: { fontSize: 12, fontWeight: "600", color: C.text },
-  dropdownBadge: {
-    backgroundColor: C.elevated, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1, minWidth: 20, alignItems: "center",
-  },
-  dropdownBadgeText: { fontSize: 10, fontWeight: "700", color: C.text3 },
-  dropdownChevron: { fontSize: 9, color: C.text3 },
-  dropdownBackdrop: {
-    position: "absolute", top: -1000, left: -1000, right: -1000, bottom: -1000,
-    zIndex: 10,
-  },
-  dropdownMenu: {
-    position: "absolute", top: 40, right: 0, zIndex: 20,
-    backgroundColor: "#ffffff", borderRadius: 12, borderWidth: 1, borderColor: C.border,
-    minWidth: 220, paddingVertical: 6,
-    ...(Platform.OS === "web" ? { boxShadow: "0 8px 24px rgba(0,0,0,0.12)" } as any : {
-      shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8,
-    }),
-  },
-  dropdownItem: {
-    flexDirection: "row", alignItems: "center", gap: 8,
-    paddingHorizontal: 14, paddingVertical: 9,
-  },
-  dropdownItemActive: { backgroundColor: C.primary + "0d" },
-  dropdownItemIcon: { fontSize: 14, width: 20 },
-  dropdownItemText: { flex: 1, fontSize: 13, color: C.text2, fontWeight: "500" },
-  dropdownItemTextActive: { color: C.primary, fontWeight: "700" },
-  dropdownItemBadge: { backgroundColor: C.elevated, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1, minWidth: 22, alignItems: "center" },
-  dropdownItemBadgeAlert: { backgroundColor: "#fee2e2" },
-  dropdownItemBadgeText: { fontSize: 10, fontWeight: "700", color: C.text3 },
-  dropdownItemBadgeTextAlert: { color: "#dc2626" },
-
-  tableHead: {
-    flexDirection: "row", alignItems: "center", backgroundColor: "#f8fafc",
-    paddingVertical: 10, paddingHorizontal: 20,
-    borderBottomWidth: 1, borderBottomColor: C.border,
-    borderTopWidth: 1, borderTopColor: C.border,
-  },
-  thCell: {
-    fontSize: 10, fontWeight: "700", color: C.text3,
-    letterSpacing: 0.6, textTransform: "uppercase", paddingHorizontal: 4,
-  },
-  mobileCount: { fontSize: 11, color: C.text3, marginBottom: 10, textAlign: "right" },
-});
-
-const awr = StyleSheet.create({
-  row: {
-    flexDirection: "row", alignItems: "center",
-    paddingVertical: 11, paddingHorizontal: 20,
-    backgroundColor: "#ffffff",
-    borderBottomWidth: 1, borderBottomColor: C.border,
-  },
-  rowAlt: { backgroundColor: "#fafbfc" },
-  rowExp: { backgroundColor: "#f8fafc" },
-  cell: { fontSize: 12, color: C.text2, paddingHorizontal: 4 },
-  catText: { fontSize: 12, color: C.text, fontWeight: "600", paddingHorizontal: 4 },
-  actBadge: { borderWidth: 1, borderRadius: 6, alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 2 },
-  actBadgeText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.2 },
-  changeLog: { fontSize: 12, color: C.text, paddingHorizontal: 4, lineHeight: 16 },
-  revertText: { fontSize: 11, fontWeight: "700", color: C.primary },
-
-  expandWrap: {
-    backgroundColor: "#f8fafc", borderBottomWidth: 1, borderBottomColor: C.border,
-    paddingHorizontal: 20, paddingVertical: 14,
-  },
-  expandNote: { fontSize: 12, color: C.text2, lineHeight: 18, marginBottom: 10 },
-  errorBox: { backgroundColor: "#fef2f2", borderRadius: 6, padding: 10, borderWidth: 1, borderColor: "#fecaca", marginBottom: 10 },
-  errorLabel: { fontSize: 9, fontWeight: "800", color: "#dc2626", letterSpacing: 1, marginBottom: 3 },
-  errorText: { fontSize: 11, color: "#b91c1c", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
-  diffRow: { flexDirection: "row", gap: 12 },
-  diffBlock: { flex: 1, backgroundColor: "#ffffff", borderRadius: 6, padding: 10, borderWidth: 1, borderColor: C.border },
-  diffLabel: { fontSize: 10, fontWeight: "700", letterSpacing: 0.4, marginBottom: 4, textTransform: "uppercase" },
-  diffCode: { fontSize: 10, color: C.text2, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", lineHeight: 15 },
-
-  mCard: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: C.border, borderRadius: 10, marginBottom: 8, overflow: "hidden", padding: 12 },
-  mCardTop: { flexDirection: "row", alignItems: "flex-start", marginBottom: 8 },
-  mCat: { fontSize: 12, fontWeight: "700", color: C.text },
-  mChangeLog: { fontSize: 12, color: C.text2, lineHeight: 17, marginTop: 2 },
-  mCardBottom: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  mUser: { fontSize: 11, color: C.text3 },
-  mTs: { fontSize: 11, color: C.text3 },
-  mRevertBtn: { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.border },
-  mExpand: { marginTop: 12, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 10 },
-  chevron: { fontSize: 9, color: C.text3 },
-});
-
-// ─────────────────────────────────────────────
-// Section heading component
-// ─────────────────────────────────────────────
-function SectionHeading({ label }: { label: string }) {
-  return <Text style={sh.label}>{label}</Text>;
-}
 const sh = StyleSheet.create({
+  container: { marginTop: 20, marginBottom: 10 },
   label: {
-    fontSize: 11, fontWeight: "700", color: C.text3,
+    fontSize: 13, fontWeight: "700", color: C.text2,
     textTransform: "uppercase", letterSpacing: 0.8,
-    marginTop: 24, marginBottom: 10,
+  },
+  description: {
+    fontSize: 12, color: C.text3, marginTop: 4, lineHeight: 18,
   },
 });
 
@@ -544,8 +210,31 @@ const sh = StyleSheet.create({
 // Divider
 // ─────────────────────────────────────────────
 function Divider() {
-  return <View style={{ height: 1, backgroundColor: C.border, marginVertical: 4 }} />;
+  return <View style={{ height: 1, backgroundColor: C.border, marginVertical: 12 }} />;
 }
+
+// ─────────────────────────────────────────────
+// Setting Card
+// ─────────────────────────────────────────────
+function SettingCard({ children, noPadding }: { children: React.ReactNode; noPadding?: boolean }) {
+  return (
+    <View style={[sc.card, noPadding && sc.cardNoPadding]}>
+      {children}
+    </View>
+  );
+}
+
+const sc = StyleSheet.create({
+  card: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 4,
+  },
+  cardNoPadding: { padding: 0 },
+});
 
 // ─────────────────────────────────────────────
 // Main Screen
@@ -560,54 +249,50 @@ export default function GroupSettingsScreen() {
   const { signOut } = useAuth();
   const { show, Toast } = useToast();
 
-  // Settings form
-  const [currency,       setCurrency]       = useState(group?.currency                  ?? "RWF");
-  const [contribAmount,  setContribAmount]  = useState(String(group?.contributionAmount ?? 40000));
-  const [freq,           setFreq]           = useState(group?.contributionFrequency      ?? "monthly");
-  const [loanRate,       setLoanRate]       = useState(String(group?.loanInterestRate   ?? 2));
-  const [loanMethod,     setLoanMethod]     = useState(group?.loanInterestMethod         ?? "flat");
-  const [ratePeriod,     setRatePeriod]     = useState<"monthly" | "annual">(group?.loanInterestRatePeriod ?? "monthly");
-  // Interest-based penalty rates (% of the group's standard contribution amount)
-  const [lateRatePct,      setLateRatePct]      = useState(String(group?.latePenaltyRatePct ?? 5));
+  // ─── Settings Form State ────────────────────────────────────────────────
+  const [currency, setCurrency] = useState(group?.currency ?? "RWF");
+  const [contribAmount, setContribAmount] = useState(String(group?.contributionAmount ?? 40000));
+  const [freq, setFreq] = useState(group?.contributionFrequency ?? "monthly");
+  const [loanRate, setLoanRate] = useState(String(group?.loanInterestRate ?? 2));
+  const [loanMethod, setLoanMethod] = useState(group?.loanInterestMethod ?? "flat");
+  const [ratePeriod, setRatePeriod] = useState<"monthly" | "annual">(group?.loanInterestRatePeriod ?? "monthly");
+  
+  // Penalty rates
+  const [lateRatePct, setLateRatePct] = useState(String(group?.latePenaltyRatePct ?? 5));
   const [absenceMemberPct, setAbsenceMemberPct] = useState(String(group?.absencePenaltyMemberRatePct ?? 10));
-  const [absenceOfficerPct,setAbsenceOfficerPct]= useState(String(group?.absencePenaltyOfficerRatePct ?? 25));
-  // Late-PAYMENT fees — separate from meeting-attendance penalties above.
-  // Calculated on the amount actually due (missed contribution / overdue
-  // installment), not a flat figure.
-  const [contribLateFeePct,   setContribLateFeePct]   = useState(String(group?.contributionLateFeeRatePct ?? 5));
+  const [absenceOfficerPct, setAbsenceOfficerPct] = useState(String(group?.absencePenaltyOfficerRatePct ?? 25));
+  
+  // Late payment fees
+  const [contribLateFeePct, setContribLateFeePct] = useState(String(group?.contributionLateFeeRatePct ?? 5));
   const [contribLateFeeGrace, setContribLateFeeGrace] = useState(String(group?.contributionLateFeeGraceDays ?? 3));
-  // Contribution late fees only apply to periods on/after this date — never
-  // retroactively across a member's whole history. Empty = feature is off.
   const [contribLateFeeStart, setContribLateFeeStart] = useState(group?.contributionLateFeeStartDate ?? "");
-  const [loanLateFeePct,      setLoanLateFeePct]       = useState(String(group?.loanLateFeeRatePct ?? 5));
-  const [loanLateFeeGrace,    setLoanLateFeeGrace]     = useState(String(group?.loanLateFeeGraceDays ?? 3));
-  // Periodic contribution goal — a savings TARGET every N months (e.g.
-  // 600,000 every 6 months), separate from the recurring minimum
-  // contributionAmount above. Uses the new ContributionGoalConfig structure.
-  const [goalEnabled,        setGoalEnabled]        = useState(group?.contributionGoal?.enabled ?? false);
-  const [goalMinimumContrib, setGoalMinimumContrib] = useState(String(group?.contributionGoal?.minimumContribution ?? group?.contributionAmount ?? 50000));
-  const [goalTargetAmount,   setGoalTargetAmount]   = useState(String(group?.contributionGoal?.targetAmount ?? 600000));
-  const [goalPeriodMonths,   setGoalPeriodMonths]   = useState(String(group?.contributionGoal?.periodMonths ?? 6));
-  // Loan penalty configuration
-  const [loanPenaltyRatePct, setLoanPenaltyRatePct] = useState(String(group?.loanPenaltyRatePct ?? group?.latePenaltyRatePct ?? 2.5));
-  const [saving,             setSaving]             = useState(false);
-  const [refreshing,         setRefreshing]         = useState(false);
+  const [loanLateFeePct, setLoanLateFeePct] = useState(String(group?.loanLateFeeRatePct ?? 5));
+  const [loanLateFeeGrace, setLoanLateFeeGrace] = useState(String(group?.loanLateFeeGraceDays ?? 3));
+  
+  // Contribution goal
+  const [goalEnabled, setGoalEnabled] = useState(!!(group?.contributionGoalPeriodMonths && group?.contributionGoalTargetAmount && group?.contributionGoalAnchorDate));
+  const [goalPeriodMonths, setGoalPeriodMonths] = useState(String(group?.contributionGoalPeriodMonths ?? 6));
+  const [goalTarget, setGoalTarget] = useState(String(group?.contributionGoalTargetAmount ?? 600000));
+  const [goalAnchorDate, setGoalAnchorDate] = useState(group?.contributionGoalAnchorDate ?? "");
+  
+  const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Audit state
-  const [activeSection, setActiveSection]   = useState<"settings" | "permissions" | "audit">("settings");
-  const [activeTab,     setActiveTab]       = useState<AuditTab>("all");
-  const [searchTerm,    setSearchTerm]      = useState("");
-  const [selectedYear,  setSelectedYear]    = useState<number | null>(null);
-  const [selectedMonth, setSelectedMonth]   = useState<number | null>(null);
-  const [selectedDay,   setSelectedDay]     = useState<number | null>(null);
-  const [currentPage,   setCurrentPage]     = useState(1);
-  const [showFilter,    setShowFilter]      = useState(false);
-  const [tempSearch,    setTempSearch]      = useState("");
-  const [tempYear,      setTempYear]        = useState<number | null>(null);
-  const [tempMonth,     setTempMonth]       = useState<number | null>(null);
-  const [tempDay,       setTempDay]         = useState<number | null>(null);
+  // ─── Audit State ─────────────────────────────────────────────────────────
+  const [activeSection, setActiveSection] = useState<"settings" | "permissions" | "audit">("settings");
+  const [activeTab, setActiveTab] = useState<AuditTab>("all");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
+  const [selectedDay, setSelectedDay] = useState<number | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [showFilter, setShowFilter] = useState(false);
+  const [tempSearch, setTempSearch] = useState("");
+  const [tempYear, setTempYear] = useState<number | null>(null);
+  const [tempMonth, setTempMonth] = useState<number | null>(null);
+  const [tempDay, setTempDay] = useState<number | null>(null);
 
-  // Permissions state
+  // ─── Permissions State ──────────────────────────────────────────────────
   const allMembers = useGroupMembers();
   const activeMembers = useMemo(() => allMembers.filter(m => m.status === "active" && m.role !== "admin"), [allMembers]);
   const [permSaving, setPermSaving] = useState<string | null>(null);
@@ -640,6 +325,7 @@ export default function GroupSettingsScreen() {
     }
   }, [getMemberPerms, show]);
 
+  // ─── Audit Filters ──────────────────────────────────────────────────────
   useEffect(() => { setCurrentPage(1); }, [activeTab, searchTerm, selectedYear, selectedMonth, selectedDay]);
 
   const filteredLogs = useMemo(() => {
@@ -654,8 +340,28 @@ export default function GroupSettingsScreen() {
         if (et) logs = logs.filter((l) => l.entityType === et);
       }
     }
-    logs = filterLogsByDate(logs, selectedYear, selectedMonth, selectedDay);
-    logs = filterLogsBySearch(logs, searchTerm);
+    // Date filtering
+    if (selectedYear || selectedMonth || selectedDay) {
+      logs = logs.filter((log) => {
+        const d = new Date(log.timestamp);
+        if (isNaN(d.getTime())) return false;
+        if (selectedYear && d.getFullYear() !== selectedYear) return false;
+        if (selectedMonth && d.getMonth() + 1 !== selectedMonth) return false;
+        if (selectedDay && d.getDate() !== selectedDay) return false;
+        return true;
+      });
+    }
+    // Search filtering
+    if (searchTerm.trim()) {
+      const t = searchTerm.toLowerCase();
+      logs = logs.filter(
+        (l) =>
+          l.userName?.toLowerCase().includes(t) ||
+          l.action?.toLowerCase().includes(t) ||
+          l.entityType?.toLowerCase().includes(t) ||
+          l.reason?.toLowerCase().includes(t),
+      );
+    }
     return logs;
   }, [allAuditLogs, activeTab, selectedYear, selectedMonth, selectedDay, searchTerm]);
 
@@ -664,10 +370,8 @@ export default function GroupSettingsScreen() {
     return filteredLogs.slice(start, start + PAGE_SIZE);
   }, [filteredLogs, currentPage]);
 
-  const totalPages  = Math.ceil(filteredLogs.length / PAGE_SIZE);
-  const startIndex  = (currentPage - 1) * PAGE_SIZE + 1;
-  const endIndex    = Math.min(currentPage * PAGE_SIZE, filteredLogs.length);
-  const hasFilters  = !!(searchTerm || selectedYear || selectedMonth || selectedDay);
+  const totalPages = Math.ceil(filteredLogs.length / PAGE_SIZE);
+  const hasFilters = !!(searchTerm || selectedYear || selectedMonth || selectedDay);
 
   const openFilter = () => {
     setTempSearch(searchTerm);
@@ -692,7 +396,7 @@ export default function GroupSettingsScreen() {
     setShowFilter(false);
   };
 
-  // Revert a logged action — restores the entity to its pre-action state.
+  // ─── Revert Action ──────────────────────────────────────────────────────
   const handleRevertLog = (log: AuditLog) => {
     if (log.action === "reverted") { show("This entry is already a revert — nothing to undo", "error"); return; }
     if (log.action !== "deleted" && log.action !== "created" && !log.before) {
@@ -715,46 +419,44 @@ export default function GroupSettingsScreen() {
     );
   };
 
+  // ─── Save Settings ──────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!activeGroupId) { show("No active group", "error"); return; }
-    const contributionAmount     = parseNum(contribAmount);
-    const loanInterestRate       = parseNum(loanRate);
-    const latePenaltyRatePct           = parseNum(lateRatePct);
-    const absencePenaltyMemberRatePct  = parseNum(absenceMemberPct);
+    const contributionAmount = parseNum(contribAmount);
+    const loanInterestRate = parseNum(loanRate);
+    const latePenaltyRatePct = parseNum(lateRatePct);
+    const absencePenaltyMemberRatePct = parseNum(absenceMemberPct);
     const absencePenaltyOfficerRatePct = parseNum(absenceOfficerPct);
-    const contributionLateFeeRatePct   = parseNum(contribLateFeePct);
+    const contributionLateFeeRatePct = parseNum(contribLateFeePct);
     const contributionLateFeeGraceDays = parseNum(contribLateFeeGrace);
-    const loanLateFeeRatePct           = parseNum(loanLateFeePct);
-    const loanLateFeeGraceDays         = parseNum(loanLateFeeGrace);
-    const loanPenaltyRatePctVal        = parseNum(loanPenaltyRatePct);
-    
-    // New contribution goal configuration
-    const goalMinimumContribVal       = parseNum(goalMinimumContrib);
-    const goalTargetAmountVal          = parseNum(goalTargetAmount);
-    const goalPeriodMonthsVal          = parseNum(goalPeriodMonths);
+    const loanLateFeeRatePct = parseNum(loanLateFeePct);
+    const loanLateFeeGraceDays = parseNum(loanLateFeeGrace);
+    const contributionGoalPeriodMonths = goalEnabled ? parseNum(goalPeriodMonths) : undefined;
+    const contributionGoalTargetAmount = goalEnabled ? parseNum(goalTarget) : undefined;
+    const trimmedGoalAnchor = goalEnabled ? goalAnchorDate.trim() : "";
 
-    if (contributionAmount !== undefined && contributionAmount < 0)  { show("Contribution amount cannot be negative", "error"); return; }
-    if (loanInterestRate   !== undefined && (loanInterestRate < 0 || loanInterestRate > 100)) { show("Loan interest rate must be 0–100", "error"); return; }
+    // Validation
+    if (contributionAmount !== undefined && contributionAmount < 0) { show("Contribution amount cannot be negative", "error"); return; }
+    if (loanInterestRate !== undefined && (loanInterestRate < 0 || loanInterestRate > 100)) { show("Loan interest rate must be 0–100", "error"); return; }
     if (latePenaltyRatePct !== undefined && (latePenaltyRatePct < 0 || latePenaltyRatePct > 100)) { show("Late penalty rate must be 0–100%", "error"); return; }
     if (absencePenaltyMemberRatePct !== undefined && (absencePenaltyMemberRatePct < 0 || absencePenaltyMemberRatePct > 100)) { show("Absence penalty rate must be 0–100%", "error"); return; }
     if (absencePenaltyOfficerRatePct !== undefined && (absencePenaltyOfficerRatePct < 0 || absencePenaltyOfficerRatePct > 100)) { show("Absence penalty rate must be 0–100%", "error"); return; }
     if (contributionLateFeeRatePct !== undefined && (contributionLateFeeRatePct < 0 || contributionLateFeeRatePct > 100)) { show("Contribution late fee rate must be 0–100%", "error"); return; }
     if (loanLateFeeRatePct !== undefined && (loanLateFeeRatePct < 0 || loanLateFeeRatePct > 100)) { show("Loan late fee rate must be 0–100%", "error"); return; }
-    if (loanPenaltyRatePctVal !== undefined && (loanPenaltyRatePctVal < 0 || loanPenaltyRatePctVal > 100)) { show("Loan penalty rate must be 0–100%", "error"); return; }
     if (contributionLateFeeGraceDays !== undefined && contributionLateFeeGraceDays < 0) { show("Grace days cannot be negative", "error"); return; }
     if (loanLateFeeGraceDays !== undefined && loanLateFeeGraceDays < 0) { show("Grace days cannot be negative", "error"); return; }
 
     if (goalEnabled) {
-      if (goalMinimumContribVal === undefined || goalMinimumContribVal <= 0) {
-        show("Goal minimum contribution must be greater than 0", "error");
+      if (contributionGoalPeriodMonths === undefined || contributionGoalPeriodMonths < 1 || !Number.isInteger(contributionGoalPeriodMonths)) {
+        show("Goal period must be a whole number of months (1 or more)", "error");
         return;
       }
-      if (goalTargetAmountVal === undefined || goalTargetAmountVal <= 0) {
+      if (contributionGoalTargetAmount === undefined || contributionGoalTargetAmount <= 0) {
         show("Goal target amount must be greater than 0", "error");
         return;
       }
-      if (goalPeriodMonthsVal === undefined || goalPeriodMonthsVal < 1 || !Number.isInteger(goalPeriodMonthsVal)) {
-        show("Goal period must be a whole number of months (1 or more)", "error");
+      if (!trimmedGoalAnchor || isNaN(new Date(trimmedGoalAnchor).getTime())) {
+        show("Goal start date is required and must be a valid date", "error");
         return;
       }
     }
@@ -770,35 +472,28 @@ export default function GroupSettingsScreen() {
       contributionFrequency: freq as any,
       loanInterestMethod: loanMethod as any,
       loanInterestRatePeriod: ratePeriod,
-      ...(contributionAmount              !== undefined && { contributionAmount }),
-      ...(loanInterestRate                !== undefined && { loanInterestRate }),
-      ...(latePenaltyRatePct              !== undefined && { latePenaltyRatePct }),
-      ...(absencePenaltyMemberRatePct     !== undefined && { absencePenaltyMemberRatePct }),
-      ...(absencePenaltyOfficerRatePct    !== undefined && { absencePenaltyOfficerRatePct }),
-      ...(contributionLateFeeRatePct      !== undefined && { contributionLateFeeRatePct }),
-      ...(contributionLateFeeGraceDays    !== undefined && { contributionLateFeeGraceDays }),
+      ...(contributionAmount !== undefined && { contributionAmount }),
+      ...(loanInterestRate !== undefined && { loanInterestRate }),
+      ...(latePenaltyRatePct !== undefined && { latePenaltyRatePct }),
+      ...(absencePenaltyMemberRatePct !== undefined && { absencePenaltyMemberRatePct }),
+      ...(absencePenaltyOfficerRatePct !== undefined && { absencePenaltyOfficerRatePct }),
+      ...(contributionLateFeeRatePct !== undefined && { contributionLateFeeRatePct }),
+      ...(contributionLateFeeGraceDays !== undefined && { contributionLateFeeGraceDays }),
       contributionLateFeeStartDate: trimmedStartDate || undefined,
-      ...(loanLateFeeRatePct              !== undefined && { loanLateFeeRatePct }),
-      ...(loanLateFeeGraceDays            !== undefined && { loanLateFeeGraceDays }),
-      ...(loanPenaltyRatePctVal           !== undefined && { loanPenaltyRatePct: loanPenaltyRatePctVal }),
-      // New contribution goal configuration
-      contributionGoal: goalEnabled ? {
-        enabled: true,
-        minimumContribution: goalMinimumContribVal || contributionAmount || 50000,
-        targetAmount: goalTargetAmountVal || 600000,
-        periodMonths: goalPeriodMonthsVal || 6,
-        currency: currency || "RWF",
-      } : {
-        enabled: false,
-        minimumContribution: contributionAmount || 50000,
-        targetAmount: 600000,
-        periodMonths: 6,
-        currency: currency || "RWF",
-      },
+      ...(loanLateFeeRatePct !== undefined && { loanLateFeeRatePct }),
+      ...(loanLateFeeGraceDays !== undefined && { loanLateFeeGraceDays }),
+      ...(goalEnabled && {
+        contributionGoalPeriodMonths,
+        contributionGoalTargetAmount,
+        contributionGoalAnchorDate: trimmedGoalAnchor,
+      }),
     };
 
     setSaving(true);
     try {
+      if (!goalEnabled && activeGroupId) {
+        await FS.clearContributionGoal(activeGroupId).catch(console.warn);
+      }
       await updateGroup(activeGroupId, patch);
       show("Settings saved");
     } catch (e: any) {
@@ -808,19 +503,20 @@ export default function GroupSettingsScreen() {
     }
   };
 
+  // ─── Export / Import ────────────────────────────────────────────────────
   const handleExport = async () => {
     try {
       const state = useStore.getState();
       await exportFullData(
         {
           group,
-          members:           state.members.filter((m) => m.groupId === group?.id),
-          loans:             state.loans.filter((l) => l.groupId === group?.id),
-          contributions:     state.contributions.filter((c) => c.groupId === group?.id),
-          investments:       state.investments.filter((i) => i.groupId === group?.id),
-          walletTransactions:state.walletTransactions.filter((w) => w.groupId === group?.id),
-          expenses:          state.expenses.filter((e) => e.groupId === group?.id),
-          meetings:          state.meetings.filter((m) => m.groupId === group?.id),
+          members: state.members.filter((m) => m.groupId === group?.id),
+          loans: state.loans.filter((l) => l.groupId === group?.id),
+          contributions: state.contributions.filter((c) => c.groupId === group?.id),
+          investments: state.investments.filter((i) => i.groupId === group?.id),
+          walletTransactions: state.walletTransactions.filter((w) => w.groupId === group?.id),
+          expenses: state.expenses.filter((e) => e.groupId === group?.id),
+          meetings: state.meetings.filter((m) => m.groupId === group?.id),
         },
         `${group?.name?.replace(/\s+/g, "_")}_Backup_${new Date().toISOString().slice(0, 10)}`,
       );
@@ -838,13 +534,13 @@ export default function GroupSettingsScreen() {
           const state = useStore.getState();
           if (group?.id) await FS.restoreGroupData(group.id, data);
           state.upsertGroup(data.group!);
-          if (data.members)           state.setMembers(data.members);
-          if (data.loans)             state.setLoans(data.loans);
-          if (data.contributions)     state.setContributions(data.contributions);
-          if (data.investments)       state.setInvestments(data.investments);
-          if (data.walletTransactions)state.setWalletTxs(data.walletTransactions);
-          if (data.expenses)          state.setExpenses(data.expenses);
-          if (data.meetings)          state.setMeetings(data.meetings);
+          if (data.members) state.setMembers(data.members);
+          if (data.loans) state.setLoans(data.loans);
+          if (data.contributions) state.setContributions(data.contributions);
+          if (data.investments) state.setInvestments(data.investments);
+          if (data.walletTransactions) state.setWalletTxs(data.walletTransactions);
+          if (data.expenses) state.setExpenses(data.expenses);
+          if (data.meetings) state.setMeetings(data.meetings);
           show("Data imported successfully");
         } catch (err: any) { show("Failed to sync import to server", "error"); console.error(err); }
       }, undefined, true);
@@ -865,11 +561,10 @@ export default function GroupSettingsScreen() {
     setRefreshing(false);
   };
 
-  const COL_WIDTHS = [180, 100, 160, 140];
+  const contribAmountNum = parseFloat(contribAmount) || 0;
 
   return (
     <View style={s.root}>
-
       {/* Header */}
       <View style={[s.header, isWide && s.headerWide]}>
         <View style={s.headerLeft}>
@@ -887,17 +582,15 @@ export default function GroupSettingsScreen() {
             <TouchableOpacity onPress={handleSave} disabled={saving} style={[s.headerBtn, s.headerBtnPrimary]}>
               {saving
                 ? <ActivityIndicator size="small" color="#fff" />
-                : <Text style={s.headerBtnPrimaryText}>Save</Text>}
+                : <Text style={s.headerBtnPrimaryText}>Save Changes</Text>}
             </TouchableOpacity>
           ) : (
-            // Audit section has its own single Filter control inside the
-            // toolbar below — no duplicate button needed here.
             <View style={{ width: 60 }} />
           )}
         </View>
       </View>
 
-      {/* Section Toggle */}
+      {/* Section Toggle - Modern Pill Style */}
       <View style={[s.segmentBar, isWide && s.segmentBarWide]}>
         {(["settings", "permissions", "audit"] as const).map((sec) => (
           <TouchableOpacity
@@ -906,18 +599,18 @@ export default function GroupSettingsScreen() {
             onPress={() => setActiveSection(sec as any)}
           >
             <Text style={[s.segmentText, activeSection === sec && s.segmentTextActive]}>
-              {sec === "settings" ? "Settings" : sec === "permissions" ? "Permissions" : "Audit Log"}
+              {sec === "settings" ? "⚙️ Settings" : sec === "permissions" ? "🔐 Permissions" : "📋 Audit Log"}
             </Text>
             {sec === "audit" && allAuditLogs.length > 0 && (
-              <View style={s.segmentPill}>
-                <Text style={s.segmentPillText}>{allAuditLogs.length > 99 ? "99+" : allAuditLogs.length}</Text>
+              <View style={s.segmentBadge}>
+                <Text style={s.segmentBadgeText}>{allAuditLogs.length > 99 ? "99+" : allAuditLogs.length}</Text>
               </View>
             )}
           </TouchableOpacity>
         ))}
       </View>
 
-      {/* Settings Section */}
+      {/* ─── SETTINGS SECTION ────────────────────────────────────────────── */}
       {activeSection === "settings" && (
         <ScrollView
           contentContainerStyle={[s.body, isWide && s.bodyWide]}
@@ -925,43 +618,53 @@ export default function GroupSettingsScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
         >
           {/* Group Card */}
-          <View style={[s.groupCard, isWide && s.groupCardWide]}>
+          <View style={s.groupCard}>
             <View style={s.groupAvatar}>
               <Text style={s.groupAvatarLetter}>{(group?.name ?? "S").charAt(0).toUpperCase()}</Text>
             </View>
             <View style={{ flex: 1 }}>
               <Text style={s.groupName}>{group?.name ?? "SCDT Savings Group"}</Text>
               {group?.description && <Text style={s.groupDesc}>{group.description}</Text>}
+              <Text style={s.groupMeta}>ID: {group?.id?.slice(0, 12)}… · {group?.memberCount || 0} members</Text>
             </View>
           </View>
 
-          {/* Two-column layout on wide screens */}
+          {/* Two-column layout */}
           <View style={isWide ? s.wideGrid : undefined}>
 
-            {/* Left Column */}
+            {/* ── LEFT COLUMN ── */}
             <View style={isWide ? s.wideCol : undefined}>
-              <SectionHeading label="Currency & Contributions" />
-              <View style={s.formCard}>
+              <SectionHeading 
+                label="Currency & Contributions" 
+                description="Set the group's currency and the standard contribution amount per member." 
+              />
+              <SettingCard>
                 <Select label="Currency" value={currency} options={CURRENCIES} onChange={setCurrency} />
                 <Divider />
                 <View style={s.row}>
                   <View style={{ flex: 1 }}>
-                    <Input label="Contribution amount" value={contribAmount} onChangeText={setContribAmount} keyboardType="numeric" prefix={currency} />
+                    <Input 
+                      label="Contribution amount" 
+                      value={contribAmount} 
+                      onChangeText={setContribAmount} 
+                      keyboardType="numeric" 
+                      prefix={currency} 
+                    />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Select label="Frequency" value={freq} options={FREQ} onChange={(v) => setFreq(v as any)} />
                   </View>
                 </View>
-              </View>
-
-              <SectionHeading label="Contribution Goal" />
-              <View style={s.formCard}>
-                <Text style={{ fontSize: 12, color: C.text3, paddingHorizontal: 4, marginBottom: 12, lineHeight: 17 }}>
-                  A savings TARGET each member should reach every so often — separate
-                  from the recurring minimum above (e.g. minimum {fmtCurrency(parseFloat(contribAmount) || 0)}/{freq},
-                  but a target of a larger amount every few months). Optional — leave
-                  off if this group doesn't need it.
+                <Text style={s.fieldHint}>
+                  Each member contributes {fmtCurrency(contribAmountNum)} {freq === "monthly" ? "per month" : freq === "weekly" ? "per week" : freq === "biweekly" ? "every two weeks" : "per year"}
                 </Text>
+              </SettingCard>
+
+              <SectionHeading 
+                label="Contribution Goal" 
+                description="A savings target each member should reach every N months. Optional." 
+              />
+              <SettingCard>
                 <View style={s.toggleRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={s.toggleLabel}>Enable contribution goal</Text>
@@ -980,58 +683,48 @@ export default function GroupSettingsScreen() {
                     <View style={s.row}>
                       <View style={{ flex: 1 }}>
                         <Input
-                          label="Minimum contribution"
-                          value={goalMinimumContrib}
-                          onChangeText={setGoalMinimumContrib}
-                          keyboardType="numeric"
-                          prefix={currency}
-                          hint="Minimum amount each member must contribute per period"
-                        />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Input
                           label="Target amount"
-                          value={goalTargetAmount}
-                          onChangeText={setGoalTargetAmount}
+                          value={goalTarget}
+                          onChangeText={setGoalTarget}
                           keyboardType="numeric"
                           prefix={currency}
-                          hint="Goal target amount for the period"
                         />
                       </View>
-                    </View>
-                    <View style={s.row}>
                       <View style={{ flex: 1 }}>
                         <Input
-                          label="Period length (months)"
+                          label="Every N months"
                           value={goalPeriodMonths}
                           onChangeText={setGoalPeriodMonths}
                           keyboardType="numeric"
-                          hint="Number of months per goal period"
                         />
                       </View>
                     </View>
-                    {!!goalTargetAmount && !!goalPeriodMonths && (
-                      <Text style={{ fontSize: 11, color: C.text3, paddingHorizontal: 4, marginTop: 4 }}>
-                        Target: {fmtCurrency(parseFloat(goalTargetAmount) || 0)} every {goalPeriodMonths} month{goalPeriodMonths === "1" ? "" : "s"}
-                        {parseFloat(goalPeriodMonths) > 0 ? ` — ≈ ${Math.floor(12 / parseFloat(goalPeriodMonths))} goal period${Math.floor(12 / parseFloat(goalPeriodMonths)) === 1 ? "" : "s"} per year` : ""}
+                    <DatePicker
+                      label="Start date"
+                      value={goalAnchorDate}
+                      onChange={setGoalAnchorDate}
+                      placeholder="Select start date"
+                    />
+                    {!!goalTarget && !!goalPeriodMonths && (
+                      <Text style={s.goalPreview}>
+                        {fmtCurrency(parseFloat(goalTarget) || 0)} every {goalPeriodMonths} month{goalPeriodMonths === "1" ? "" : "s"}
+                        {parseFloat(goalPeriodMonths) > 0 && ` — ≈ ${Math.floor(12 / parseFloat(goalPeriodMonths))} period${Math.floor(12 / parseFloat(goalPeriodMonths)) === 1 ? "" : "s"} per year`}
                       </Text>
                     )}
                   </>
                 )}
-              </View>
+              </SettingCard>
 
-              <SectionHeading label="Loan Rules" />
-              <View style={s.formCard}>
+              <SectionHeading 
+                label="Loan Rules" 
+                description="Configure how loans are calculated and managed in this group." 
+              />
+              <SettingCard>
                 <Select
                   label="Interest calculation method"
                   value={loanMethod}
                   options={INTEREST_METHODS}
                   onChange={(v) => setLoanMethod(v as any)}
-                  hint={
-                    loanMethod === "reducing_balance"
-                      ? "Interest accrues daily on the outstanding balance — no fixed monthly/30-day assumptions (bank-style amortization)"
-                      : "Interest charged up front on the full principal for the whole term (SACCO-style flat rate)"
-                  }
                 />
                 <Divider />
                 <View style={s.row}>
@@ -1052,39 +745,37 @@ export default function GroupSettingsScreen() {
                     />
                   </View>
                 </View>
-                <Text style={{ fontSize: 11, color: C.text3, paddingHorizontal: 4, marginTop: -8, marginBottom: 4 }}>
+                <Text style={s.fieldHint}>
                   {ratePeriod === "annual"
-                    ? `${loanRate || "0"}% per year ≈ ${round2((parseFloat(loanRate) || 0) / 12)}% per month — applied to the ${loanMethod === "reducing_balance" ? "outstanding balance" : "original loan amount"}`
-                    : `${loanRate || "0"}% per month ≈ ${round2((parseFloat(loanRate) || 0) * 12)}% per year — applied to the ${loanMethod === "reducing_balance" ? "outstanding balance" : "original loan amount"}`}
+                    ? `${loanRate || "0"}% per year ≈ ${round2((parseFloat(loanRate) || 0) / 12)}% per month`
+                    : `${loanRate || "0"}% per month ≈ ${round2((parseFloat(loanRate) || 0) * 12)}% per year`}
+                  {' — '}
+                  {loanMethod === "reducing_balance" ? "Calculated on outstanding balance" : "Calculated on original amount"}
                 </Text>
-                <Divider />
-                <Input
-                  label="Loan penalty rate (%)"
-                  value={loanPenaltyRatePct}
-                  onChangeText={setLoanPenaltyRatePct}
-                  keyboardType="numeric"
-                  hint="Default penalty rate for loan late payments (captured at loan creation)"
-                />
-              </View>
+              </SettingCard>
             </View>
 
-            {/* Right Column */}
+            {/* ── RIGHT COLUMN ── */}
             <View style={isWide ? s.wideCol : undefined}>
-              <SectionHeading label="Meeting Penalties" />
-              <View style={s.formCard}>
-                <Text style={{ fontSize: 12, color: C.text3, paddingHorizontal: 4, marginBottom: 12, lineHeight: 17 }}>
-                  Penalties are interest-based — a percentage of the group's standard
-                  contribution ({fmtCurrency(parseFloat(contribAmount) || 0)}), not a fixed amount.
-                  As the contribution changes, penalties scale automatically.
+              <SectionHeading 
+                label="Meeting Penalties" 
+                description="Penalties applied for meeting lateness or absence." 
+              />
+              <SettingCard>
+                <Text style={s.penaltyNote}>
+                  Penalties are calculated as a percentage of the contribution amount ({fmtCurrency(contribAmountNum)})
                 </Text>
-
-                <Input
-                  label="Late arrival — per 15 min (%)"
-                  value={lateRatePct}
-                  onChangeText={setLateRatePct}
-                  keyboardType="numeric"
-                  hint={`≈ ${fmtCurrency(round2((parseFloat(contribAmount) || 0) * (parseFloat(lateRatePct) || 0) / 100))} per 15 minutes late`}
-                />
+                <View style={s.row}>
+                  <View style={{ flex: 1 }}>
+                    <Input
+                      label="Late arrival (% per 15min)"
+                      value={lateRatePct}
+                      onChangeText={setLateRatePct}
+                      keyboardType="numeric"
+                    />
+                    <Text style={s.fieldHint}>≈ {fmtCurrency(round2(contribAmountNum * (parseFloat(lateRatePct) || 0) / 100))} per 15min late</Text>
+                  </View>
+                </View>
                 <Divider />
                 <View style={s.row}>
                   <View style={{ flex: 1 }}>
@@ -1093,8 +784,8 @@ export default function GroupSettingsScreen() {
                       value={absenceMemberPct}
                       onChangeText={setAbsenceMemberPct}
                       keyboardType="numeric"
-                      hint={`≈ ${fmtCurrency(round2((parseFloat(contribAmount) || 0) * (parseFloat(absenceMemberPct) || 0) / 100))}`}
                     />
+                    <Text style={s.fieldHint}>≈ {fmtCurrency(round2(contribAmountNum * (parseFloat(absenceMemberPct) || 0) / 100))}</Text>
                   </View>
                   <View style={{ flex: 1 }}>
                     <Input
@@ -1102,28 +793,22 @@ export default function GroupSettingsScreen() {
                       value={absenceOfficerPct}
                       onChangeText={setAbsenceOfficerPct}
                       keyboardType="numeric"
-                      hint={`≈ ${fmtCurrency(round2((parseFloat(contribAmount) || 0) * (parseFloat(absenceOfficerPct) || 0) / 100))}`}
                     />
+                    <Text style={s.fieldHint}>≈ {fmtCurrency(round2(contribAmountNum * (parseFloat(absenceOfficerPct) || 0) / 100))}</Text>
                   </View>
                 </View>
-              </View>
+              </SettingCard>
 
-              <SectionHeading label="Late Payment Fees" />
-              <View style={s.formCard}>
-                <Text style={{ fontSize: 12, color: C.text3, paddingHorizontal: 4, marginBottom: 12, lineHeight: 17 }}>
-                  Separate from meeting-attendance penalties above. These fees are
-                  calculated on the AMOUNT DUE — the missed contribution, or the
-                  specific overdue loan installment — not a flat figure. A grace
-                  period delays eligibility after the due date passes. Contribution
-                  fees also require a start date below, so enabling them never
-                  reaches back into a member's full history. Fees are surfaced under
-                  Reports → Earnings for an officer to apply with one tap; nothing
-                  charges automatically in the background.
+              <SectionHeading 
+                label="Late Payment Fees" 
+                description="Fees applied to overdue contributions or loan repayments." 
+              />
+              <SettingCard>
+                <Text style={s.penaltyNote}>
+                  Fees are calculated on the amount due, not a flat figure. Grace periods apply.
                 </Text>
 
-                <Text style={{ fontSize: 11, fontWeight: "700", color: C.text2, paddingHorizontal: 4, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                  Contributions
-                </Text>
+                <Text style={s.subLabel}>Contributions</Text>
                 <View style={s.row}>
                   <View style={{ flex: 1 }}>
                     <Input
@@ -1131,8 +816,8 @@ export default function GroupSettingsScreen() {
                       value={contribLateFeePct}
                       onChangeText={setContribLateFeePct}
                       keyboardType="numeric"
-                      hint={`≈ ${fmtCurrency(round2((parseFloat(contribAmount) || 0) * (parseFloat(contribLateFeePct) || 0) / 100))} per missed contribution`}
                     />
+                    <Text style={s.fieldHint}>≈ {fmtCurrency(round2(contribAmountNum * (parseFloat(contribLateFeePct) || 0) / 100))} per missed contribution</Text>
                   </View>
                   <View style={{ flex: 1 }}>
                     <Input
@@ -1140,7 +825,6 @@ export default function GroupSettingsScreen() {
                       value={contribLateFeeGrace}
                       onChangeText={setContribLateFeeGrace}
                       keyboardType="numeric"
-                      hint="Days after due date before a fee applies"
                     />
                   </View>
                 </View>
@@ -1148,19 +832,12 @@ export default function GroupSettingsScreen() {
                   label="Start calculating from"
                   value={contribLateFeeStart}
                   onChange={setContribLateFeeStart}
-                  placeholder="Select start date"
-                  hint={
-                    contribLateFeeStart.trim()
-                      ? "Missed contributions before this date are ignored — fees only apply from here forward"
-                      : "Required to activate contribution late fees. Leave blank to keep them off, even with a rate set above."
-                  }
+                  placeholder="Select start date (leave blank to disable)"
                 />
 
                 <Divider />
 
-                <Text style={{ fontSize: 11, fontWeight: "700", color: C.text2, paddingHorizontal: 4, marginTop: 4, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                  Loan Repayments
-                </Text>
+                <Text style={s.subLabel}>Loan Repayments</Text>
                 <View style={s.row}>
                   <View style={{ flex: 1 }}>
                     <Input
@@ -1168,7 +845,6 @@ export default function GroupSettingsScreen() {
                       value={loanLateFeePct}
                       onChangeText={setLoanLateFeePct}
                       keyboardType="numeric"
-                      hint="Applied to the overdue installment amount"
                     />
                   </View>
                   <View style={{ flex: 1 }}>
@@ -1177,15 +853,20 @@ export default function GroupSettingsScreen() {
                       value={loanLateFeeGrace}
                       onChangeText={setLoanLateFeeGrace}
                       keyboardType="numeric"
-                      hint="Days after due date before a fee applies"
                     />
                   </View>
                 </View>
-              </View>
+              </SettingCard>
 
-              <SectionHeading label="Data Management" />
-              <View style={s.formCard}>
+              <SectionHeading 
+                label="Data Management" 
+                description="Export or import your group data as a backup." 
+              />
+              <SettingCard>
                 <TouchableOpacity style={s.actionRow} onPress={handleExport} activeOpacity={0.7}>
+                  <View style={s.actionIcon}>
+                    <Text style={s.actionIconText}>📤</Text>
+                  </View>
                   <View style={s.actionInfo}>
                     <Text style={s.actionTitle}>Export backup</Text>
                     <Text style={s.actionDesc}>Download full group data as JSON</Text>
@@ -1194,45 +875,49 @@ export default function GroupSettingsScreen() {
                 </TouchableOpacity>
                 <Divider />
                 <TouchableOpacity style={s.actionRow} onPress={handleImport} activeOpacity={0.7}>
+                  <View style={s.actionIcon}>
+                    <Text style={s.actionIconText}>📥</Text>
+                  </View>
                   <View style={s.actionInfo}>
                     <Text style={s.actionTitle}>Import backup</Text>
                     <Text style={s.actionDesc}>Restore from a JSON backup file</Text>
                   </View>
                   <Text style={[s.actionCta, { color: "#d97706" }]}>Import</Text>
                 </TouchableOpacity>
-              </View>
+              </SettingCard>
 
               <SectionHeading label="Account" />
-              <View style={s.formCard}>
+              <SettingCard>
                 <TouchableOpacity style={s.actionRow} onPress={handleSignOut} activeOpacity={0.7}>
+                  <View style={[s.actionIcon, s.actionIconDanger]}>
+                    <Text style={s.actionIconText}>🚪</Text>
+                  </View>
                   <View style={s.actionInfo}>
                     <Text style={[s.actionTitle, { color: C.error }]}>Sign out</Text>
                     <Text style={s.actionDesc}>You will be returned to the welcome screen</Text>
                   </View>
                   <Text style={[s.actionCta, { color: C.error }]}>Sign out</Text>
                 </TouchableOpacity>
-              </View>
+              </SettingCard>
             </View>
           </View>
 
-          {/* Save button */}
+          {/* Save Button */}
           {!isWide && (
-            <Button label="Save settings" onPress={handleSave} fullWidth loading={saving} size="lg" style={{ marginTop: 24 }} />
+            <Button label="Save Settings" onPress={handleSave} fullWidth loading={saving} size="lg" style={{ marginTop: 24 }} />
           )}
           {isWide && (
             <View style={s.wideSaveRow}>
-              <Button label="Save settings" onPress={handleSave} loading={saving} size="lg" />
+              <Button label="Save Settings" onPress={handleSave} loading={saving} size="lg" />
             </View>
           )}
         </ScrollView>
       )}
 
-
-      {/* Permissions Section — search + click-to-expand */}
+      {/* ─── PERMISSIONS SECTION ─────────────────────────────────────────── */}
       {activeSection === "permissions" && (
         <View style={{ flex: 1 }}>
-          {/* Search bar */}
-          <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8 }}>
+          <View style={ps.searchContainer}>
             <View style={ps.searchBox}>
               <Text style={ps.searchIcon}>🔍</Text>
               <TextInput
@@ -1244,9 +929,7 @@ export default function GroupSettingsScreen() {
                 clearButtonMode="while-editing"
               />
             </View>
-            <Text style={{ fontSize: 12, color: C.text3, marginTop: 6 }}>
-              Tap a member to manage their permissions. Admins always have full access.
-            </Text>
+            <Text style={ps.searchHint}>Tap a member to manage their permissions. Admins always have full access.</Text>
           </View>
 
           <ScrollView
@@ -1275,25 +958,25 @@ export default function GroupSettingsScreen() {
                 "manageMeetings", "editMembers", "deleteRecords", "manageSettings",
               ];
               const PERM_LABELS: Record<keyof MemberPermissions, string> = {
-                addContribution:      "Record / Add Contributions",
-                addLoan:              "Apply for / Add Loans",
-                addInvestment:        "Add Investments",
+                addContribution: "Add Contributions",
+                addLoan: "Apply for Loans",
+                addInvestment: "Add Investments",
                 approveContributions: "Approve Contributions",
-                approveLoans:         "Approve Loans",
-                approveInvestments:   "Approve Investments",
-                viewAllReports:       "View All Reports & Member Data",
-                downloadReports:      "Export & Download Reports",
-                manageMeetings:       "Record & Manage Meetings",
-                editMembers:          "Edit Member Profiles & Details",
-                deleteRecords:        "Delete Financial Records",
-                manageSettings:       "Edit Group Rules & Settings",
-                updateMeetings:       "Update Meetings",
+                approveLoans: "Approve Loans",
+                approveInvestments: "Approve Investments",
+                viewAllReports: "View All Reports",
+                downloadReports: "Export Reports",
+                manageMeetings: "Manage Meetings",
+                editMembers: "Edit Members",
+                deleteRecords: "Delete Records",
+                manageSettings: "Manage Settings",
+                updateMeetings: "Update Meetings",
               };
               const PERM_GROUPS = [
-                { label: "CREATE & APPLY", keys: ["addContribution", "addLoan", "addInvestment"] as (keyof MemberPermissions)[] },
-                { label: "APPROVALS", keys: ["approveContributions", "approveLoans", "approveInvestments"] as (keyof MemberPermissions)[] },
-                { label: "REPORTS & VISIBILITY", keys: ["viewAllReports", "downloadReports"] as (keyof MemberPermissions)[] },
-                { label: "MANAGEMENT & OPERATIONS", keys: ["manageMeetings", "editMembers", "deleteRecords", "manageSettings"] as (keyof MemberPermissions)[] },
+                { label: "Create & Apply", keys: ["addContribution", "addLoan", "addInvestment"] as (keyof MemberPermissions)[] },
+                { label: "Approvals", keys: ["approveContributions", "approveLoans", "approveInvestments"] as (keyof MemberPermissions)[] },
+                { label: "Reports & Visibility", keys: ["viewAllReports", "downloadReports"] as (keyof MemberPermissions)[] },
+                { label: "Management", keys: ["manageMeetings", "editMembers", "deleteRecords", "manageSettings"] as (keyof MemberPermissions)[] },
               ];
 
               return filtered.map((member) => {
@@ -1305,7 +988,6 @@ export default function GroupSettingsScreen() {
 
                 return (
                   <View key={member.id} style={ps.memberCard}>
-                    {/* Collapsed header — always visible, tap to expand */}
                     <TouchableOpacity
                       style={ps.memberHeader}
                       onPress={() => setExpandedMemberId(isExpanded ? null : member.id)}
@@ -1331,20 +1013,15 @@ export default function GroupSettingsScreen() {
                           >
                             {isSaving
                               ? <ActivityIndicator size="small" color="#fff" />
-                              : <Text style={ps.saveBtnText}>Save</Text>
-                            }
+                              : <Text style={ps.saveBtnText}>Save</Text>}
                           </TouchableOpacity>
                         )}
-                        <Text style={{ fontSize: 18, color: C.text3, paddingHorizontal: 4 }}>
-                          {isExpanded ? "▲" : "▼"}
-                        </Text>
+                        <Text style={{ fontSize: 18, color: C.text3 }}>{isExpanded ? "▲" : "▼"}</Text>
                       </View>
                     </TouchableOpacity>
 
-                    {/* Expanded permissions — grouped with visual toggles */}
                     {isExpanded && (
                       <View style={ps.permGrid}>
-                        {/* Quick Action Buttons */}
                         <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
                           <TouchableOpacity
                             style={ps.quickBtn}
@@ -1353,18 +1030,16 @@ export default function GroupSettingsScreen() {
                               PERM_KEYS.forEach(k => { all[k] = true; });
                               setPendingPerms(prev => ({ ...prev, [member.id]: all as any }));
                             }}
-                            activeOpacity={0.7}
                           >
                             <Text style={ps.quickBtnText}>✔ Grant All</Text>
                           </TouchableOpacity>
                           <TouchableOpacity
-                            style={[ps.quickBtn, { borderColor: "rgba(239,68,68,0.3)", backgroundColor: "rgba(239,68,68,0.06)" }]}
+                            style={[ps.quickBtn, ps.quickBtnDanger]}
                             onPress={() => {
                               const none: Record<string, boolean> = {};
                               PERM_KEYS.forEach(k => { none[k] = false; });
                               setPendingPerms(prev => ({ ...prev, [member.id]: none as any }));
                             }}
-                            activeOpacity={0.7}
                           >
                             <Text style={[ps.quickBtnText, { color: C.error }]}>✕ Revoke All</Text>
                           </TouchableOpacity>
@@ -1407,113 +1082,117 @@ export default function GroupSettingsScreen() {
         </View>
       )}
 
-      {/* Audit Log Section — dark professional UI */}
+      {/* ─── AUDIT SECTION ────────────────────────────────────────────────── */}
       {activeSection === "audit" && (
-        <View style={aw.root}>
-
-          {/* ── Toolbar: count + search + category dropdown + single filter ── */}
-          <View style={aw.toolbar}>
-            <Text style={aw.toolbarCount}>
+        <View style={{ flex: 1, backgroundColor: C.bg }}>
+          {/* Toolbar */}
+          <View style={at.toolbar}>
+            <Text style={at.count}>
               {filteredLogs.length.toLocaleString()} record{filteredLogs.length !== 1 ? "s" : ""}
               {hasFilters ? " (filtered)" : ""}
             </Text>
-            <View style={aw.toolbarRight}>
-              <View style={aw.searchBox}>
-                <Text style={aw.searchIcon}>⌕</Text>
+            <View style={at.toolbarRight}>
+              <View style={at.searchBox}>
+                <Text style={at.searchIcon}>🔍</Text>
                 <TextInput
-                  style={aw.searchInput}
+                  style={at.searchInput}
                   placeholder="Search logs…"
                   placeholderTextColor={C.text3}
                   value={searchTerm}
                   onChangeText={(v) => { setSearchTerm(v); setCurrentPage(1); }}
                 />
                 {!!searchTerm && (
-                  <TouchableOpacity onPress={() => { setSearchTerm(""); setCurrentPage(1); }} hitSlop={{ top:6,bottom:6,left:6,right:6 }}>
-                    <Text style={{ color: C.text3, fontSize: 14, paddingHorizontal: 4 }}>✕</Text>
+                  <TouchableOpacity onPress={() => { setSearchTerm(""); setCurrentPage(1); }}>
+                    <Text style={at.clearSearch}>✕</Text>
                   </TouchableOpacity>
                 )}
               </View>
 
-              {/* Category dropdown — replaces the old horizontal chip-tab row */}
-              <CategoryDropdown
-                options={AUDIT_TABS}
-                value={activeTab}
-                onChange={(v) => { setActiveTab(v as AuditTab); setCurrentPage(1); }}
-                counts={{
-                  all: allAuditLogs.length,
-                  failed: allAuditLogs.filter(l => l.action === "failed" || l.status === "failed").length,
-                  deletions: allAuditLogs.filter(l => l.action === "deleted").length,
-                  contributions: allAuditLogs.filter(l => l.entityType === "contribution").length,
-                  loans: allAuditLogs.filter(l => l.entityType === "loan").length,
-                  members: allAuditLogs.filter(l => l.entityType === "member").length,
-                  investments: allAuditLogs.filter(l => l.entityType === "investment").length,
-                }}
-              />
+              {/* Category tabs - compact pill style */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={at.tabScroll}>
+                <View style={at.tabRow}>
+                  {AUDIT_TABS.map((tab) => {
+                    const isActive = activeTab === tab.key;
+                    const count = tab.key === "all" ? allAuditLogs.length : 
+                                  tab.key === "failed" ? allAuditLogs.filter(l => l.action === "failed" || l.status === "failed").length :
+                                  tab.key === "deletions" ? allAuditLogs.filter(l => l.action === "deleted").length :
+                                  allAuditLogs.filter(l => l.entityType === (AUDIT_TAB_ENTITY as any)[tab.key]).length;
+                    return (
+                      <TouchableOpacity
+                        key={tab.key}
+                        style={[at.tab, isActive && at.tabActive]}
+                        onPress={() => { setActiveTab(tab.key); setCurrentPage(1); }}
+                      >
+                        <Text style={at.tabIcon}>{tab.icon}</Text>
+                        <Text style={[at.tabLabel, isActive && at.tabLabelActive]}>{tab.label}</Text>
+                        <View style={[at.tabCount, isActive && at.tabCountActive]}>
+                          <Text style={[at.tabCountText, isActive && at.tabCountTextActive]}>{count}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
 
-              {/* Single date filter — opens the existing FilterModal (year/month/day/search) */}
-              <TouchableOpacity style={[aw.filterBtn, hasFilters && aw.filterBtnActive]} onPress={openFilter} activeOpacity={0.8}>
-                <Text style={[aw.filterBtnText, hasFilters && aw.filterBtnTextActive]}>
-                  {hasFilters ? "Filtered ✕" : "Date Filter"}
+              <TouchableOpacity style={[at.filterBtn, hasFilters && at.filterBtnActive]} onPress={openFilter}>
+                <Text style={[at.filterBtnText, hasFilters && at.filterBtnTextActive]}>
+                  {hasFilters ? "📌 Filtered" : "📅 Filter"}
                 </Text>
               </TouchableOpacity>
               {hasFilters && (
-                <TouchableOpacity onPress={clearFilters} activeOpacity={0.7}>
-                  <Text style={aw.clearText}>Clear</Text>
+                <TouchableOpacity onPress={clearFilters}>
+                  <Text style={at.clearFilters}>Clear</Text>
                 </TouchableOpacity>
               )}
             </View>
           </View>
 
-          {/* ── Table (desktop) / Cards (mobile) — white theme, revert action ── */}
-          {isWide ? (
-            <View style={{ flex: 1 }}>
-              <View style={aw.tableHead}>
-                <Text style={[aw.thCell, { width: 170 }]}>TIMESTAMP</Text>
-                <Text style={[aw.thCell, { width: 120 }]}>CATEGORY</Text>
-                <Text style={[aw.thCell, { width: 110 }]}>ACTIVITY</Text>
-                <Text style={[aw.thCell, { width: 130 }]}>USER</Text>
-                <Text style={[aw.thCell, { flex: 1 }]}>CHANGE LOG</Text>
-                <Text style={[aw.thCell, { width: 90, textAlign: "right" }]}>ACTIONS</Text>
+          {/* Audit Log List */}
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
+          >
+            {filteredLogs.length === 0 ? (
+              <View style={at.empty}>
+                <Text style={at.emptyIcon}>📋</Text>
+                <Text style={at.emptyTitle}>No records found</Text>
+                <Text style={at.emptyDesc}>
+                  {hasFilters
+                    ? "No logs match your current filters. Try adjusting or clearing them."
+                    : "Activity in this group will appear here as an audit trail."}
+                </Text>
               </View>
-
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
-              >
-                {filteredLogs.length === 0
-                  ? <EmptyState hasFilters={hasFilters} />
-                  : paginatedLogs.map((log, idx) => (
-                      <React.Fragment key={log.id}>
-                        <AuditTableRowWhite log={log} idx={idx} onRevert={() => handleRevertLog(log)} />
-                      </React.Fragment>
-                    ))
-                }
-                <Pagination currentPage={currentPage} totalPages={totalPages} onChange={setCurrentPage} wide />
-              </ScrollView>
-            </View>
-          ) : (
-            <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
-              showsVerticalScrollIndicator={false}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
-            >
-              {filteredLogs.length === 0
-                ? <EmptyState hasFilters={hasFilters} />
-                : <>
-                    <Text style={aw.mobileCount}>{startIndex}–{endIndex} of {filteredLogs.length}</Text>
+            ) : (
+              <>
+                {isWide ? (
+                  // Desktop Table View
+                  <View style={at.table}>
+                    <View style={at.tableHead}>
+                      <Text style={[at.th, { width: 170 }]}>Timestamp</Text>
+                      <Text style={[at.th, { width: 120 }]}>Category</Text>
+                      <Text style={[at.th, { width: 100 }]}>Action</Text>
+                      <Text style={[at.th, { width: 130 }]}>User</Text>
+                      <Text style={[at.th, { flex: 1 }]}>Details</Text>
+                      <Text style={[at.th, { width: 80, textAlign: "right" }]}>Revert</Text>
+                    </View>
                     {paginatedLogs.map((log) => (
-                      <React.Fragment key={log.id}>
-                        <AuditRowWhite log={log} onRevert={() => handleRevertLog(log)} />
-                      </React.Fragment>
+                      <AuditLogRow key={log.id} log={log} onRevert={() => handleRevertLog(log)} />
                     ))}
-                    <Pagination currentPage={currentPage} totalPages={totalPages} onChange={setCurrentPage} />
-                  </>
-              }
-            </ScrollView>
-          )}
+                  </View>
+                ) : (
+                  // Mobile Card View
+                  paginatedLogs.map((log) => (
+                    <AuditLogCard key={log.id} log={log} onRevert={() => handleRevertLog(log)} />
+                  ))
+                )}
+                <Pagination currentPage={currentPage} totalPages={totalPages} onChange={setCurrentPage} />
+              </>
+            )}
+          </ScrollView>
         </View>
       )}
 
-      {/* Filter modal */}
       <FilterModal
         visible={showFilter}
         onClose={() => setShowFilter(false)}
@@ -1529,65 +1208,132 @@ export default function GroupSettingsScreen() {
 }
 
 // ─────────────────────────────────────────────
-// Table header styles
+// Audit Log Row (Desktop)
 // ─────────────────────────────────────────────
-const at_th = StyleSheet.create({
-  header: {
-    flexDirection: "row", alignItems: "center",
-    paddingVertical: 9, paddingHorizontal: 20,
-    backgroundColor: C.elevated,
-    borderBottomWidth: 1, borderBottomColor: C.border,
-    borderTopWidth: 1, borderTopColor: C.border,
-  },
-  cell:  { paddingHorizontal: 4 },
-  label: { fontSize: 11, fontWeight: "700", color: C.text3, textTransform: "uppercase", letterSpacing: 0.5 },
-});
+function AuditLogRow({ log, onRevert }: { log: AuditLog; onRevert: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const cfg = getActionConfig(log.action);
+  const ts = new Date(log.timestamp);
+  const tsStr = isNaN(ts.getTime()) ? log.timestamp : ts.toLocaleString();
+  const canRevert = log.action !== "reverted" && (log.action === "deleted" || log.action === "created" || !!log.before);
 
-// ─────────────────────────────────────────────
-// Empty State
-// ─────────────────────────────────────────────
-function EmptyState({ hasFilters }: { hasFilters: boolean }) {
   return (
-    <View style={es.wrap}>
-      <View style={es.iconBox}>
-        <Text style={es.iconText}>○</Text>
-      </View>
-      <Text style={es.title}>No records found</Text>
-      <Text style={es.desc}>
-        {hasFilters
-          ? "No logs match your current filters. Try adjusting or clearing them."
-          : "Activity in this group will appear here as an audit trail."}
-      </Text>
-    </View>
+    <>
+      <TouchableOpacity style={[atr.row, expanded && atr.rowExpanded]} onPress={() => setExpanded(!expanded)} activeOpacity={0.7}>
+        <Text style={[atr.cell, { width: 170 }]} numberOfLines={1}>{tsStr}</Text>
+        <Text style={[atr.cell, { width: 120 }]} numberOfLines={1}>{entityLabel(log.entityType)}</Text>
+        <View style={{ width: 100 }}>
+          <View style={[atr.badge, { backgroundColor: cfg.bg }]}>
+            <Text style={[atr.badgeText, { color: cfg.text }]}>{cfg.label}</Text>
+          </View>
+        </View>
+        <Text style={[atr.cell, { width: 130 }]} numberOfLines={1}>{log.userName ?? "—"}</Text>
+        <Text style={[atr.cell, { flex: 1 }]} numberOfLines={1}>{log.reason || `${entityLabel(log.entityType)} ${log.action}`}</Text>
+        <View style={{ width: 80, alignItems: "flex-end" }}>
+          {canRevert && (
+            <TouchableOpacity onPress={onRevert}>
+              <Text style={atr.revert}>↺</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </TouchableOpacity>
+      {expanded && (log.before || log.after || log.errorMessage) && (
+        <View style={atr.expand}>
+          {log.errorMessage && (
+            <View style={atr.errorBox}>
+              <Text style={atr.errorLabel}>Error</Text>
+              <Text style={atr.errorText}>{log.errorMessage}</Text>
+            </View>
+          )}
+          <View style={atr.diffRow}>
+            {log.before && (
+              <View style={atr.diffBlock}>
+                <Text style={[atr.diffLabel, { color: "#dc2626" }]}>← Before</Text>
+                <Text style={atr.diffCode}>{JSON.stringify(log.before, null, 2)}</Text>
+              </View>
+            )}
+            {log.after && (
+              <View style={atr.diffBlock}>
+                <Text style={[atr.diffLabel, { color: "#16a34a" }]}>→ After</Text>
+                <Text style={atr.diffCode}>{JSON.stringify(log.after, null, 2)}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      )}
+    </>
   );
 }
-const es = StyleSheet.create({
-  wrap:    { alignItems: "center", paddingTop: 80, paddingHorizontal: 40 },
-  iconBox: { width: 56, height: 56, borderRadius: 14, backgroundColor: C.elevated, alignItems: "center", justifyContent: "center", marginBottom: 16, borderWidth: 1, borderColor: C.border },
-  iconText:{ fontSize: 24, color: C.text3 },
-  title:   { fontSize: 15, fontWeight: "700", color: C.text, marginBottom: 6 },
-  desc:    { fontSize: 13, color: C.text3, textAlign: "center", lineHeight: 20 },
-});
+
+// ─────────────────────────────────────────────
+// Audit Log Card (Mobile)
+// ─────────────────────────────────────────────
+function AuditLogCard({ log, onRevert }: { log: AuditLog; onRevert: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const cfg = getActionConfig(log.action);
+  const ts = new Date(log.timestamp);
+  const tsStr = isNaN(ts.getTime()) ? log.timestamp : ts.toLocaleDateString() + " " + ts.toLocaleTimeString();
+  const canRevert = log.action !== "reverted" && (log.action === "deleted" || log.action === "created" || !!log.before);
+
+  return (
+    <TouchableOpacity style={atc.card} onPress={() => setExpanded(!expanded)} activeOpacity={0.7}>
+      <View style={atc.header}>
+        <View style={{ flex: 1 }}>
+          <View style={atc.topRow}>
+            <Text style={atc.category}>{entityLabel(log.entityType)}</Text>
+            <View style={[atr.badge, { backgroundColor: cfg.bg }]}>
+              <Text style={[atr.badgeText, { color: cfg.text }]}>{cfg.label}</Text>
+            </View>
+          </View>
+          <Text style={atc.detail} numberOfLines={expanded ? undefined : 2}>
+            {log.reason || `${entityLabel(log.entityType)} ${log.action}`}
+          </Text>
+        </View>
+        <Text style={atc.chevron}>{expanded ? "▲" : "▼"}</Text>
+      </View>
+      <View style={atc.footer}>
+        <Text style={atc.user}>{log.userName ?? "—"}</Text>
+        <Text style={atc.time}>{tsStr}</Text>
+      </View>
+      {canRevert && (
+        <TouchableOpacity style={atc.revertBtn} onPress={onRevert}>
+          <Text style={atc.revertText}>↺ Revert</Text>
+        </TouchableOpacity>
+      )}
+      {expanded && (log.before || log.after || log.errorMessage) && (
+        <View style={atc.expand}>
+          {log.errorMessage && (
+            <View style={atr.errorBox}>
+              <Text style={atr.errorLabel}>Error</Text>
+              <Text style={atr.errorText}>{log.errorMessage}</Text>
+            </View>
+          )}
+          {log.before && (
+            <View style={atr.diffBlock}>
+              <Text style={[atr.diffLabel, { color: "#dc2626" }]}>← Before</Text>
+              <Text style={atr.diffCode}>{JSON.stringify(log.before, null, 2)}</Text>
+            </View>
+          )}
+          {log.after && (
+            <View style={atr.diffBlock}>
+              <Text style={[atr.diffLabel, { color: "#16a34a" }]}>→ After</Text>
+              <Text style={atr.diffCode}>{JSON.stringify(log.after, null, 2)}</Text>
+            </View>
+          )}
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}
 
 // ─────────────────────────────────────────────
 // Pagination
 // ─────────────────────────────────────────────
-function Pagination({ currentPage, totalPages, onChange, wide }: { currentPage: number; totalPages: number; onChange: (p: number) => void; wide?: boolean }) {
+function Pagination({ currentPage, totalPages, onChange }: { currentPage: number; totalPages: number; onChange: (p: number) => void }) {
   if (totalPages <= 1) return null;
 
-  const pages: (number | "…")[] = [];
-  if (totalPages <= 7) {
-    for (let i = 1; i <= totalPages; i++) pages.push(i);
-  } else {
-    pages.push(1);
-    if (currentPage > 3) pages.push("…");
-    for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) pages.push(i);
-    if (currentPage < totalPages - 2) pages.push("…");
-    pages.push(totalPages);
-  }
-
   return (
-    <View style={[pg.bar, wide && pg.barWide]}>
+    <View style={pg.bar}>
       <TouchableOpacity
         style={[pg.btn, currentPage === 1 && pg.btnDisabled]}
         onPress={() => onChange(currentPage - 1)}
@@ -1595,29 +1341,7 @@ function Pagination({ currentPage, totalPages, onChange, wide }: { currentPage: 
       >
         <Text style={pg.btnText}>← Prev</Text>
       </TouchableOpacity>
-
-      {wide && (
-        <View style={pg.pages}>
-          {pages.map((p, i) =>
-            p === "…" ? (
-              <Text key={`e${i}`} style={pg.ellipsis}>…</Text>
-            ) : (
-              <TouchableOpacity
-                key={p}
-                style={[pg.pageBtn, currentPage === p && pg.pageBtnActive]}
-                onPress={() => onChange(p as number)}
-              >
-                <Text style={[pg.pageBtnText, currentPage === p && pg.pageBtnTextActive]}>{p}</Text>
-              </TouchableOpacity>
-            )
-          )}
-        </View>
-      )}
-
-      {!wide && (
-        <Text style={pg.info}>Page {currentPage} of {totalPages}</Text>
-      )}
-
+      <Text style={pg.info}>Page {currentPage} of {totalPages}</Text>
       <TouchableOpacity
         style={[pg.btn, currentPage === totalPages && pg.btnDisabled]}
         onPress={() => onChange(currentPage + 1)}
@@ -1629,23 +1353,8 @@ function Pagination({ currentPage, totalPages, onChange, wide }: { currentPage: 
   );
 }
 
-const pg = StyleSheet.create({
-  bar:     { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 20, marginTop: 4 },
-  barWide: { justifyContent: "center", gap: 12 },
-  btn:     { paddingHorizontal: 16, paddingVertical: 8, backgroundColor: C.elevated, borderRadius: 8, borderWidth: 1, borderColor: C.border },
-  btnDisabled: { opacity: 0.35 },
-  btnText: { fontSize: 13, fontWeight: "600", color: C.text },
-  info:    { fontSize: 13, color: C.text3 },
-  pages:   { flexDirection: "row", gap: 4, alignItems: "center" },
-  pageBtn: { minWidth: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 6, borderWidth: 1, borderColor: C.border, paddingHorizontal: 6 },
-  pageBtnActive: { backgroundColor: C.primary, borderColor: C.primary },
-  pageBtnText:   { fontSize: 13, fontWeight: "600", color: C.text2 },
-  pageBtnTextActive: { color: "#fff" },
-  ellipsis: { fontSize: 13, color: C.text3, paddingHorizontal: 2 },
-});
-
 // ─────────────────────────────────────────────
-// Root styles
+// Styles
 // ─────────────────────────────────────────────
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
@@ -1661,184 +1370,125 @@ const s = StyleSheet.create({
   },
   headerWide: { paddingHorizontal: 32 },
   headerLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
-  headerRight:{ flexDirection: "row", alignItems: "center", gap: 8 },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
   backBtn: {
     width: 34, height: 34, borderRadius: 10,
     backgroundColor: C.elevated,
     alignItems: "center", justifyContent: "center",
     borderWidth: 1, borderColor: C.border,
   },
-  toggleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  toggleLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: C.text,
-  },
-  toggleHint: {
-    fontSize: 12,
-    color: C.text3,
-    marginTop: 2,
-  },
   backBtnText: { fontSize: 16, color: C.text2, fontWeight: "500", lineHeight: 20 },
-  headerTitle: { fontSize: 16, fontWeight: "700", color: C.text },
-  headerSub:   { fontSize: 12, color: C.text3, marginTop: 1 },
+  headerTitle: { fontSize: 18, fontWeight: "700", color: C.text },
+  headerSub: { fontSize: 13, color: C.text3, marginTop: 1 },
   headerBtn: {
-    paddingHorizontal: 14, paddingVertical: 7,
+    paddingHorizontal: 16, paddingVertical: 8,
     borderRadius: 8, borderWidth: 1, borderColor: C.border,
     backgroundColor: C.elevated,
   },
   headerBtnPrimary: { backgroundColor: C.primary, borderColor: C.primary },
-  headerBtnActive:  { borderColor: C.primary },
-  headerBtnText:        { fontSize: 13, fontWeight: "600", color: C.text2 },
   headerBtnPrimaryText: { fontSize: 13, fontWeight: "700", color: "#fff" },
-  headerBtnActiveText:  { color: C.primary },
 
-  // Segment bar
+  // Segment Bar
   segmentBar: {
     flexDirection: "row",
     backgroundColor: C.surface,
     borderBottomWidth: 1, borderBottomColor: C.border,
-    paddingHorizontal: 20,
+    paddingHorizontal: 20, paddingVertical: 4,
+    gap: 4,
   },
   segmentBarWide: { paddingHorizontal: 32 },
   segment: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    paddingVertical: 13, paddingHorizontal: 4, marginRight: 24,
-    borderBottomWidth: 2, borderBottomColor: "transparent",
+    paddingVertical: 10, paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: "transparent",
   },
-  segmentActive:    { borderBottomColor: C.primary },
-  segmentText:      { fontSize: 14, fontWeight: "600", color: C.text3 },
-  segmentTextActive:{ color: C.primary },
-  segmentPill: {
-    backgroundColor: C.primary, borderRadius: 10,
+  segmentActive: { backgroundColor: C.primary + "12" },
+  segmentText: { fontSize: 13, fontWeight: "600", color: C.text3 },
+  segmentTextActive: { color: C.primary },
+  segmentBadge: {
+    backgroundColor: C.primary + "25",
+    borderRadius: 10,
     paddingHorizontal: 6, minWidth: 20, height: 18, alignItems: "center", justifyContent: "center",
   },
-  segmentPillText: { fontSize: 10, fontWeight: "700", color: "#fff" },
+  segmentBadgeText: { fontSize: 10, fontWeight: "700", color: C.primary },
 
-  // Settings body
-  body:     { padding: 20, paddingBottom: 60, maxWidth: 860, alignSelf: "center", width: "100%" as any },
+  // Body
+  body: { padding: 20, paddingBottom: 60, maxWidth: 900, alignSelf: "center", width: "100%" as any },
   bodyWide: { paddingHorizontal: 32, paddingTop: 24 },
 
-  // Group card
+  // Group Card
   groupCard: {
     flexDirection: "row", alignItems: "center", gap: 14,
     backgroundColor: C.surface,
     borderWidth: 1, borderColor: C.border,
     borderRadius: 16, padding: 20, marginBottom: 4,
   },
-  groupCardWide: { marginBottom: 8 },
   groupAvatar: {
-    width: 46, height: 46, borderRadius: 13,
+    width: 48, height: 48, borderRadius: 14,
     backgroundColor: C.primary,
     alignItems: "center", justifyContent: "center",
   },
   groupAvatarLetter: { fontSize: 20, fontWeight: "800", color: "#fff" },
-  groupName: { fontSize: 15, fontWeight: "800", color: C.text },
-  groupDesc: { fontSize: 12, color: C.text3, marginTop: 2 },
+  groupName: { fontSize: 16, fontWeight: "700", color: C.text },
+  groupDesc: { fontSize: 13, color: C.text3, marginTop: 2 },
+  groupMeta: { fontSize: 11, color: C.text3, marginTop: 4 },
 
-  // Two-col grid
-  wideGrid: { flexDirection: "row", gap: 20, alignItems: "flex-start" },
-  wideCol:  { flex: 1 },
+  // Grid
+  wideGrid: { flexDirection: "row", gap: 24, alignItems: "flex-start" },
+  wideCol: { flex: 1 },
   wideSaveRow: { marginTop: 16, alignItems: "flex-start" },
 
-  // Form card
-  formCard: {
-    backgroundColor: C.surface,
-    borderWidth: 1, borderColor: C.border,
-    borderRadius: 14,
-    padding: 16, marginBottom: 4,
-    overflow: "hidden",
-  },
+  // Form
   row: { flexDirection: "row", gap: 10 },
+  fieldHint: { fontSize: 11, color: C.text3, marginTop: 4, paddingHorizontal: 4 },
+  penaltyNote: { fontSize: 13, color: C.text3, marginBottom: 12, lineHeight: 18 },
+  subLabel: { fontSize: 12, fontWeight: "700", color: C.text2, marginTop: 4, marginBottom: 8 },
+  goalPreview: { fontSize: 12, color: C.primary, fontWeight: "600", marginTop: 8 },
 
-  // Action rows
+  // Toggle
+  toggleRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingVertical: 4,
+  },
+  toggleLabel: { fontSize: 14, fontWeight: "600", color: C.text },
+  toggleHint: { fontSize: 12, color: C.text3, marginTop: 2 },
+
+  // Action Row
   actionRow: {
     flexDirection: "row", alignItems: "center",
-    paddingVertical: 12, gap: 12,
+    paddingVertical: 8, gap: 12,
   },
-  actionInfo: { flex: 1 },
-  actionTitle:{ fontSize: 14, fontWeight: "600", color: C.text },
-  actionDesc: { fontSize: 12, color: C.text3, marginTop: 2 },
-  actionCta:  { fontSize: 13, fontWeight: "700" },
-
-  // Tab strip
-  tabStrip: {
-    paddingHorizontal: 20, paddingVertical: 10, gap: 8,
-    backgroundColor: C.surface,
-    borderBottomWidth: 1, borderBottomColor: C.border,
-  },
-  tabStripWide: { paddingHorizontal: 32 },
-  tabChip: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-    paddingHorizontal: 14, paddingVertical: 7,
-    borderRadius: 20,
+  actionIcon: {
+    width: 36, height: 36, borderRadius: 10,
     backgroundColor: C.elevated,
-    borderWidth: 1, borderColor: C.border,
+    alignItems: "center", justifyContent: "center",
   },
-  tabChipActive:     { backgroundColor: C.primary, borderColor: C.primary },
-  tabChipText:       { fontSize: 13, fontWeight: "600", color: C.text2 },
-  tabChipTextActive: { color: "#fff" },
-  tabChipCount:      { backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 10, paddingHorizontal: 6, minWidth: 20, alignItems: "center" },
-  tabChipCountText:  { fontSize: 10, fontWeight: "700", color: "#fff" },
-
-  // Filter bar
-  filterBar: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    backgroundColor: "#f0fdf9",
-    paddingHorizontal: 20, paddingVertical: 8,
-    borderBottomWidth: 1, borderBottomColor: C.border,
-  },
-  filterBarText:  { fontSize: 12, color: C.primary, fontWeight: "500", flex: 1, marginRight: 12 },
-  filterBarClear: { fontSize: 12, color: C.error, fontWeight: "700" },
-
-  // Results count
-  resultsRow: {
-    paddingHorizontal: 20, paddingVertical: 7,
-    borderBottomWidth: 1, borderBottomColor: C.border,
-    backgroundColor: C.surface,
-  },
-  resultsRowWide: { paddingHorizontal: 32 },
-  resultsText: { fontSize: 11, color: C.text3 },
-
-  // Audit body (mobile)
-  auditBody: { padding: 20, paddingBottom: 60 },
+  actionIconDanger: { backgroundColor: "rgba(220,38,38,0.08)" },
+  actionIconText: { fontSize: 16 },
+  actionInfo: { flex: 1 },
+  actionTitle: { fontSize: 14, fontWeight: "600", color: C.text },
+  actionDesc: { fontSize: 12, color: C.text3, marginTop: 1 },
+  actionCta: { fontSize: 13, fontWeight: "700" },
 });
 
-// ─── Audit tab card styles ────────────────────────────────────────────────────
-const at = StyleSheet.create({
-  card: {
-    alignItems: "center", paddingVertical: 10, paddingHorizontal: 14,
-    borderRadius: 12, borderWidth: 1, borderColor: C.border,
-    backgroundColor: C.elevated, minWidth: 80,
-  },
-  cardActive: { backgroundColor: C.primary, borderColor: C.primary },
-  cardAlert:  { borderColor: "#f87171", backgroundColor: "#fef2f2" },
-  cardIcon:   { fontSize: 16, marginBottom: 4 },
-  cardLabel:  { fontSize: 11, fontWeight: "600", color: C.text2, marginBottom: 4 },
-  cardLabelActive: { color: "#fff" },
-  cardBadge:  {
-    backgroundColor: C.bg, borderRadius: 10,
-    paddingHorizontal: 6, paddingVertical: 1, minWidth: 22, alignItems: "center",
-  },
-  cardBadgeActive: { backgroundColor: "rgba(255,255,255,0.25)" },
-  cardBadgeAlert: { backgroundColor: "#fee2e2" },
-  cardBadgeText:  { fontSize: 10, fontWeight: "700", color: C.text3 },
-  cardBadgeTextActive: { color: "#fff" },
-});
-
-// ─── Permission section styles ────────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// Permission Styles
+// ─────────────────────────────────────────────
 const ps = StyleSheet.create({
+  searchContainer: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8 },
+  searchBox: {
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
+  },
+  searchIcon: { fontSize: 14, marginRight: 8 },
+  searchInput: { flex: 1, fontSize: 14, color: C.text, minHeight: 20 },
+  searchHint: { fontSize: 12, color: C.text3, marginTop: 6 },
   memberCard: {
     backgroundColor: C.surface,
     borderRadius: 12,
-    marginBottom: 16,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: C.border,
     overflow: "hidden",
@@ -1847,8 +1497,6 @@ const ps = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     padding: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
     backgroundColor: C.elevated,
   },
   memberAvatar: {
@@ -1865,16 +1513,19 @@ const ps = StyleSheet.create({
     paddingVertical: 10, paddingHorizontal: 8,
     borderRadius: 8,
   },
-  permRowActive: {
-    backgroundColor: C.primary + "0a",
-  },
+  permRowActive: { backgroundColor: C.primary + "0a" },
   permLabel: { fontSize: 13, fontWeight: "500", color: C.text, flex: 1, paddingRight: 8 },
+  permGroupLabel: {
+    fontSize: 9, fontWeight: "800", color: C.text3, letterSpacing: 1.2,
+    textTransform: "uppercase", paddingHorizontal: 8, paddingTop: 10, paddingBottom: 4,
+  },
   quickBtn: {
     paddingHorizontal: 12, paddingVertical: 7,
     borderRadius: 8, borderWidth: 1,
     borderColor: C.primary + "40",
     backgroundColor: C.primary + "0a",
   },
+  quickBtnDanger: { borderColor: "rgba(239,68,68,0.3)", backgroundColor: "rgba(239,68,68,0.06)" },
   quickBtnText: { fontSize: 11, fontWeight: "700", color: C.primary },
   togglePill: {
     paddingHorizontal: 12, paddingVertical: 5,
@@ -1883,10 +1534,7 @@ const ps = StyleSheet.create({
     borderWidth: 1, borderColor: C.border,
     minWidth: 46, alignItems: "center",
   },
-  togglePillActive: {
-    backgroundColor: C.primary + "15",
-    borderColor: C.primary,
-  },
+  togglePillActive: { backgroundColor: C.primary + "15", borderColor: C.primary },
   toggleText: { fontSize: 9, fontWeight: "800", color: C.text3, letterSpacing: 0.5 },
   toggleTextActive: { color: C.primary },
   saveBtn: {
@@ -1895,17 +1543,137 @@ const ps = StyleSheet.create({
   },
   saveBtnDisabled: { opacity: 0.6 },
   saveBtnText: { fontSize: 13, fontWeight: "700", color: "#fff" },
-  sectionLabel: { fontSize: 11, fontWeight: "700", color: C.text2, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 12 },
+});
+
+// ─────────────────────────────────────────────
+// Audit Styles
+// ─────────────────────────────────────────────
+const at = StyleSheet.create({
+  toolbar: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingVertical: 10,
+    backgroundColor: C.surface,
+    borderBottomWidth: 1, borderBottomColor: C.border,
+    flexWrap: "wrap", gap: 8,
+  },
+  count: { fontSize: 13, fontWeight: "600", color: C.text2 },
+  toolbarRight: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   searchBox: {
     flexDirection: "row", alignItems: "center",
-    backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
-    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
+    backgroundColor: C.bg, borderWidth: 1, borderColor: C.border,
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6,
   },
-  searchIcon: { fontSize: 14, marginRight: 8 },
-  searchInput: { flex: 1, fontSize: 14, color: C.text, minHeight: 20 },
-  permGroupLabel: {
-    fontSize: 9, fontWeight: "800", color: C.text3, letterSpacing: 1.2,
-    textTransform: "uppercase", paddingHorizontal: 8, paddingTop: 10, paddingBottom: 4,
+  searchIcon: { fontSize: 14, color: C.text3, marginRight: 6 },
+  searchInput: { flex: 1, fontSize: 13, color: C.text, minHeight: 18, width: 120 },
+  clearSearch: { color: C.text3, fontSize: 14, paddingHorizontal: 4 },
+  tabScroll: { maxWidth: "100%" as any },
+  tabRow: { flexDirection: "row", gap: 4 },
+  tab: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 6,
     backgroundColor: "transparent",
+    borderWidth: 1, borderColor: "transparent",
   },
+  tabActive: { backgroundColor: C.primary + "12", borderColor: C.primary + "30" },
+  tabIcon: { fontSize: 12 },
+  tabLabel: { fontSize: 11, fontWeight: "600", color: C.text3 },
+  tabLabelActive: { color: C.primary },
+  tabCount: {
+    backgroundColor: C.elevated, borderRadius: 8,
+    paddingHorizontal: 4, minWidth: 16, alignItems: "center",
+  },
+  tabCountActive: { backgroundColor: C.primary + "25" },
+  tabCountText: { fontSize: 9, fontWeight: "700", color: C.text3 },
+  tabCountTextActive: { color: C.primary },
+  filterBtn: {
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 8, borderWidth: 1, borderColor: C.border,
+    backgroundColor: C.bg,
+  },
+  filterBtnActive: { borderColor: C.primary, backgroundColor: C.primary + "10" },
+  filterBtnText: { fontSize: 12, fontWeight: "600", color: C.text3 },
+  filterBtnTextActive: { color: C.primary },
+  clearFilters: { fontSize: 12, color: C.error, fontWeight: "600" },
+  table: {
+    backgroundColor: C.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    overflow: "hidden",
+  },
+  tableHead: {
+    flexDirection: "row",
+    backgroundColor: C.elevated,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  th: { fontSize: 10, fontWeight: "700", color: C.text3, textTransform: "uppercase", letterSpacing: 0.5, paddingHorizontal: 4 },
+  empty: { alignItems: "center", paddingVertical: 60 },
+  emptyIcon: { fontSize: 36, opacity: 0.5 },
+  emptyTitle: { fontSize: 16, fontWeight: "700", color: C.text, marginTop: 12 },
+  emptyDesc: { fontSize: 13, color: C.text3, textAlign: "center", marginTop: 6, paddingHorizontal: 20 },
+});
+
+// ─────────────────────────────────────────────
+// Audit Row Styles
+// ─────────────────────────────────────────────
+const atr = StyleSheet.create({
+  row: {
+    flexDirection: "row", alignItems: "center",
+    paddingVertical: 10, paddingHorizontal: 16,
+    borderBottomWidth: 1, borderBottomColor: C.borderLight,
+    backgroundColor: C.surface,
+  },
+  rowExpanded: { backgroundColor: C.elevated },
+  cell: { fontSize: 12, color: C.text2, paddingHorizontal: 4 },
+  badge: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, alignSelf: "flex-start" },
+  badgeText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.2 },
+  revert: { fontSize: 16, color: C.primary, fontWeight: "700" },
+  expand: { paddingHorizontal: 16, paddingVertical: 12, backgroundColor: C.elevated },
+  errorBox: { backgroundColor: "#fef2f2", borderRadius: 6, padding: 10, borderWidth: 1, borderColor: "#fecaca", marginBottom: 10 },
+  errorLabel: { fontSize: 9, fontWeight: "800", color: "#dc2626", letterSpacing: 1, marginBottom: 3 },
+  errorText: { fontSize: 11, color: "#b91c1c", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
+  diffRow: { flexDirection: "row", gap: 12 },
+  diffBlock: { flex: 1, backgroundColor: C.surface, borderRadius: 6, padding: 10, borderWidth: 1, borderColor: C.border },
+  diffLabel: { fontSize: 10, fontWeight: "700", letterSpacing: 0.4, marginBottom: 4, textTransform: "uppercase" },
+  diffCode: { fontSize: 10, color: C.text2, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", lineHeight: 15 },
+});
+
+// ─────────────────────────────────────────────
+// Audit Card Styles
+// ─────────────────────────────────────────────
+const atc = StyleSheet.create({
+  card: {
+    backgroundColor: C.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 14,
+    marginBottom: 8,
+  },
+  header: { flexDirection: "row", alignItems: "flex-start" },
+  topRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 },
+  category: { fontSize: 12, fontWeight: "700", color: C.text },
+  detail: { fontSize: 12, color: C.text2, lineHeight: 17 },
+  chevron: { fontSize: 12, color: C.text3, marginLeft: 8, paddingTop: 4 },
+  footer: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 },
+  user: { fontSize: 11, color: C.text3 },
+  time: { fontSize: 11, color: C.text3 },
+  revertBtn: { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.borderLight },
+  revertText: { fontSize: 12, fontWeight: "600", color: C.primary },
+  expand: { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.borderLight },
+});
+
+// ─────────────────────────────────────────────
+// Pagination Styles
+// ─────────────────────────────────────────────
+const pg = StyleSheet.create({
+  bar: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 16, paddingVertical: 16 },
+  btn: { paddingHorizontal: 16, paddingVertical: 8, backgroundColor: C.elevated, borderRadius: 8, borderWidth: 1, borderColor: C.border },
+  btnDisabled: { opacity: 0.4 },
+  btnText: { fontSize: 13, fontWeight: "600", color: C.text },
+  info: { fontSize: 13, color: C.text3 },
 });

@@ -62,8 +62,6 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       const user = await signIn(email.trim(), password);
-      // Keep legacy SCDT users working, but do not force a new account into
-      // that group. The tabs shell resolves all groups from memberships.
       const member = await FS.ensureMemberExists(
         FIXED_GROUP_ID, user.uid, user.displayName || email.trim(), email.trim(),
       );
@@ -71,7 +69,7 @@ export default function LoginScreen() {
         show(`Welcome back! Balance: ${fmtCurrency(member.totalContributions)}`, "success");
       }
       recalcTotals();
-      if (member) setActiveGroup(FIXED_GROUP_ID);
+      setActiveGroup(FIXED_GROUP_ID);
       router.replace("/(tabs)/dashboard");
     } catch (e: any) {
       const code = e?.code ?? "";
@@ -91,15 +89,28 @@ export default function LoginScreen() {
     try {
       await resetPassword(email.trim());
       setResetSent(true);
-      show("Password reset email sent! Check your inbox.", "success");
+      show("If an account exists for this email, a password reset email has been sent.", "success");
     } catch (e: any) {
       const code = e?.code ?? "";
-      show(
-        code === "auth/user-not-found" ? "No account found with this email" :
-        code === "auth/invalid-email"  ? "Enter a valid email address" :
-        "Failed to send reset email. Try again.",
-        "error",
-      );
+      // Deliberately NOT distinguishing "no account found" from other
+      // failures here — Firebase's own enumeration-protection setting
+      // may or may not suppress auth/user-not-found server-side
+      // depending on project configuration, but the client must never
+      // reveal it either way (telling an attacker "no account found
+      // with this email" is exactly the account-enumeration leak this
+      // flow needs to avoid). Only genuinely user-actionable errors —
+      // bad input, rate limiting — get a distinct message; anything
+      // else (including "no such user") shows the same generic
+      // success-shaped message as a real send, so the two cases are
+      // indistinguishable from the outside.
+      if (code === "auth/invalid-email") {
+        show("Enter a valid email address", "error");
+      } else if (code === "auth/too-many-requests") {
+        show("Too many attempts. Please try again later.", "error");
+      } else {
+        setResetSent(true);
+        show("If an account exists for this email, a password reset email has been sent.", "success");
+      }
     } finally { setResetLoading(false); }
   };
 

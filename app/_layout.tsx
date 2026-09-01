@@ -37,7 +37,16 @@ export default function RootLayout() {
     }
   }, [fontsLoaded, recalcTotals]);
 
-  if (!fontsLoaded) return null;
+  // IMPORTANT: never return null/conditionally unmount here. Expo Router
+  // requires the Root Layout to render a Navigator (Stack/Slot) on its
+  // very first render. If this returns null while fonts load, any nested
+  // screen that calls router.replace() in a useEffect during that window
+  // (e.g. app/index.tsx and app/(tabs)/_layout.tsx both redirect based on
+  // authUid on mount) throws:
+  //   "Attempted to navigate before mounting the Root Layout component."
+  // The native splash screen (preventAutoHideAsync above) already covers
+  // the blank frame until fontsLoaded flips true and hideAsync() runs, so
+  // we don't need to unmount the Stack to hide a flash of unstyled text.
 
   return (
     <SafeAreaProvider>

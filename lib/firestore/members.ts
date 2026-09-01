@@ -5,9 +5,10 @@ import {
   membersCol, contribsCol, loansCol, investCol, walletCol, membershipsCol,
   getCurrentUserInfo, logError, stripUndefined, fromSnap, round2, getMembershipId,
 } from "./core";
-import type { Member, NewRecord } from "./core";
+import type { Member, NewRecord, MemberRole } from "./core";
 import { writeAuditLog } from "./audit";
 import { getGroup, updateGroup } from "./groups";
+import { ensureGroupExists } from "./groupInit";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Members
@@ -58,6 +59,11 @@ export async function addMember(gId: string, data: NewRecord<Member>): Promise<s
 export async function getMembers(gId: string): Promise<Member[]> {
   const snap = await getDocs(query(membersCol(gId), orderBy("fullName")));
   return snap.docs.map((s) => fromSnap<Member>(s));
+}
+
+export async function getMemberById(gId: string, mId: string): Promise<Member | null> {
+  const snap = await getDoc(doc(membersCol(gId), mId));
+  return snap.exists() ? fromSnap<Member>(snap) : null;
 }
 
 export async function updateMember(
@@ -141,8 +147,8 @@ export async function findAndMergeMemberByEmail(
   try {
     if (!email) return { merged: false, memberId: "", memberData: null };
     
+    
     // Query for member with matching email (case insensitive)
-    // This requires admin permissions - only admins should call this function
     const membersRef = membersCol(groupId);
     const membersQuery = query(membersRef, where("email", "==", email.toLowerCase()));
     const memberSnap = await getDocs(membersQuery);
@@ -151,6 +157,7 @@ export async function findAndMergeMemberByEmail(
       const existingMember = memberSnap.docs[0];
       const memberData = existingMember.data() as Member;
       const memberId = existingMember.id;
+      
       
       // Update member with Firebase user ID (if not already set)
       const updates: any = {
@@ -213,6 +220,23 @@ export async function findAndMergeMemberByEmail(
   }
 }
 
+/**
+ * Registration/login bootstrap for the app's single fixed group.
+ * 
+ * This function ensures a user exists as a member in the group. It handles:
+ * 1. Checking if the user already has a membership
+ * 2. Creating the group if it doesn't exist (first user)
+ * 3. Determining if the user should be admin (first member gets admin)
+ * 4. Creating the member document and membership document
+ * 5. Returning the member data
+ * 
+ * IMPORTANT: The role detection uses group.memberCount to determine if
+ * the user should be admin. The first member (memberCount === 0) gets
+ * the "admin" role.
+ * 
+ * This function is called during login/registration to ensure the user
+ * has a valid member record in the group.
+ */
 export async function ensureMemberExists(
   gId: string,
   userId: string,
@@ -220,54 +244,86 @@ export async function ensureMemberExists(
   email: string,
 ): Promise<Member | null> {
   try {
+    console.log(`[ensureMemberExists] Starting for user ${userId} in group ${gId}`);
+    
+    // Check if user already has a membership document
     const membershipId = getMembershipId(gId, userId);
     const membershipRef = doc(db, "groupMemberships", membershipId);
+    const membershipSnap = await getDoc(membershipRef);
 
-    // Do not `get()` a membership before it exists. Firestore evaluates a
-    // missing document with no `resource.data`, so a strict owner-only rule
-    // correctly rejects that read. This query is constrained to the caller's
-    // uid, which the rules explicitly permit, and returns an empty snapshot
-    // for a new user rather than a permission error.
-    const membershipQuery = query(
-      membershipsCol,
-      where("userId", "==", userId),
-      where("groupId", "==", gId),
-      limit(1),
-    );
-    const membershipResults = await getDocs(membershipQuery);
-    const membershipSnap = membershipResults.docs[0];
-
-    // If membership exists, user is already linked
-    if (membershipSnap) {
+    // If membership exists, load and return the member
+    if (membershipSnap.exists()) {
+      console.log(`[ensureMemberExists] Membership exists for user ${userId}`);
       const memberId = membershipSnap.data()?.memberId;
+      
       if (memberId) {
         const memberDoc = await getDoc(doc(membersCol(gId), memberId));
         if (memberDoc.exists()) {
-          return { ...memberDoc.data(), id: memberDoc.id } as Member;
+          const member = { ...memberDoc.data(), id: memberDoc.id } as Member;
+          console.log(`[ensureMemberExists] Found existing member with role: ${member.role}`);
+          return member;
         }
       }
-      return null;
+      
+      // Membership exists but member doc is missing - try to recover
+      console.warn(`[ensureMemberExists] Membership exists but member doc missing for user ${userId}`);
     }
 
-    // Create new member document directly without email query
-    // This avoids permission errors during bootstrap
-    const memberId = userId;
+    // Ensure the group document exists
+    console.log(`[ensureMemberExists] Ensuring group exists for ${gId}`);
+    await ensureGroupExists(gId, userId);
+
+    // Get the group to check member count
+    const groupRef = doc(db, "groups", gId);
+    const groupSnap = await getDoc(groupRef);
+    
+    // Read memberCount from the group
+    const groupData = groupSnap.exists() ? groupSnap.data() : null;
+    const memberCount = groupData?.memberCount ?? 0;
+    
+    // Determine role: first member (memberCount === 0) becomes admin
+    // This ensures the first person to register gets admin privileges
+    const role: MemberRole = memberCount === 0 ? "admin" : "member";
+    
+    console.log(`[ensureMemberExists] Member count: ${memberCount}, Assigned role: ${role}`);
+
     const now = new Date().toISOString();
-    
-    // Check if this is the first member in the group
-    const allMembersSnap = await getDocs(membersCol(gId));
-    const isFirstMember = allMembersSnap.empty;
-    const role = isFirstMember ? "admin" : "member";
-    
-    const newMemberRef = doc(membersCol(gId), memberId);
-    await setDoc(newMemberRef, {
+    const memberId = userId; // Use userId as memberId for consistency
+
+    // Check if member document already exists (maybe created by admin)
+    const memberRef = doc(membersCol(gId), memberId);
+    const memberSnap = await getDoc(memberRef);
+
+    if (memberSnap.exists()) {
+      // Member exists but membership doesn't - just link them
+      console.log(`[ensureMemberExists] Member doc exists, creating membership link`);
+      const existingData = memberSnap.data() as Member;
+      
+      // Create membership document
+      await setDoc(membershipRef, {
+        id: membershipId,
+        groupId: gId,
+        userId: userId,
+        memberId: memberId,
+        role: existingData.role || role,
+        status: existingData.status || "active",
+        email: email.toLowerCase(),
+        createdAt: now,
+      });
+      
+      return { ...existingData, id: memberId } as Member;
+    }
+
+    // Create new member document
+    console.log(`[ensureMemberExists] Creating new member document with role: ${role}`);
+    await setDoc(memberRef, {
       id: memberId,
       groupId: gId,
-      userId: userId,
-      fullName: fullName,
+      userId,
+      fullName,
       email: email.toLowerCase(),
       phone: "",
-      role: role,
+      role,
       status: "active",
       dateJoined: now,
       totalContributions: 0,
@@ -275,27 +331,35 @@ export async function ensureMemberExists(
       loanEarnings: 0,
       createdAt: now,
     });
-    
+
     // Create membership document
-    const membershipData = {
+    await setDoc(membershipRef, {
       id: membershipId,
       groupId: gId,
-      userId: userId,
-      memberId: memberId,
-      role: role,
+      userId,
+      memberId,
+      role,
       status: "active",
       email: email.toLowerCase(),
       createdAt: now,
-    };
-    
-    await setDoc(membershipRef, membershipData);
-    
-    // Return the member data
-    const finalMemberDoc = await getDoc(doc(membersCol(gId), memberId));
+    });
+
+    // Increment memberCount - only for new members (not re-links)
+    // We increment after creating both docs to avoid race conditions
+    const currentCount = groupData?.memberCount ?? 0;
+    await updateDoc(groupRef, { memberCount: currentCount + 1 }).catch((e) => {
+      console.warn("[ensureMemberExists] Failed to increment memberCount:", e);
+    });
+
+    // Return the created member
+    const finalMemberDoc = await getDoc(memberRef);
     if (finalMemberDoc.exists()) {
-      return { ...finalMemberDoc.data(), id: finalMemberDoc.id } as Member;
+      const member = { ...finalMemberDoc.data(), id: finalMemberDoc.id } as Member;
+      console.log(`[ensureMemberExists] Member created successfully with role: ${member.role}`);
+      return member;
     }
     
+    console.error(`[ensureMemberExists] Failed to create member for user ${userId}`);
     return null;
   } catch (error) {
     console.error("[ensureMemberExists] Error:", error);
@@ -315,3 +379,110 @@ export function subscribeMembers(
   );
 }
 
+export function subscribeMember(
+  gId: string,
+  mId: string,
+  cb: (m: Member | null) => void,
+  onError?: (error: unknown) => void,
+): () => void {
+  return onSnapshot(
+    doc(membersCol(gId), mId),
+    (snap) => cb(snap.exists() ? fromSnap<Member>(snap) : null),
+    onError,
+  );
+}
+
+export async function approveMember(
+  gId: string,
+  mId: string,
+): Promise<void> {
+  const actorInfo = await getCurrentUserInfo();
+  const now = new Date().toISOString();
+  
+  await updateMember(gId, mId, { status: "active" });
+  
+  if (actorInfo) {
+    await writeAuditLog(gId, {
+      userId: actorInfo.userId,
+      groupId: gId,
+      userName: actorInfo.userName,
+      action: "APPROVE_MEMBER",
+      entityType: "member",
+      entityId: mId,
+      after: { status: "active" },
+    });
+  }
+}
+
+export async function suspendMember(
+  gId: string,
+  mId: string,
+  reason?: string,
+): Promise<void> {
+  const actorInfo = await getCurrentUserInfo();
+  const now = new Date().toISOString();
+  
+  await updateMember(gId, mId, { status: "suspended" });
+  
+  if (actorInfo) {
+    await writeAuditLog(gId, {
+      userId: actorInfo.userId,
+      groupId: gId,
+      userName: actorInfo.userName,
+      action: "SUSPEND_MEMBER",
+      entityType: "member",
+      entityId: mId,
+      after: { status: "suspended" },
+      reason,
+    });
+  }
+}
+
+export async function activateMember(
+  gId: string,
+  mId: string,
+): Promise<void> {
+  const actorInfo = await getCurrentUserInfo();
+  const now = new Date().toISOString();
+  
+  await updateMember(gId, mId, { status: "active" });
+  
+  if (actorInfo) {
+    await writeAuditLog(gId, {
+      userId: actorInfo.userId,
+      groupId: gId,
+      userName: actorInfo.userName,
+      action: "ACTIVATE_MEMBER",
+      entityType: "member",
+      entityId: mId,
+      after: { status: "active" },
+    });
+  }
+}
+
+export async function updateMemberRole(
+  gId: string,
+  mId: string,
+  newRole: MemberRole,
+): Promise<void> {
+  const actorInfo = await getCurrentUserInfo();
+  const now = new Date().toISOString();
+  
+  const member = await getMemberById(gId, mId);
+  if (!member) throw new Error("Member not found");
+  
+  await updateMember(gId, mId, { role: newRole });
+  
+  if (actorInfo) {
+    await writeAuditLog(gId, {
+      userId: actorInfo.userId,
+      groupId: gId,
+      userName: actorInfo.userName,
+      action: "UPDATE_ROLE",
+      entityType: "member",
+      entityId: mId,
+      before: { role: member.role },
+      after: { role: newRole },
+    });
+  }
+}

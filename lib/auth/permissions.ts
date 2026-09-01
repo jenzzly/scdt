@@ -11,6 +11,7 @@ export interface NavItem {
 
 const FULL_WEB_NAV: NavItem[] = [
   { label: "Dashboard", route: "/(tabs)/dashboard" },
+  { label: "Members", route: "/(tabs)/members" },
   { label: "Loans", route: "/(tabs)/loans" },
   { label: "Investments", route: "/(tabs)/investments" },
   { label: "Wallet", route: "/(tabs)/wallet" },
@@ -41,6 +42,7 @@ const AUDIT_WEB_NAV: NavItem[] = [
 
 const LOAN_OFFICER_WEB_NAV: NavItem[] = [
   { label: "Dashboard", route: "/(tabs)/dashboard" },
+  { label: "Members", route: "/(tabs)/members" },
   { label: "Loans", route: "/(tabs)/loans" },
   { label: "Contributions", route: "/(tabs)/contributions" },
   { label: "Meetings", route: "/(tabs)/meetings" },
@@ -49,6 +51,7 @@ const LOAN_OFFICER_WEB_NAV: NavItem[] = [
 
 const ACCOUNTANT_WEB_NAV: NavItem[] = [
   { label: "Dashboard", route: "/(tabs)/dashboard" },
+  { label: "Members", route: "/(tabs)/members" },
   { label: "Loans", route: "/(tabs)/loans" },
   { label: "Investments", route: "/(tabs)/investments" },
   { label: "Wallet", route: "/(tabs)/wallet" },

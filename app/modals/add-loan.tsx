@@ -125,15 +125,15 @@ export default function AddLoanModal() {
         purpose: purpose.trim(),
         interestRate: rate,
         interestRatePeriod, // snapshot at submission — group setting may change later
-        interestMethod, // snapshot at submission
+        // Same reasoning: lock in today's penalty rate/grace period so a
+        // later group-settings change never retroactively affects a
+        // loan that's already out.
+        lateFeeRatePct: group?.loanLateFeeRatePct,
+        lateFeeGraceDays: group?.loanLateFeeGraceDays,
         repaymentPlan: "monthly",
         repaymentMonths: parseInt(months),
         applicationDate: new Date().toISOString(),
         firstPaymentDate: new Date().toISOString(),
-        accruedInterest: 0,
-        lastAccrualDate: new Date().toISOString().slice(0, 10),
-        totalInterestPaid: 0,
-        // These will be captured in addLoan with group settings
       });
       show(isResubmit ? "Loan resubmitted — awaiting loan officer approval" : "Loan application submitted — awaiting loan officer approval");
       router.back();
@@ -199,7 +199,7 @@ export default function AddLoanModal() {
             <View key={index} style={styles.penaltyItem}>
               <View style={styles.penaltyItemHeader}>
                 <Text style={styles.penaltyItemTitle}>{penalty.meetingTitle}</Text>
-                <Text style={styles.penaltyItemAmount}>{fmtCurrency(penalty.penaltyAmount ?? 0)}</Text>
+                <Text style={styles.penaltyItemAmount}>{fmtCurrency(penalty.penaltyAmount)}</Text>
               </View>
               <Text style={styles.penaltyItemDate}>{new Date(penalty.meetingDate).toLocaleDateString()}</Text>
               <Text style={styles.penaltyItemStatus}>Status: {penalty.status}</Text>
@@ -358,12 +358,6 @@ export default function AddLoanModal() {
               <Text style={styles.calcLbl}>Interest Method</Text>
               <Text style={styles.calcVal}>
                 {interestMethod === "reducing_balance" ? "Reducing balance" : "Flat rate"}
-              </Text>
-            </View>
-            <View style={styles.calcRow}>
-              <Text style={styles.calcLbl}>Penalty Rate</Text>
-              <Text style={styles.calcVal}>
-                {group?.loanPenaltyRatePct || group?.latePenaltyRatePct || 0}%
               </Text>
             </View>
             <View style={styles.calcRow}>
