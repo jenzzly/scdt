@@ -140,9 +140,13 @@ export function subscribeContributions(
   gId: string,
   cb: (cs: Contribution[]) => void,
   onError?: (error: unknown) => void,
+  memberId?: string,
 ): () => void {
+  const q = memberId
+    ? query(contribsCol(gId), where("memberId", "==", memberId), orderBy("date", "desc"))
+    : query(contribsCol(gId), orderBy("date", "desc"));
   return onSnapshot(
-    query(contribsCol(gId), orderBy("date", "desc")),
+    q,
     (snap) => cb(snap.docs.map((s) => fromSnap<Contribution>(s))),
     onError,
   );

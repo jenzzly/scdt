@@ -8,15 +8,22 @@
  *     as auditLogs, because non-admin members may not have read access.
  *  C. forceSyncTrigger dependency note — see comment below.
  *  D. Auth-expiry / permission error guard added.
+ *  E. Role-based data filtering - members only see their own contributions
+ *     and loans, while staff roles see all data. Wallet only loaded for
+ *     admin/accountant roles.
  */
 
 import { useEffect, useRef } from "react";
 import { useStore } from "../stores/useStore";
+import { useCurrentUserRole, useCurrentMember } from "../stores/useStore";
+import { canViewAllContributions, canViewAllLoans, canViewWallet, canViewInvestments } from "../lib/auth/permissions";
 import * as FS from "../lib/firestore";
 
 // How many subscriptions we set up in useFirebaseSync.
-// Update this number if you add or remove a subscription.
-const TOTAL_SUBS = 10;
+// This is dynamic now - calculated at runtime based on permissions.
+// Base subscriptions: group, members, contributions, loans, expenses, meetings, auditLogs, deletionHistory = 8
+// Plus wallet and investments conditionally = 2 (total 10 max)
+const BASE_SUBS = 8;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main group sync hook
@@ -28,6 +35,15 @@ export function useFirebaseSync(
   const store = useStore();
   const unsubs = useRef<(() => void)[]>([]);
   const forceSyncTrigger = store.forceSyncTrigger;
+  const currentUserRole = useCurrentUserRole();
+  const currentMember = useCurrentMember();
+
+  // Determine if user should see all data or just their own
+  const viewAllContributions = canViewAllContributions(currentUserRole, currentMember?.permissions);
+  const viewAllLoans = canViewAllLoans(currentUserRole, currentMember?.permissions);
+  const viewWallet = canViewWallet(currentUserRole, currentMember?.permissions);
+  const viewInvestments = canViewInvestments(currentUserRole, currentMember?.permissions);
+  const memberId = currentMember?.id;
 
   useEffect(() => {
     // Clean up any previous subscriptions before re-subscribing
@@ -44,10 +60,12 @@ export function useFirebaseSync(
     store.setSyncStatus("syncing");
 
     // ── FIX A: only mark synced after every subscription has fired once ──────
+    // Calculate total subscriptions based on permissions
+    const totalSubs = BASE_SUBS + (viewWallet ? 1 : 0) + (viewInvestments ? 1 : 0);
     let firedCount = 0;
     const markSynced = () => {
       firedCount += 1;
-      if (firedCount >= TOTAL_SUBS) {
+      if (firedCount >= totalSubs) {
         store.setSyncStatus("synced");
       }
     };
@@ -132,6 +150,7 @@ export function useFirebaseSync(
           groupId,
           (items) => { store.setContributions(items); markSynced(); },
           handleAuthError,
+          viewAllContributions ? undefined : memberId,
         ),
 
         // ── Loans ─────────────────────────────────────────────────────────
@@ -139,21 +158,28 @@ export function useFirebaseSync(
           groupId,
           (items) => { store.setLoans(items); markSynced(); },
           handleAuthError,
+          viewAllLoans ? undefined : memberId,
         ),
 
         // ── Investments ───────────────────────────────────────────────────
-        FS.subscribeInvestments(
-          groupId,
-          (items) => { store.setInvestments(items); markSynced(); },
-          handleAuthError,
-        ),
+        // Only fetch investments if user has permission
+        ...(viewInvestments ? [
+          FS.subscribeInvestments(
+            groupId,
+            (items) => { store.setInvestments(items); markSynced(); },
+            handleAuthError,
+          ),
+        ] : []),
 
         // ── Wallet transactions ───────────────────────────────────────────
-        FS.subscribeWalletTxs(
-          groupId,
-          (items) => { store.setWalletTxs(items); markSynced(); },
-          handleAuthError,
-        ),
+        // Only fetch wallet if user has permission
+        ...(viewWallet ? [
+          FS.subscribeWalletTxs(
+            groupId,
+            (items) => { store.setWalletTxs(items); markSynced(); },
+            handleAuthError,
+          ),
+        ] : []),
 
         // ── Expenses ──────────────────────────────────────────────────────
         FS.subscribeExpenses(
@@ -195,7 +221,7 @@ export function useFirebaseSync(
     };
 
     // ── FIX C note ────────────────────────────────────────────────────────────
-    // forceSyncTrigger causes a full teardown + rebuild of all 10 listeners.
+    // forceSyncTrigger causes a full teardown + rebuild of all listeners.
     // For Firestore real-time listeners this is almost never necessary because
     // they already stream the latest state continuously.
     // Consider replacing triggerForceSync() call sites with a targeted
@@ -203,7 +229,7 @@ export function useFirebaseSync(
     // rebuilding every listener.
     // Left in for backward compatibility.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupId, isOnline, forceSyncTrigger]);
+  }, [groupId, isOnline, forceSyncTrigger, currentUserRole, currentMember?.id, currentMember?.permissions]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

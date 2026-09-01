@@ -17,7 +17,7 @@
 // FLAT loans retain the original proportional-split model (unchanged).
 //
 import {
-  doc, getDoc, setDoc, updateDoc, deleteDoc, query, orderBy,
+  doc, getDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy,
   onSnapshot, writeBatch,
   loansCol, walletCol, groupDoc, membershipsCol, groupsCol,
   getCurrentUserInfo, logError, stripUndefined, fromSnap, round2, getMembershipId,
@@ -537,9 +537,12 @@ export async function deleteLoan(gId: string, id: string, reason: string): Promi
   }
 }
 
-export function subscribeLoans(gId: string, cb: (ls: Loan[]) => void, onError?: (e: unknown) => void): () => void {
+export function subscribeLoans(gId: string, cb: (ls: Loan[]) => void, onError?: (e: unknown) => void, memberId?: string): () => void {
+  const q = memberId
+    ? query(loansCol(gId), where("memberId", "==", memberId), orderBy("createdAt", "desc"))
+    : query(loansCol(gId), orderBy("createdAt", "desc"));
   return onSnapshot(
-    query(loansCol(gId), orderBy("createdAt", "desc")),
+    q,
     (snap) => cb(snap.docs.map((s) => fromSnap<Loan>(s))),
     onError,
   );

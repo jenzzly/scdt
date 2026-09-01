@@ -2,6 +2,7 @@
 export type ID = string;
 
 export type MemberRole = "admin" | "accountant" | "loan_officer" | "committee" | "member";
+export type UserRole = "admin" | "accountant" | "loan_officer" | "committee" | "member" | "audit" | "groups";
 export type MemberStatus = "active" | "inactive" | "pending" | "suspended" | "exited";
 export type LoanStatus = 
   | "pending_loan_officer" 

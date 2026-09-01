@@ -37,6 +37,7 @@ import { useFirebaseSync, useNotificationSync } from "../../hooks/useFirebaseSyn
 import { useNetworkStatus } from "../../hooks/useNetworkStatus";
 import { Colors, S, R, showConfirm, fmtDateLong } from "../../utils/theme";
 import { BRAND } from "../../lib/brand";
+import { getWebNavForRole, hasAdminViewToggle } from "../../lib/auth/permissions";
 
 // Route segment → page title, for the shared desktop top header.
 const PAGE_TITLES: Record<string, string> = {
@@ -66,30 +67,11 @@ const NAV_ICONS: Record<string, React.ComponentType<{ color?: string; size?: num
   Settings:      Settings || null
 };
 
-// Desktop sidebar. Members is web/desktop-only by design — see
-// MOBILE_NAV_ITEMS below, which deliberately omits it — and is placed
-// second, matching the reference layout.
-const DESKTOP_NAV_ITEMS = [
-  { label: "Dashboard",     route: "/(tabs)/dashboard"     },
-  { label: "Members",       route: "/(tabs)/members"       },
-  { label: "Contributions", route: "/(tabs)/contributions" },
-  { label: "Loans",         route: "/(tabs)/loans"         },
-  { label: "Investments",   route: "/(tabs)/investments"   },
-  { label: "Wallet",        route: "/(tabs)/wallet"        },
-  { label: "Meetings",      route: "/(tabs)/meetings"      },
-  { label: "Reports",       route: "/(tabs)/reports"       },
-  { label: "Settings",      route: "/(tabs)/more"          },
-];
+// Desktop sidebar - will be populated dynamically based on role
+const DESKTOP_NAV_ITEMS: Array<{ label: string; route: string }> = [];
 
-// Mobile tab bar: hide Wallet and Investments (web only), show Contributions
-const MOBILE_NAV_ITEMS = [
-  { label: "Dashboard",     route: "/(tabs)/dashboard"     },
-  { label: "Loans",         route: "/(tabs)/loans"         },
-  { label: "Contributions", route: "/(tabs)/contributions" },
-  { label: "Reports",       route: "/(tabs)/reports"       },
-  { label: "Meetings",      route: "/(tabs)/meetings"      },
-  { label: "Settings",      route: "/(tabs)/more"          },
-];
+// Mobile tab bar - will be populated dynamically based on role
+const MOBILE_NAV_ITEMS: Array<{ label: string; route: string }> = [];
 
 // ─────────────────────────────────────────────
 // Sidebar item (web)
@@ -302,12 +284,29 @@ export default function TabsLayout() {
   const setDataViewMode = useStore((s) => s.setDataViewMode);
   const currentUserRole = useCurrentUserRole();
   const currentMember = useCurrentMember();
-  const hasViewToggle = useHasViewToggle();
+  const hasViewToggle = hasAdminViewToggle(currentUserRole);
   const isOnline = useNetworkStatus();
   const unreadCount = useUnreadNotifs();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const { signOut } = useAuth();
+
+  // Get role-based navigation items
+  const roleNavItems = React.useMemo(() => {
+    const memberPerms = currentMember?.permissions;
+    return getWebNavForRole(currentUserRole, memberPerms);
+  }, [currentUserRole, currentMember?.permissions]);
+
+  // Update navigation items based on platform
+  const desktopNavItems = React.useMemo(() => roleNavItems, [roleNavItems]);
+  const mobileNavItems = React.useMemo(() => {
+    // For mobile, filter out Investments and Wallet (web-only features)
+    return roleNavItems.filter(item => 
+      item.label !== "Investments" && 
+      item.label !== "Wallet" &&
+      item.label !== "Members" // Members is web/desktop-only
+    );
+  }, [roleNavItems]);
 
   // Sidebar collapse — web/desktop only. Persisted across sessions via
   // AsyncStorage (a plain local device preference, not synced through
@@ -350,11 +349,8 @@ export default function TabsLayout() {
     }, undefined, true);
   };
 
-  // Admin gets the full "Admin view" toggle. loan_officer/committee/
-  // accountant get the same switch, but it only reveals their own
-  // approval queue (see useIsApproverView) — label it accordingly so
-  // it's clear this isn't full admin access.
-  const viewModeSwitchLabel = currentUserRole === "admin" ? "Admin view" : "Review view";
+  // Admin gets the full "Admin view" toggle (My View <-> Admin View)
+  // Other roles do not get this toggle
   const viewModeSwitch = hasViewToggle ? (
     <TouchableOpacity
       style={[shared.viewModeSwitch, dataViewMode === "admin" && shared.viewModeSwitchActive]}
@@ -362,7 +358,7 @@ export default function TabsLayout() {
       activeOpacity={0.8}
     >
       <Text style={[shared.viewModeText, dataViewMode === "admin" && shared.viewModeTextActive]}>
-        {dataViewMode === "admin" ? viewModeSwitchLabel : "Mine view"}
+        {dataViewMode === "admin" ? "Admin View" : "My View"}
       </Text>
     </TouchableOpacity>
   ) : null;
@@ -422,7 +418,7 @@ export default function TabsLayout() {
 
           {/* Nav */}
           <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={sb.navList}>
-            {DESKTOP_NAV_ITEMS.map((item) => (
+            {desktopNavItems.map((item) => (
               <React.Fragment key={item.route}>
                 <SidebarItem
                   label={item.label}
@@ -455,15 +451,13 @@ export default function TabsLayout() {
           />
           {offlineBanner}
           <Tabs screenOptions={{ headerShown: false, tabBarStyle: { display: "none" } }}>
-            <Tabs.Screen name="dashboard"     options={{ title: "Dashboard"     }} />
-            <Tabs.Screen name="members"       options={{ title: "Members"       }} />
-            <Tabs.Screen name="loans"         options={{ title: "Loans"         }} />
-            <Tabs.Screen name="investments"   options={{ title: "Investments"   }} />
-            <Tabs.Screen name="wallet"        options={{ title: "Wallet"        }} />
-            <Tabs.Screen name="contributions" options={{ title: "Contributions" }} />
-            <Tabs.Screen name="reports"       options={{ title: "Reports"       }} />
-            <Tabs.Screen name="meetings"      options={{ title: "Meetings"      }} />
-            <Tabs.Screen name="more"          options={{ title: "Settings"      }} />
+            {desktopNavItems.map((item) => (
+              <Tabs.Screen
+                key={item.route}
+                name={item.route.replace("/(tabs)/", "")}
+                options={{ title: item.label }}
+              />
+            ))}
           </Tabs>
         </View>
       </View>
@@ -490,7 +484,7 @@ export default function TabsLayout() {
           tabBarItemStyle: tb.itemStyle,
         }}
       >
-        {MOBILE_NAV_ITEMS.map((item) => (
+        {mobileNavItems.map((item) => (
           <Tabs.Screen
             key={item.route}
             name={item.route.replace("/(tabs)/", "")}
@@ -512,6 +506,10 @@ export default function TabsLayout() {
         />
         <Tabs.Screen
           name="investments"
+          options={{ href: null }}
+        />
+        <Tabs.Screen
+          name="members"
           options={{ href: null }}
         />
       </Tabs>
@@ -594,6 +592,9 @@ const sb = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 8,
     borderRadius: R.md, marginBottom: 1,
     position: "relative",
+  },
+  itemCollapsed: {
+    justifyContent: "center",
   },
   itemActive:  { backgroundColor: Colors.primaryFaint ?? "rgba(13,148,136,0.08)" },
   iconWrap: {

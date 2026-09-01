@@ -193,9 +193,12 @@ service cloud.firestore {
       }
 
       match /contributions/{id} {
-        allow read: if isMember(groupId);
+        allow read: if isAdminOrAccountant(groupId)
+          || (isActiveMember(groupId) && memberRole(groupId) in ['loan_officer', 'committee'])
+          || (isActiveMember(groupId) && resource.data.memberId == membershipData(groupId).memberId);
         allow create: if isAuth() && (
           canAddContribution(groupId)
+          || (isActiveMember(groupId) && request.resource.data.memberId == membershipData(groupId).memberId)
           || request.resource.data.id == '_init'
           || request.resource.data.system == true
         );
@@ -204,9 +207,12 @@ service cloud.firestore {
       }
 
       match /loans/{id} {
-        allow read: if isMember(groupId);
+        allow read: if isAdminOrAccountant(groupId)
+          || (isActiveMember(groupId) && memberRole(groupId) in ['loan_officer', 'committee'])
+          || (isActiveMember(groupId) && resource.data.memberId == membershipData(groupId).memberId);
         allow create: if isAuth() && (
           canAddLoan(groupId)
+          || (isActiveMember(groupId) && request.resource.data.memberId == membershipData(groupId).memberId)
           || request.resource.data.id == '_init'
           || request.resource.data.system == true
         );
@@ -215,19 +221,18 @@ service cloud.firestore {
       }
 
       match /walletTransactions/{id} {
-        allow read: if isMember(groupId);
+        allow read: if isAdminOrAccountant(groupId);
         allow create: if isAuth() && (
-          canAddContribution(groupId)
-          || isAdminOrAccountant(groupId)
+          isAdminOrAccountant(groupId)
           || request.resource.data.id == '_init'
           || request.resource.data.system == true
         );
-        allow update: if canDeleteRecords(groupId) || isAdminOrAccountant(groupId);
-        allow delete: if canDeleteRecords(groupId);
+        allow update: if isAdminOrAccountant(groupId);
+        allow delete: if isAdminOrAccountant(groupId);
       }
 
       match /expenses/{id} {
-        allow read: if isMember(groupId);
+        allow read: if isAdminOrAccountant(groupId);
         allow create: if isAuth() && (
           isAdminOrAccountant(groupId)
           || request.resource.data.id == '_init'
@@ -249,7 +254,8 @@ service cloud.firestore {
       }
 
       match /investments/{id} {
-        allow read: if isMember(groupId);
+        allow read: if isAdminOrAccountant(groupId)
+          || (isActiveMember(groupId) && memberRole(groupId) == 'committee');
         allow create: if isAuth() && (
           canAddInvestment(groupId)
           || request.resource.data.id == '_init'
@@ -269,7 +275,7 @@ service cloud.firestore {
       }
 
       match /deletions/{id} {
-        allow read: if isMember(groupId);
+        allow read: if isAdminOrAccountant(groupId);
         allow create: if isAdminOrAccountant(groupId);
         allow update: if false;
         allow delete: if isAdmin(groupId);
