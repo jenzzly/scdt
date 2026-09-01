@@ -128,10 +128,10 @@ export default function DashboardScreen() {
   const myTotalContributions = currentMember?.totalContributions ?? 0;
 
   const QUICK_ACTIONS = [
-    { label: "Contribute", icon: "↑",  route: "/modals/add-contribution", show: permissions.addContribution },
-    { label: "New Loan",   icon: "₣",  route: "/modals/add-loan",         show: permissions.addLoan },
-    { label: "Invest",     icon: "◈",  route: "/modals/add-investment",   show: permissions.addInvestment },
-    { label: "Expense",    icon: "↓",  route: "/modals/add-expense",      show: isAdmin },
+    { label: "Add Contribution", icon: "↑",  route: "/modals/add-contribution", show: permissions.addContribution },
+    { label: "Apply for Loan",   icon: "₣",  route: "/modals/add-loan",         show: permissions.addLoan },
+    { label: "Invest",          icon: "◈",  route: "/modals/add-investment",   show: permissions.addInvestment },
+    { label: "Add Expense",     icon: "↓",  route: "/modals/add-expense",      show: isAdmin },
   ].filter(a => a.show);
 
   return (
@@ -145,7 +145,7 @@ export default function DashboardScreen() {
       {!isWide && (
         <View style={st.topBar}>
           <View>
-            <Text style={st.greeting}>Good day</Text>
+            <Text style={st.greeting}>Welcome back</Text>
             <Text style={st.userName}>{authName?.split(" ")[0] ?? "User"}</Text>
           </View>
           <TouchableOpacity
@@ -153,7 +153,7 @@ export default function DashboardScreen() {
             onPress={() => router.push("/notifications")}
             activeOpacity={0.8}
           >
-            <Text style={{ fontSize: 10 }}>N</Text>
+            <Text style={{ fontSize: 16 }}>🔔</Text>
             {(unreadCount > 0) && (
               <View style={st.badge}>
                 <Text style={st.badgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
@@ -330,22 +330,22 @@ const st = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 20,
     paddingTop: Platform.OS === "ios" ? 56 : 36,
-    paddingBottom: 14,
+    paddingBottom: 16,
     backgroundColor: C.bg,
   },
-  greeting: { fontSize: 11, fontWeight: "600", color: C.text3, letterSpacing: 0.5, textTransform: "uppercase" },
-  userName: { fontSize: 22, fontWeight: "800", color: C.text, letterSpacing: -0.5, marginTop: 1 },
+  greeting: { fontSize: 12, fontWeight: "600", color: C.text3, letterSpacing: 0.5, textTransform: "uppercase" },
+  userName: { fontSize: 24, fontWeight: "800", color: C.text, letterSpacing: -0.5, marginTop: 2 },
   notifBtn: {
-    width: 40, height: 40, borderRadius: 12,
+    width: 44, height: 44, borderRadius: 12,
     backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
     alignItems: "center", justifyContent: "center",
   },
   badge: {
     position: "absolute", top: -4, right: -4,
-    minWidth: 16, height: 16, borderRadius: 8,
-    backgroundColor: C.debit, alignItems: "center", justifyContent: "center", paddingHorizontal: 3,
+    minWidth: 18, height: 18, borderRadius: 9,
+    backgroundColor: C.debit, alignItems: "center", justifyContent: "center", paddingHorizontal: 4,
   },
-  badgeText: { color: "#fff", fontSize: 9, fontWeight: "800" },
+  badgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
 
   // account card
   accountCard: {

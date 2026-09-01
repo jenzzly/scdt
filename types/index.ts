@@ -95,6 +95,8 @@ export interface LoanApprovals {
 
 export type LoanInterestMethod = "flat" | "reducing_balance";
 
+export type GroupType = "savings" | "audit" | "investment" | "custom";
+
 export interface Group {
   id: ID;
   name: string;
@@ -104,6 +106,7 @@ export interface Group {
   createdBy: ID;
   createdAt: string;
   inviteCode: string;
+  groupType?: GroupType; // New field to specify group purpose
   contributionAmount: number;
   contributionFrequency: "monthly" | "weekly" | "biweekly" | "yearly";
   contributionDay: number;

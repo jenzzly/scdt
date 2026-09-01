@@ -13,10 +13,14 @@ export async function createGroup(data: Omit<Group, "id"> & { id?: string }): Pr
   const groupId = dRef.id;
   const now = new Date().toISOString();
 
+  // Determine default role based on group type
+  const defaultRole = data.groupType === "audit" ? "audit" : "admin";
+
   await setDoc(dRef, {
     ...stripUndefined(data as any),
     id: groupId,
     createdAt: now,
+    groupType: data.groupType || "savings", // Default to savings group
   });
 
   if (data.createdBy) {
@@ -28,7 +32,7 @@ export async function createGroup(data: Omit<Group, "id"> & { id?: string }): Pr
         id: membershipId,
         userId: data.createdBy,
         groupId,
-        role: "admin",
+        role: defaultRole,
         status: "active",
         createdAt: now,
       });

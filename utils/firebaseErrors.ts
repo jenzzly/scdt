@@ -28,11 +28,32 @@ export function toUserFacingError(error: unknown, fallback = "Something went wro
   if (code === "auth/network-request-failed" || lower.includes("network")) {
     return "Network error. Check your connection and try again.";
   }
+  if (code === "auth/user-disabled") {
+    return "This account has been disabled. Contact your group administrator.";
+  }
+  if (code === "auth/session-expired" || lower.includes("session-expired")) {
+    return "Your session has expired. Please sign in again.";
+  }
   if (lower.includes("permission-denied") || lower.includes("missing or insufficient permissions")) {
-    return "You do not have permission to do that.";
+    return "You don't have permission to perform this action.";
+  }
+  if (lower.includes("not-found") || lower.includes("document not found")) {
+    return "The requested record was not found.";
   }
   if (lower.includes("already exists") || lower.includes("already-exists")) {
     return "That record already exists.";
+  }
+  if (lower.includes("failed-precondition")) {
+    return "This action cannot be completed due to the current state.";
+  }
+  if (lower.includes("unauthenticated")) {
+    return "You need to sign in to perform this action.";
+  }
+  if (lower.includes("deadline-exceeded")) {
+    return "The request took too long. Please try again.";
+  }
+  if (lower.includes("aborted")) {
+    return "The operation was cancelled.";
   }
   if (raw && !raw.toLowerCase().includes("firebase") && raw.length < 160) {
     return raw;
