@@ -57,7 +57,21 @@ export default function AddLoanModal() {
   // (flat or reducing balance) via the shared loanSchedule helper, instead
   // of a hardcoded flat-rate formula, so this preview always matches what
   // the loan will actually be submitted with.
-  const rate = group?.loanInterestRate ?? 2;
+  //
+  // Rate + penalty rate default to the group's current settings but are
+  // editable here by an authorized user (admin/loan officer) — different
+  // groups charge different rates, and even within one group a specific
+  // loan may need a negotiated rate. Whatever value is submitted gets
+  // snapshotted onto the loan record (see handleApply below), so a later
+  // change to the group's default never retroactively changes what an
+  // existing loan owes.
+  const groupDefaultRate = group?.loanInterestRate ?? 2;
+  const groupDefaultPenaltyRate = group?.loanLateFeeRatePct ?? 0;
+  const [rateInput, setRateInput] = useState(String(groupDefaultRate));
+  const [penaltyRateInput, setPenaltyRateInput] = useState(String(groupDefaultPenaltyRate));
+  const canSetRate = isAdmin || isLoanOfficer;
+  const rate = canSetRate ? (parseFloat(rateInput) || 0) : groupDefaultRate;
+  const penaltyRate = canSetRate ? (parseFloat(penaltyRateInput) || 0) : groupDefaultPenaltyRate;
   const interestMethod = group?.loanInterestMethod ?? "flat";
   const interestRatePeriod = group?.loanInterestRatePeriod ?? "monthly";
   const parsed = parseFloat(amount) || 0;
@@ -128,7 +142,7 @@ export default function AddLoanModal() {
         // Same reasoning: lock in today's penalty rate/grace period so a
         // later group-settings change never retroactively affects a
         // loan that's already out.
-        lateFeeRatePct: group?.loanLateFeeRatePct,
+        lateFeeRatePct: penaltyRate,
         lateFeeGraceDays: group?.loanLateFeeGraceDays,
         repaymentPlan: "monthly",
         repaymentMonths: parseInt(months),
@@ -338,6 +352,29 @@ export default function AddLoanModal() {
           placeholder="e.g. 6"
           hint="Enter any number of months (1–120)"
         />
+
+        {/* Rate override — admin/loan officer only. Regular members applying
+            for their own loan get the group's default rate with no control
+            over it; the amount they'd owe is not something a borrower sets
+            for themselves. */}
+        {canSetRate && (
+          <>
+            <Input
+              label={`Interest Rate (% ${interestRatePeriod === "annual" ? "per year" : "per month"}) *`}
+              value={rateInput}
+              onChangeText={(v) => setRateInput(v.replace(/[^0-9.]/g, ""))}
+              keyboardType="numeric"
+              hint={`Defaults to this group's setting (${groupDefaultRate}%) — change it for a negotiated rate on this specific loan`}
+            />
+            <Input
+              label="Penalty Rate (% of overdue installment)"
+              value={penaltyRateInput}
+              onChangeText={(v) => setPenaltyRateInput(v.replace(/[^0-9.]/g, ""))}
+              keyboardType="numeric"
+              hint={`Defaults to this group's setting (${groupDefaultPenaltyRate}%)`}
+            />
+          </>
+        )}
 
         {/* Calculator preview - Shows full breakdown including interest */}
         {parsed > 0 && (
