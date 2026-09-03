@@ -157,35 +157,58 @@ export default function ContributionsScreen() {
   //   [overdueContributions, allWallet, allMembers, isAdminView, currentMember],
   // );
 
-  // Calculate contribution goal progress
+  // Calculate contribution goal progress. Scoped the same way the
+  // transaction list below it already is: group view aggregates every
+  // member's contributions toward the group goal, personal view shows
+  // only the current member's own contributions toward that same goal
+  // (the target/period is still the group's — only "how much has been
+  // put in" changes based on whose contributions are being counted).
   const goalProgress = useMemo(() => {
     if (!goalPeriod || !group?.contributionGoal?.enabled) return null;
-    
+
     const now = new Date();
     const periodStart = new Date(goalPeriod.periodStart);
     const periodEnd = new Date(goalPeriod.periodEnd);
-    
-    // Filter contributions in this period
+
+    // Filter contributions in this period, then scope by view mode —
+    // group view counts everyone, personal view counts only the
+    // logged-in member's own approved contributions.
     const periodContributions = allContributions.filter(c => {
       const cDate = new Date(c.date);
-      return cDate >= periodStart && cDate <= periodEnd && c.status === "approved";
+      if (!(cDate >= periodStart && cDate <= periodEnd && c.status === "approved")) return false;
+      if (!isGroupView && c.memberId !== currentMember?.id) return false;
+      return true;
     });
-    
+
     const totalContributed = periodContributions.reduce((sum, c) => sum + (c.amount || 0), 0);
+    // The group's overall progress is still shown as context even in
+    // personal view (e.g. "group has hit 62%"), so it's computed
+    // separately from the scoped totalContributed above.
+    const groupTotalContributed = allContributions
+      .filter(c => {
+        const cDate = new Date(c.date);
+        return cDate >= periodStart && cDate <= periodEnd && c.status === "approved";
+      })
+      .reduce((sum, c) => sum + (c.amount || 0), 0);
+
     const target = goalPeriod.targetAmount;
     const percentage = target > 0 ? Math.round((totalContributed / target) * 100) : 0;
+    const groupPercentage = target > 0 ? Math.round((groupTotalContributed / target) * 100) : 0;
     const remaining = Math.max(0, target - totalContributed);
     const daysLeft = Math.ceil((periodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    
+
     return {
       totalContributed,
+      groupTotalContributed,
       target,
       remaining,
       percentage,
+      groupPercentage,
       daysLeft,
       isCompleted: totalContributed >= target,
+      isGroupScoped: isGroupView,
     };
-  }, [goalPeriod, allContributions, group?.contributionGoal?.enabled]);
+  }, [goalPeriod, allContributions, group?.contributionGoal?.enabled, isGroupView, currentMember?.id]);
 
   const handleApplyContributionFee = async (item: any) => {
     setApplyingFeeId(item.feeTxId);
@@ -346,8 +369,78 @@ export default function ContributionsScreen() {
 
       <ScrollView contentContainerStyle={[{ paddingBottom: 100 }, isWide && { paddingHorizontal: 24 }]}
         showsVerticalScrollIndicator={false}>
+        {/* ── Contribution Goals Card ── */}
+        {group?.contributionGoal?.enabled && goalProgress && (
+          <View style={[st.goalCard, isWide && { marginHorizontal: 0, maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+            <View style={st.cardAccentDot} />
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={st.goalLabel} numberOfLines={1}>
+                  {goalProgress.isCompleted
+                    ? "✓ GOAL ACHIEVED"
+                    : isGroupView ? "GROUP CONTRIBUTION GOAL" : "MY CONTRIBUTION GOAL"}
+                </Text>
+                <Text style={st.goalAmount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                  <Text style={st.balanceCurrency}>{group?.currency ?? "RWF"} </Text>
+                  {fmtCurrency(goalProgress.totalContributed, group?.currency ?? "RWF").replace(`${group?.currency ?? "RWF"} `, "")}
+                </Text>
+              </View>
+              <View style={{ alignItems: "flex-end", flexShrink: 0, marginLeft: 8 }}>
+                <Text style={[st.goalPercentage, goalProgress.isCompleted && { color: Colors.green }]} numberOfLines={1}>
+                  {goalProgress.percentage}%
+                </Text>
+                <Text style={st.goalDaysLeft} numberOfLines={1}>
+                  {goalProgress.daysLeft > 0 ? `${goalProgress.daysLeft}d left` : "Period ended"}
+                </Text>
+              </View>
+            </View>
+            
+            {/* Progress bar */}
+            <View style={st.progressBarContainer}>
+              <View 
+                style={[st.progressBar, { width: `${Math.min(100, goalProgress.percentage)}%`, backgroundColor: goalProgress.isCompleted ? Colors.green : Colors.primary }]} 
+              />
+            </View>
 
-        {/* ── Balance card ── */}
+            {/* In personal view, the group's own progress toward the same
+                goal is shown as secondary context underneath — so
+                switching to "My Goal" doesn't hide how the group as a
+                whole is doing, it just makes the primary number personal. */}
+            {!isGroupView && (
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8, gap: 8 }}>
+                <Text style={st.goalDaysLeft} numberOfLines={1}>
+                  Group total: {fmtCurrency(goalProgress.groupTotalContributed)}
+                </Text>
+                <Text style={st.goalDaysLeft} numberOfLines={1}>
+                  {goalProgress.groupPercentage}% of goal
+                </Text>
+              </View>
+            )}
+            
+            <View style={{ marginTop: 12, flexDirection: "row", gap: 12 }}>
+              <View style={st.goalStat}>
+                <Text style={st.goalStatLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>Target</Text>
+                <Text style={st.goalStatValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>{fmtCurrency(goalProgress.target)}</Text>
+              </View>
+              <View style={st.goalStat}>
+                <Text style={st.goalStatLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>Remaining</Text>
+                <Text
+                  style={[st.goalStatValue, goalProgress.isCompleted && { color: Colors.green }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.75}
+                >
+                  {fmtCurrency(goalProgress.remaining)}
+                </Text>
+              </View>
+              <View style={st.goalStat}>
+                <Text style={st.goalStatLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>Min Contribution</Text>
+                <Text style={st.goalStatValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>{fmtCurrency(goalPeriod?.minimumContribution ?? 0)}</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* ── KPI Cards ── */}
         <View style={[st.block, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
           <View style={st.kpiGrid}>
@@ -386,56 +479,6 @@ export default function ContributionsScreen() {
           </View>
         </View>
 
-        {/* ── Contribution Goals Card ── */}
-        {group?.contributionGoal?.enabled && goalProgress && (
-          <View style={[st.goalCard, isWide && { marginHorizontal: 0, maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
-            <View style={st.cardAccentDot} />
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-              <View>
-                <Text style={st.goalLabel}>
-                  {goalProgress.isCompleted ? "✓ GOAL ACHIEVED" : "CONTRIBUTION GOAL"}
-                </Text>
-                <Text style={st.goalAmount}>
-                  <Text style={st.balanceCurrency}>{group?.currency ?? "RWF"} </Text>
-                  {fmtCurrency(goalProgress.totalContributed, group?.currency ?? "RWF").replace(`${group?.currency ?? "RWF"} `, "")}
-                </Text>
-              </View>
-              <View style={{ alignItems: "flex-end" }}>
-                <Text style={[st.goalPercentage, goalProgress.isCompleted && { color: Colors.green }]}>
-                  {goalProgress.percentage}%
-                </Text>
-                <Text style={st.goalDaysLeft}>
-                  {goalProgress.daysLeft > 0 ? `${goalProgress.daysLeft}d left` : "Period ended"}
-                </Text>
-              </View>
-            </View>
-            
-            {/* Progress bar */}
-            <View style={st.progressBarContainer}>
-              <View 
-                style={[st.progressBar, { width: `${Math.min(100, goalProgress.percentage)}%`, backgroundColor: goalProgress.isCompleted ? Colors.green : Colors.primary }]} 
-              />
-            </View>
-            
-            <View style={{ marginTop: 12, flexDirection: "row", gap: 12 }}>
-              <View style={st.goalStat}>
-                <Text style={st.goalStatLabel}>Target</Text>
-                <Text style={st.goalStatValue}>{fmtCurrency(goalProgress.target)}</Text>
-              </View>
-              <View style={st.goalStat}>
-                <Text style={st.goalStatLabel}>Remaining</Text>
-                <Text style={[st.goalStatValue, goalProgress.isCompleted && { color: Colors.green }]}>
-                  {fmtCurrency(goalProgress.remaining)}
-                </Text>
-              </View>
-              <View style={st.goalStat}>
-                <Text style={st.goalStatLabel}>Min Contribution</Text>
-                <Text style={st.goalStatValue}>{fmtCurrency(goalPeriod?.minimumContribution ?? 0)}</Text>
-              </View>
-            </View>
-          </View>
-        )}
-
         {/* ── Controls: search + tabs + sort ── */}
         <View style={[st.controls, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
           <View style={st.controlsTop}>
@@ -467,9 +510,9 @@ export default function ContributionsScreen() {
                 {visibleLateFees.map((item, index) => (
                   <React.Fragment key={item.feeTxId}>
                     <View style={st.lateFeeRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={st.lateFeeMemberName}>{isGroupView ? item.memberName : item.periodLabel}</Text>
-                        <Text style={st.lateFeeDetail}>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={st.lateFeeMemberName} numberOfLines={1}>{isGroupView ? item.memberName : item.periodLabel}</Text>
+                        <Text style={st.lateFeeDetail} numberOfLines={2}>
                           {item.applied ? "Unpaid late fee" : `${isGroupView ? `${item.periodLabel} · ` : ""}${item.daysLate}d late · due ${fmtCurrency(item.amountDue)}`}
                         </Text>
                       </View>
@@ -593,12 +636,12 @@ function ContributionRow({ contribution, memberName, canApprove, onApprove, onRe
       </View>
       <View style={st.txMid}>
         <Text style={st.txDesc} numberOfLines={1}>{contribution.description || TYPE_LABELS[contribution.contributionType]}</Text>
-        <Text style={st.txMeta}>
+        <Text style={st.txMeta} numberOfLines={1}>
           {fmtDate(contribution.date)}{memberName ? ` · ${memberName}` : ""} · {TYPE_LABELS[contribution.contributionType] ?? contribution.contributionType}
         </Text>
       </View>
-      <View style={{ alignItems: "flex-end" }}>
-        <Text style={[st.txAmount, { color: C.accent }]}>
+      <View style={{ alignItems: "flex-end", flexShrink: 0, marginLeft: 8 }}>
+        <Text style={[st.txAmount, { color: C.accent }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
           {fmtCurrency(contribution.amount)}
         </Text>
         {canApprove && contribution.status === "pending" && (
@@ -705,8 +748,8 @@ const st = StyleSheet.create({
     height: 8, backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 4, overflow: "hidden", marginTop: 12,
   },
   progressBar: { height: "100%", backgroundColor: C.primary, borderRadius: 4 },
-  goalStat: { flex: 1, alignItems: "center" },
-  goalStatLabel: { fontSize: 9, fontWeight: "700", color: "rgba(255,255,255,0.4)", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 4 },
+  goalStat: { flex: 1, minWidth: 0, alignItems: "center" },
+  goalStatLabel: { fontSize: 9, fontWeight: "700", color: "rgba(255,255,255,0.4)", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 4, textAlign: "center" },
   goalStatValue: { fontSize: 11, fontWeight: "700", color: "#fff" },
 
   // Controls
@@ -728,7 +771,7 @@ const st = StyleSheet.create({
   card: { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, marginHorizontal: 16, overflow: "hidden" },
   txRow: { flexDirection: "row", alignItems: "center", padding: 14, gap: 12 },
   txIcon: { width: 38, height: 38, borderRadius: 10, alignItems: "center", justifyContent: "center", flexShrink: 0 },
-  txMid: { flex: 1 },
+  txMid: { flex: 1, minWidth: 0 },
   txDesc: { fontSize: 13, fontWeight: "600", color: C.text, marginBottom: 2 },
   txMeta: { fontSize: 11, color: C.text3 },
   txAmount: { fontSize: 14, fontWeight: "700" },

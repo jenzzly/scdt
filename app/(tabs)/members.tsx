@@ -733,7 +733,7 @@ export default function MembersScreen() {
         </View>
       </ScrollView>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 80 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
         {/* ── Controls - Mobile ── */}
         <View style={st.mobileControls}>
           <View style={st.mobileFilterRow}>

@@ -173,7 +173,12 @@ function LoanDetailModal({
 
   return (
     <BottomModal visible={visible} onClose={onClose} title="Loan Details">
-      <ScrollView style={{ padding: 16, maxHeight: 560 }} showsVerticalScrollIndicator={false}>
+      {/* BottomModal already scrolls its children — a second, nested
+          ScrollView with a hardcoded maxHeight (560) fights the outer
+          sheet's real, viewport-based height and can clip content on
+          short screens or leave dead space on tall ones. A plain View
+          lets the outer sheet own all the scrolling. */}
+      <View style={{ padding: 16 }}>
 
         {/* Member + amount header */}
         <View style={styles.modalInfo}>
@@ -393,13 +398,13 @@ function LoanDetailModal({
                 <Text style={[detailSt.histCell, { flex: 1.4 }]} numberOfLines={1}>
                   {new Date(row.date).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "2-digit" })}
                 </Text>
-                <Text style={[detailSt.histCell, { flex: 1, textAlign: "right", color: C.gold }]}>
+                <Text style={[detailSt.histCell, { flex: 1, textAlign: "right", color: C.gold }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
                   {fmtCurrency(row.interest)}
                 </Text>
-                <Text style={[detailSt.histCell, { flex: 1, textAlign: "right", color: C.success }]}>
+                <Text style={[detailSt.histCell, { flex: 1, textAlign: "right", color: C.success }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
                   {fmtCurrency(row.principal)}
                 </Text>
-                <Text style={[detailSt.histCell, { flex: 1, textAlign: "right", fontWeight: "700" }]}>
+                <Text style={[detailSt.histCell, { flex: 1, textAlign: "right", fontWeight: "700" }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
                   {fmtCurrency(row.interest + row.principal)}
                 </Text>
               </View>
@@ -419,7 +424,7 @@ function LoanDetailModal({
             </View>
           </View>
         )}
-      </ScrollView>
+      </View>
     </BottomModal>
   );
 }
@@ -456,8 +461,8 @@ const detailSt = StyleSheet.create({
   histTitle:   { fontSize: 13, fontWeight: "700", color: C.text, padding: 12, backgroundColor: C.elevated, borderBottomWidth: 1, borderBottomColor: C.border },
   histHeadRow: { flexDirection: "row", paddingHorizontal: 12, paddingVertical: 6, backgroundColor: C.elevated },
   histHead:    { fontSize: 9, fontWeight: "700", color: C.text3, textTransform: "uppercase", letterSpacing: 0.6 },
-  histRow:     { flexDirection: "row", paddingHorizontal: 12, paddingVertical: 9, borderTopWidth: 1, borderTopColor: C.borderLight },
-  histCell:    { fontSize: 12, color: C.text2 },
+  histRow:     { flexDirection: "row", paddingHorizontal: 12, paddingVertical: 9, borderTopWidth: 1, borderTopColor: C.borderLight, gap: 4 },
+  histCell:    { fontSize: 12, color: C.text2, minWidth: 0 },
   histTotalRow:{ backgroundColor: C.elevated, borderTopWidth: 1, borderTopColor: C.border },
 });
 
@@ -875,26 +880,56 @@ export default function LoansScreen() {
                 </Text>
               </View>
 
-              <ScrollView style={{ maxHeight: 350, marginBottom: 16 }} showsVerticalScrollIndicator={false}>
+              {/* No fixed maxHeight here — BottomModal already caps the
+                  sheet's overall height responsively (a fraction of the
+                  real viewport) and this ScrollView fills whatever room
+                  that leaves. A hardcoded 350 here fights the sheet's
+                  own height: on short phone screens it clips the list,
+                  and on tall/web screens it leaves dead space below a
+                  truncated list. */}
+              <ScrollView
+                style={{ flexGrow: 0, flexShrink: 1, marginBottom: 16 }}
+                showsVerticalScrollIndicator={false}
+                nestedScrollEnabled
+              >
                 {selectedLoan.schedule && selectedLoan.schedule.length > 0 ? (
                   selectedLoan.schedule.map((item) => (
                     <View key={item.index} style={styles.scheduleItem}>
                       <View style={styles.scheduleHeader}>
                         <Text style={styles.scheduleMonth}>Month {item.index + 1}</Text>
-                        <Text style={styles.scheduleDate}>{fmtDate(item.dueDate)}</Text>
+                        <Text style={styles.scheduleDate} numberOfLines={1}>{fmtDate(item.dueDate)}</Text>
                       </View>
                       <View style={styles.scheduleRow}>
                         <View style={styles.scheduleCell}>
                           <Text style={styles.scheduleCellLabel}>Principal</Text>
-                          <Text style={styles.scheduleCellValue}>{fmtCurrency(item.principal)}</Text>
+                          <Text
+                            style={styles.scheduleCellValue}
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.75}
+                          >
+                            {fmtCurrency(item.principal)}
+                          </Text>
                         </View>
                         <View style={styles.scheduleCell}>
                           <Text style={styles.scheduleCellLabel}>Interest</Text>
-                          <Text style={styles.scheduleCellValue}>{fmtCurrency(item.interest)}</Text>
+                          <Text
+                            style={styles.scheduleCellValue}
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.75}
+                          >
+                            {fmtCurrency(item.interest)}
+                          </Text>
                         </View>
                         <View style={styles.scheduleCell}>
                           <Text style={styles.scheduleCellLabel}>Total</Text>
-                          <Text style={[styles.scheduleCellValue, { color: C.primary, fontWeight: "800" }]}>
+                          <Text
+                            style={[styles.scheduleCellValue, { color: C.primary, fontWeight: "800" }]}
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.75}
+                          >
                             {fmtCurrency(item.total)}
                           </Text>
                         </View>
@@ -944,6 +979,14 @@ export default function LoansScreen() {
         onClose={() => { setShowLoanDetail(false); setSelectedLoan(null); }}
         onSchedule={() => {
           if (selectedLoan) {
+            // Detail modal must close before Schedule opens — leaving
+            // showLoanDetail true here left both BottomModals mounted
+            // and visible at once (two stacked Modal components), which
+            // is what made the schedule window look like it was hiding
+            // behind/under the detail window. Every other action below
+            // (Approve/Reject) already closes the detail modal first;
+            // this one was the one spot that didn't.
+            setShowLoanDetail(false);
             setShowScheduleModal(true);
           }
         }}
@@ -1560,9 +1603,11 @@ const styles = StyleSheet.create({
   scheduleRow: {
     flexDirection: "row",
     justifyContent: "space-between",
+    gap: 6,
   },
   scheduleCell: {
     flex: 1,
+    minWidth: 0,
     alignItems: "center",
   },
   scheduleCellLabel: {
@@ -1576,6 +1621,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     color: C.text,
+    textAlign: "center",
   },
   scheduleEmpty: {
     fontSize: 12,

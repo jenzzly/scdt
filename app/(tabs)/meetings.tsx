@@ -126,7 +126,7 @@ export default function MeetingsScreen() {
   if (isWide) {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg }}>
-        {Toast}
+        <Toast />
 
         <ScrollView
           contentContainerStyle={st.container}
@@ -362,7 +362,7 @@ export default function MeetingsScreen() {
   // ── Mobile layout ──────────────────────────────────────────────────
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      {Toast}
+      <Toast/>
 
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 100 }}

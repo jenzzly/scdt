@@ -1,6 +1,6 @@
 // components/ui/KpiCard.tsx
 import React from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from "react-native";
 import { C } from "../../utils/theme";
 
 interface KpiCardProps {
@@ -35,22 +35,22 @@ export function KpiCard({ label, value, icon, subtext, accentColor = C.primary, 
 const styles = StyleSheet.create({
   kpiCard: {
     flex: 1,
-    minWidth: 150,
+    minWidth: Platform.OS === 'web' ? 150 : 130,
+    maxWidth: Platform.OS === 'web' ? '100%' : '48%',
     backgroundColor: C.surface,
     borderRadius: 14,
-    padding: 14,
+    padding: Platform.OS === 'web' ? 14 : 12,
     borderWidth: 1,
     borderColor: C.border,
-    justifyContent: "space-between",
   },
   kpiHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 6,
   },
   kpiLabel: {
-    fontSize: 10,
+    fontSize: Platform.OS === 'web' ? 10 : 9,
     fontWeight: "700",
     color: C.text3,
     textTransform: "uppercase",
@@ -59,21 +59,22 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   kpiIconWrap: {
-    width: 26,
-    height: 26,
+    width: Platform.OS === 'web' ? 26 : 22,
+    height: Platform.OS === 'web' ? 26 : 22,
     borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   kpiValue: {
-    fontSize: 18,
+    fontSize: Platform.OS === 'web' ? 18 : 16,
     fontWeight: "800",
     letterSpacing: -0.3,
   },
   kpiSubtext: {
-    fontSize: 11,
+    fontSize: Platform.OS === 'web' ? 11 : 10,
     color: C.text3,
     fontWeight: "500",
-    marginTop: 3,
+    marginTop: 2,
   },
 });

@@ -109,15 +109,25 @@ export function DatePicker({
                   <Text style={styles.pickerDone}>Done</Text>
                 </TouchableOpacity>
               </View>
-              <DateTimePicker
-                value={dateValue}
-                mode="date"
-                display="spinner"
-                onChange={handleChange}
-                minimumDate={minimumDate}
-                maximumDate={maximumDate}
-                style={{ width: '100%' as any }}
-              />
+              {/* The spinner-style DateTimePicker on iOS needs an
+                  explicit height on its own View — without one, some
+                  RN/Expo versions fail to give it a layout pass at all
+                  inside a Pressable-nested Modal sheet, so it mounts
+                  but renders at zero height (i.e. nothing visible).
+                  216 matches UIDatePicker's native spinner height. */}
+              <View style={styles.iosSpinnerWrap}>
+                <DateTimePicker
+                  value={dateValue}
+                  mode="date"
+                  display="spinner"
+                  onChange={handleChange}
+                  minimumDate={minimumDate}
+                  maximumDate={maximumDate}
+                  textColor={Colors.text}
+                  themeVariant="light"
+                  style={styles.iosSpinner}
+                />
+              </View>
             </Pressable>
           </Pressable>
         </Modal>
@@ -168,4 +178,8 @@ const styles = StyleSheet.create({
   },
   pickerDone: { fontSize: 16, fontWeight: '700', color: Colors.accent },
   webInputWrap: { paddingVertical: 0 },
+  // Explicit height fixes the iOS spinner rendering as blank/zero-height
+  // inside the modal sheet — 216 is UIDatePicker's native spinner height.
+  iosSpinnerWrap: { height: 216, width: '100%' },
+  iosSpinner: { height: 216, width: '100%' as any },
 });

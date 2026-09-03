@@ -352,18 +352,24 @@ export default function DashboardScreen() {
 
             <View style={st.cardPills}>
               <View style={st.cardPill}>
-                <Text style={st.cardPillLabel}>PAYMENTS</Text>
-                <Text style={st.cardPillVal}>{myContribs.filter(c => c.status === "approved").length}</Text>
+                <Text style={st.cardPillLabel} numberOfLines={1}>PAYMENTS</Text>
+                <Text style={st.cardPillVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                  {myContribs.filter(c => c.status === "approved").length}
+                </Text>
               </View>
               <View style={st.cardPillDivider} />
               <View style={st.cardPill}>
-                <Text style={st.cardPillLabel}>ACTIVE LOANS</Text>
-                <Text style={st.cardPillVal}>{activeLoans.length}</Text>
+                <Text style={st.cardPillLabel} numberOfLines={1}>ACTIVE LOANS</Text>
+                <Text style={st.cardPillVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                  {activeLoans.length}
+                </Text>
               </View>
               <View style={st.cardPillDivider} />
               <View style={st.cardPill}>
-                <Text style={st.cardPillLabel}>INTEREST</Text>
-                <Text style={st.cardPillVal}>{fmtCurrency(loanEarnings)}</Text>
+                <Text style={st.cardPillLabel} numberOfLines={1}>INTEREST</Text>
+                <Text style={st.cardPillVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                  {fmtCurrency(loanEarnings)}
+                </Text>
               </View>
             </View>
           </View>
@@ -435,7 +441,7 @@ export default function DashboardScreen() {
         {isGroupView && (reviewLoans.length > 0 || reviewContribs.length > 0) && (
           <View style={st.block}>
             <SectionHeader
-              title="Pending Action Queue"
+              title="Pending..."
               action={() => router.push("/(tabs)/loans")}
               actionLabel="Review all"
             />
@@ -577,7 +583,7 @@ const st = StyleSheet.create({
     paddingTop: 16,
     borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.1)",
   },
-  cardPill: { flex: 1, alignItems: "center" },
+  cardPill: { flex: 1, minWidth: 0, alignItems: "center" },
   cardPillLabel: { fontSize: 9, fontWeight: "700", color: "rgba(255,255,255,0.4)", letterSpacing: 0.8, textTransform: "uppercase" },
   cardPillVal: { fontSize: 13, fontWeight: "700", color: "#FFFFFF", marginTop: 3 },
   cardPillDivider: { width: 1, backgroundColor: "rgba(255,255,255,0.1)" },
@@ -589,8 +595,15 @@ const st = StyleSheet.create({
     gap: 10,
   },
   kpiCard: {
-    flex: 1,
-    minWidth: 150,
+    // A fixed pixel minWidth (150) needs 310px+ of usable width for a
+    // 2-up row once the 10px gap is added. On a 320-375px phone with
+    // 16-32px of screen padding, only ~288-343px is actually available,
+    // so the grid falls back to a lopsided "1 card, then 1 card alone on
+    // its own row" instead of a clean 2-column layout. A percentage
+    // flexBasis scales with whatever width the parent actually has.
+    flexBasis: "47%" as any,
+    flexGrow: 1,
+    minWidth: 0,
     backgroundColor: C.surface,
     borderRadius: 14,
     padding: 14,
@@ -611,6 +624,7 @@ const st = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.5,
     flex: 1,
+    minWidth: 0,
     marginRight: 6,
   },
   kpiIconWrap: {

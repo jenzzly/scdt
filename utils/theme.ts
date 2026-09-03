@@ -82,7 +82,7 @@ export const Colors = {
   mutedBg:  "#F1F5F9",
 
   // Card color (dark navy)
-  card: BRAND.colors.navy || "#0B1C3D",
+  card: BRAND.colors.navy || "#8297c2",
 };
 
 export const Fonts = {
@@ -100,7 +100,7 @@ export const S = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };
 export const C = {
   bg:          "#F0F3F8",
   surface:     "#FFFFFF",
-  card:        BRAND.colors.navy || "#0B1C3D",    // dark navy account card
+  card:        "#09491e",     // dark navy account card
   cardText:    "#FFFFFF",
   primary:     BRAND.colors.secondary || "#0F766E", // SCDT Brand deep teal
   accent:      BRAND.colors.primary || "#10B981",   // Emerald green
@@ -130,7 +130,7 @@ export const C = {
   elevated:    "#F0F2F5",
   tealBg:      "#CCFBF1",
   tealText:    BRAND.colors.secondary || "#0F766E",
-  tealDim:     BRAND.colors.navy || "#0B1C3D",
+  tealDim:     "#09491e", 
   borderLight: "#EEF1F6",
   teal:        BRAND.colors.secondary || "#0F766E",
 };

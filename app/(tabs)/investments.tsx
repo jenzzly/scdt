@@ -1,16 +1,4 @@
 // app/(tabs)/investments.tsx
-//
-// Extracted from loans.tsx, which previously combined loans and
-// investments into one screen with a sub-tab toggle. Investments now
-// have their own dedicated page, reachable only from the web sidebar
-// (see app/(tabs)/_layout.tsx — this route is omitted from the mobile
-// tab bar via href: null on mobile, same pattern as Wallet).
-//
-// Search/filter/pagination here deliberately match wallet.tsx's
-// pattern (SearchBar + TabRow + Prev/Next pagination) rather than
-// loans.tsx's old simple tab-only filtering, per an explicit request
-// to make these consistent across the app.
-
 import React, { useState, useMemo } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, useWindowDimensions } from "react-native";
 import { useRouter } from "expo-router";
@@ -209,22 +197,14 @@ export default function InvestmentsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      {/* Top action bar */}
-      <View style={[ivt.topBar, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
-        <View>
-          <Text style={ivt.pageSummaryLabel}>{isGroupView ? "Group Portfolio" : "Personal Portfolio"}</Text>
-          <Text style={ivt.pageSummaryTitle}>{isGroupView ? " " : " "}</Text>
-        </View>
-        {permissions.addInvestment && (
-          <TouchableOpacity style={ivt.primaryBtn} onPress={() => router.push("/modals/add-investment")} activeOpacity={0.8}>
-            <Text style={ivt.primaryBtnText}>+ New Investment</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      <ScrollView contentContainerStyle={[{ paddingBottom: 100 }, isWide && { paddingHorizontal: 24 }]} showsVerticalScrollIndicator={false}>
-
-        {/* ── Summary card ── */}
+      <ScrollView 
+        contentContainerStyle={[
+          { paddingBottom: 100, paddingTop: 16 },
+          isWide && { paddingHorizontal: 24 }
+        ]} 
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── KPI Cards ── */}
         <View style={[ivt.block, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
           <View style={ivt.kpiGrid}>
             <KpiCard
@@ -262,7 +242,7 @@ export default function InvestmentsScreen() {
           </View>
         </View>
 
-        {/* ── Controls: search + tabs + sort — matches Wallet's pattern ── */}
+        {/* ── Controls: search + tabs + sort ── */}
         <View style={[ivt.controls, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
           <View style={ivt.controlsTop}>
             <View style={{ flex: 1 }}>
@@ -284,7 +264,7 @@ export default function InvestmentsScreen() {
           <TabRow tabs={TABS} active={tab} onChange={handleTabChange} />
         </View>
 
-        {/* ── List — click a card to open full detail with all actions ── */}
+        {/* ── List ── */}
         <View style={[{ marginTop: 8 }, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
           {paginated.length === 0 ? (
             <Empty message="No investments found" icon="📊" />
@@ -321,9 +301,7 @@ export default function InvestmentsScreen() {
         </View>
       </ScrollView>
 
-      {/* ── Detail modal — every relevant action button lives here,
-           opened only by tapping a row, per the same interaction
-           pattern used on the redesigned Loans page. ── */}
+      {/* ── Detail modal ── */}
       <BottomModal
         visible={showDetail && !!selected}
         onClose={() => { setShowDetail(false); setSelected(null); }}
@@ -413,8 +391,7 @@ export default function InvestmentsScreen() {
                 </View>
               )}
 
-              {/* ── Actions — all here, gated by role + status, shown
-                   only when tapped into this detail view ── */}
+              {/* ── Actions ── */}
               <View style={{ marginTop: 16, gap: 8 }}>
                 {isAdmin && selected.status === "pending_committee" && (
                   <View style={{ flexDirection: "row", gap: 8 }}>
@@ -567,8 +544,7 @@ export default function InvestmentsScreen() {
   );
 }
 
-// ── List row — summary only; tap opens the detail modal where all
-//     actions live ──────────────────────────────────────────────────
+// ── List row ──────────────────────────────────────────────────
 function InvestmentRow({ investment, onPress }: { investment: Investment; onPress: () => void }) {
   const statusLabel = INVESTMENT_STATUS_LABEL[investment.status] || investment.status;
   const statusColor = INVESTMENT_STATUS_COLOR[investment.status] || C.text3;
@@ -599,35 +575,24 @@ function InvestmentRow({ investment, onPress }: { investment: Investment; onPres
 }
 
 const ivt = StyleSheet.create({
-  topBar: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6,
+  // kpi card 
+  block: { 
+    marginHorizontal: 16, 
+    marginBottom: 14,
+    ...Platform.select({
+      web: {},
+      default: { marginHorizontal: 12 }
+    })
   },
-  pageSummaryLabel: { fontSize: 10, fontWeight: "700", color: C.primary, textTransform: "uppercase", letterSpacing: 0.6 },
-  pageSummaryTitle: { fontSize: 15, fontWeight: "800", color: C.text, letterSpacing: -0.2, marginTop: 1 },
-  primaryBtn: { backgroundColor: C.primary, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 14 },
-  primaryBtnText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  //kpi card 
-  block: { marginHorizontal: 16, marginBottom: 14 },
   kpiGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
+    ...Platform.select({
+      web: {},
+      default: { gap: 8 }
+    })
   },
-  summaryCard: {
-    margin: 16, padding: 20, borderRadius: 18, backgroundColor: "#0B1C3D", overflow: "hidden",
-  },
-  cardAccentDot: {
-    position: "absolute", top: -30, right: -30, width: 120, height: 120, borderRadius: 60,
-    backgroundColor: "rgba(16,185,129,0.15)",
-  },
-  summaryLabel: { fontSize: 11, fontWeight: "700", color: "rgba(255,255,255,0.6)", letterSpacing: 0.5 },
-  summaryAmount: { fontSize: 30, fontWeight: "800", color: "#fff", marginTop: 4, letterSpacing: -0.5 },
-  summaryPills: { flexDirection: "row", marginTop: 16, paddingTop: 14, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.12)" },
-  summaryPill: { flex: 1 },
-  summaryPillDivider: { width: 1, backgroundColor: "rgba(255,255,255,0.12)", marginHorizontal: 12 },
-  summaryPillLabel: { fontSize: 9, fontWeight: "700", color: "rgba(255,255,255,0.5)", letterSpacing: 0.4 },
-  summaryPillValue: { fontSize: 15, fontWeight: "800", marginTop: 2 },
 
   controls: { paddingHorizontal: 16, gap: 10 },
   controlsTop: { flexDirection: "row", gap: 8, alignItems: "center" },

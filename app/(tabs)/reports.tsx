@@ -19,7 +19,7 @@ import { exportCsv, exportPdf } from "../../utils/export";
 // ─── Tiny components ──────────────────────────────────────────────
 const Chip = ({ label, bg, color }: { label: string; bg: string; color: string }) => (
   <View style={[styles.chip, { backgroundColor: bg }]}>
-    <Text style={[styles.chipText, { color }]}>{label}</Text>
+    <Text style={[styles.chipText, { color }]} numberOfLines={1}>{label}</Text>
   </View>
 );
 
@@ -38,9 +38,9 @@ const SectionHeader = ({
 
 const KpiCard = ({ label, value, color, subtext }: { label: string; value: string; color: string; subtext?: string }) => (
   <View style={[styles.kpiCard, { borderTopColor: color }]}>
-    <Text style={styles.kpiLabel}>{label}</Text>
-    <Text style={[styles.kpiValue, { color }]}>{value}</Text>
-    {subtext && <Text style={styles.kpiSubtext}>{subtext}</Text>}
+    <Text style={styles.kpiLabel} numberOfLines={1}>{label}</Text>
+    <Text style={[styles.kpiValue, { color }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{value}</Text>
+    {subtext && <Text style={styles.kpiSubtext} numberOfLines={1}>{subtext}</Text>}
   </View>
 );
 
@@ -90,9 +90,9 @@ function MemberSharesChart({
         const pct = (d.population / total) * 100;
         return (
           <View key={i}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
-              <Text style={{ fontSize: 12, fontWeight: "600", color: C.text2 }}>{d.name}</Text>
-              <Text style={{ fontSize: 12, fontWeight: "700", color: d.color }}>{pct.toFixed(0)}%</Text>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4, gap: 8 }}>
+              <Text style={{ fontSize: 12, fontWeight: "600", color: C.text2, flex: 1, minWidth: 0 }} numberOfLines={1}>{d.name}</Text>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: d.color, flexShrink: 0 }}>{pct.toFixed(0)}%</Text>
             </View>
             <View style={{ height: 8, borderRadius: 4, backgroundColor: C.border, overflow: "hidden" }}>
               <View style={{ height: "100%" as any, width: `${pct}%` as any, backgroundColor: d.color, borderRadius: 4 }} />
@@ -510,48 +510,48 @@ export default function ReportsScreen() {
               <Text style={styles.chartTitle}>Group Financial Position</Text>
               <View style={{ flexDirection: "row" }}>
                 <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border, borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label}>Members</Text>
-                  <Text style={gfp.statValue}>{allMembers.filter(m => m.status === "active").length}</Text>
-                  <Text style={T.small}>active</Text>
+                  <Text style={T.label} numberOfLines={1}>Members</Text>
+                  <Text style={gfp.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{allMembers.filter(m => m.status === "active").length}</Text>
+                  <Text style={T.small} numberOfLines={1}>active</Text>
                 </View>
                 <View style={[gfp.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label}>Total Net Assets</Text>
-                  <Text style={[gfp.statValue, { color: C.primary }]}>
+                  <Text style={T.label} numberOfLines={1}>Total Net Assets</Text>
+                  <Text style={[gfp.statValue, { color: C.primary }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
                     {fmtCurrency(groupTotalNetAssets)}
                   </Text>
-                  <Text style={T.small}>everything in wallet</Text>
+                  <Text style={T.small} numberOfLines={1}>everything in wallet</Text>
                 </View>
               </View>
               <View style={{ flexDirection: "row" }}>
                 <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border, borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label}>Contributions</Text>
-                  <Text style={gfp.statValue}>
+                  <Text style={T.label} numberOfLines={1}>Contributions</Text>
+                  <Text style={gfp.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
                     {fmtCurrency(groupContributionsOnly)}
                   </Text>
-                  <Text style={T.small}>total collected</Text>
+                  <Text style={T.small} numberOfLines={1}>total collected</Text>
                 </View>
                 <View style={[gfp.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label}>Interest Earned</Text>
-                  <Text style={[gfp.statValue, { color: C.gold }]}>
+                  <Text style={T.label} numberOfLines={1}>Interest Earned</Text>
+                  <Text style={[gfp.statValue, { color: C.gold }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
                     {fmtCurrency(groupInterestOnly)}
                   </Text>
-                  <Text style={T.small}>from loan repayments</Text>
+                  <Text style={T.small} numberOfLines={1}>from loan repayments</Text>
                 </View>
               </View>
               <View style={{ flexDirection: "row" }}>
                 <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border }]}>
-                  <Text style={T.label}>Penalties &amp; Late Fees</Text>
-                  <Text style={[gfp.statValue, { color: C.error }]}>
+                  <Text style={T.label} numberOfLines={1}>Penalties &amp; Late Fees</Text>
+                  <Text style={[gfp.statValue, { color: C.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
                     {fmtCurrency(groupPenaltiesOnly)}
                   </Text>
-                  <Text style={T.small}>collected</Text>
+                  <Text style={T.small} numberOfLines={1}>collected</Text>
                 </View>
                 <View style={gfp.stat}>
-                  <Text style={T.label}>Other</Text>
-                  <Text style={gfp.statValue}>
+                  <Text style={T.label} numberOfLines={1}>Other</Text>
+                  <Text style={gfp.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
                     {fmtCurrency(groupOtherOnly)}
                   </Text>
-                  <Text style={T.small}>bank fees, misc credits/debits</Text>
+                  <Text style={T.small} numberOfLines={1}>bank fees, misc credits/debits</Text>
                 </View>
               </View>
             </View>
@@ -726,12 +726,12 @@ function MembersTab({ members, contributions, loans, wallet, canSeeAll, currentM
                   </Text>
                 </View>
                 <View style={styles.memberInfo}>
-                  <Text style={styles.memberName}>{m.fullName}</Text>
-                  <Text style={styles.memberContact}>{m.phone || m.email || "No contact"}</Text>
+                  <Text style={styles.memberName} numberOfLines={1}>{m.fullName}</Text>
+                  <Text style={styles.memberContact} numberOfLines={1}>{m.phone || m.email || "No contact"}</Text>
                 </View>
                 <View style={styles.memberStats}>
-                  <Text style={styles.memberAmount}>{fmtCurrency(m.totalContributions)}</Text>
-                  <Text style={styles.memberRole}>{m.role}</Text>
+                  <Text style={styles.memberAmount} numberOfLines={1}>{fmtCurrency(m.totalContributions)}</Text>
+                  <Text style={styles.memberRole} numberOfLines={1}>{m.role}</Text>
                 </View>
                 <Text style={styles.chevron}>›</Text>
               </View>
@@ -887,14 +887,18 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
               return (
                 <React.Fragment key={l.id}>
                   <View style={{ paddingVertical: 10 }}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
-                      <Text style={{ fontSize: 13, fontWeight: "600", color: C.text }}>{fmtCurrency(l.amount)}</Text>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4, gap: 8 }}>
+                      <Text style={{ fontSize: 13, fontWeight: "600", color: C.text, flexShrink: 0 }}>{fmtCurrency(l.amount)}</Text>
                       <View style={[styles.chip, {
                         backgroundColor: l.status === "repaid" ? C.greenBg : l.status === "disbursed" ? C.infoBg : C.elevated,
+                        flexShrink: 1,
                       }]}>
-                        <Text style={[styles.chipText, {
-                          color: l.status === "repaid" ? C.success : l.status === "disbursed" ? C.info : C.text3,
-                        }]}>{l.status}</Text>
+                        <Text
+                          style={[styles.chipText, {
+                            color: l.status === "repaid" ? C.success : l.status === "disbursed" ? C.info : C.text3,
+                          }]}
+                          numberOfLines={1}
+                        >{l.status}</Text>
                       </View>
                     </View>
                     {l.purpose ? <Text style={{ fontSize: 11, color: C.text3, marginBottom: 6 }}>{l.purpose}</Text> : null}
@@ -924,10 +928,15 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
                 <Text style={{ fontSize: 13, color: w.amount > 0 ? C.success : C.error }}>{w.amount > 0 ? "↓" : "↑"}</Text>
               </View>
               <View style={styles.txMid}>
-                <Text style={styles.txDesc}>{w.type.replace(/_/g, " ")}</Text>
-                <Text style={T.small}>{fmtDate(w.date || w.createdAt)}</Text>
+                <Text style={styles.txDesc} numberOfLines={1}>{w.type.replace(/_/g, " ")}</Text>
+                <Text style={T.small} numberOfLines={1}>{fmtDate(w.date || w.createdAt)}</Text>
               </View>
-              <Text style={[styles.txAmount, { color: w.amount > 0 ? C.success : C.error }]}>
+              <Text
+                style={[styles.txAmount, { color: w.amount > 0 ? C.success : C.error, flexShrink: 0, marginLeft: 8 }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
+              >
                 {w.amount > 0 ? "+" : ""}{fmtCurrency(w.amount)}
               </Text>
             </View>
@@ -1040,10 +1049,10 @@ function EarningsTab({
         {canSeeAll && (
           <View style={{
             flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-            marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: C.borderLight,
+            marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: C.borderLight, gap: 8,
           }}>
-            <Text style={T.label}>Split equally across {activeMemberCount} active member{activeMemberCount !== 1 ? "s" : ""}</Text>
-            <Text style={{ fontSize: 15, fontWeight: "800", color: C.accent }}>{fmtCurrency(earningsPerMember)} each</Text>
+            <Text style={[T.label, { flex: 1, minWidth: 0 }]} numberOfLines={2}>Split equally across {activeMemberCount} active member{activeMemberCount !== 1 ? "s" : ""}</Text>
+            <Text style={{ fontSize: 15, fontWeight: "800", color: C.accent, flexShrink: 0 }} numberOfLines={1}>{fmtCurrency(earningsPerMember)} each</Text>
           </View>
         )}
       </View>
@@ -1111,9 +1120,9 @@ function EarningsTab({
                         {member ? member.fullName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase() : "€"}
                       </Text>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.loanItemMember}>{member?.fullName ?? "Group Earning"}</Text>
-                      <Text style={styles.loanItemDate}>{fmtDate(tx.date)} · {tx.description}</Text>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.loanItemMember} numberOfLines={1}>{member?.fullName ?? "Group Earning"}</Text>
+                      <Text style={styles.loanItemDate} numberOfLines={1}>{fmtDate(tx.date)} · {tx.description}</Text>
                     </View>
                     <Chip
                       label={EARNING_TYPE_LABEL[tx.type] ?? tx.type}
@@ -1122,7 +1131,7 @@ function EarningsTab({
                     />
                   </View>
                   <View style={{ marginTop: 8, alignItems: "flex-end" }}>
-                    <Text style={{ fontSize: 15, fontWeight: "800", color: isCredit ? C.success : C.error }}>
+                    <Text style={{ fontSize: 15, fontWeight: "800", color: isCredit ? C.success : C.error }} numberOfLines={1}>
                       {isCredit ? "+" : ""}{fmtCurrency(amt)}
                     </Text>
                   </View>
@@ -1140,7 +1149,7 @@ const Divider = () => <View style={{ height: 1, backgroundColor: C.borderLight, 
 
 // Group Financial Position stat grid
 const gfp = StyleSheet.create({
-  stat: { flex: 1, padding: 14, gap: 3 },
+  stat: { flex: 1, minWidth: 0, padding: 14, gap: 3 },
   statValue: { fontSize: 16, fontWeight: "800", color: C.text, letterSpacing: -0.3 },
 });
 
@@ -1249,8 +1258,14 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   kpiCard: {
-    flex: 1,
-    minWidth: "45%",
+    // flexBasis (not a fixed minWidth) sets the 2-up target width, and
+    // minWidth: 0 overrides the default content-based minimum so a long
+    // kpiValue can't force this card wider than its share of the row —
+    // that combination is what actually keeps the 2-column grid intact
+    // on narrow phones.
+    flexBasis: "47%" as any,
+    flexGrow: 1,
+    minWidth: 0,
     backgroundColor: C.surface,
     borderRadius: 14,
     borderWidth: 1,
@@ -1385,7 +1400,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  txMid: { flex: 1 },
+  txMid: { flex: 1, minWidth: 0 },
   txDesc: { fontSize: 13, fontWeight: "600", color: C.text, marginBottom: 2 },
   txAmount: { fontSize: 13, fontWeight: "700" },
   
@@ -1394,6 +1409,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 20,
+    flexShrink: 0,
   },
   chipText: {
     fontSize: 10,
@@ -1458,13 +1474,13 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: C.primary,
   },
-  memberInfo: { flex: 1 },
+  memberInfo: { flex: 1, minWidth: 0 },
   memberName: { fontSize: 14, fontWeight: "700", color: C.text },
   memberContact: { fontSize: 11, color: C.text3, marginTop: 2 },
-  memberStats: { alignItems: "flex-end" },
+  memberStats: { alignItems: "flex-end", flexShrink: 0 },
   memberAmount: { fontSize: 13, fontWeight: "700", color: C.primary },
   memberRole: { fontSize: 10, color: C.text3, textTransform: "capitalize", marginTop: 2 },
-  chevron: { fontSize: 16, color: C.text3 },
+  chevron: { fontSize: 16, color: C.text3, flexShrink: 0 },
   resultsCount: {
     fontSize: 12,
     color: C.text3,
