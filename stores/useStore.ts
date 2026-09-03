@@ -17,6 +17,7 @@
  * and spread it in below.
  */
 import { create } from "zustand";
+import { useEffect, useState } from 'react'; // ← ADD THIS IMPORT
 import { persist, createJSONStorage } from "zustand/middleware";
 import { Platform } from "react-native";
 import type { StoreState, SetFn, GetFn } from "./storeTypes";
@@ -52,7 +53,7 @@ export const useStore = create<StoreState>()(
   persist(
     (set: SetFn, get: GetFn) => ({
       // ── Initial state ──────────────────────────────────────────────────
-      dataViewMode: "mine",
+      dataViewMode: "personal",
       authUid: null, 
       authName: null, 
       authEmail: null,
@@ -128,7 +129,7 @@ export const useStore = create<StoreState>()(
       
       reset: () =>
         set({
-          dataViewMode: "mine",
+          dataViewMode: "personal",
           authUid: null, 
           authName: null, 
           authEmail: null,
@@ -340,41 +341,65 @@ export const useCurrentUserRole = (): MemberRole => {
  * Returns null if not found.
  */
 export const useCurrentMember = () => {
-  const { members, authUid, currentMember } = useStore();
+  const authUid = useStore((state) => state.authUid);
+  const members = useStore((state) => state.members);
+  const currentMember = useStore((state) => state.currentMember);
+  const activeGroupId = useStore((state) => state.activeGroupId);
+  const [hasAttempted, setHasAttempted] = useState(false);
   
-  // First check if we have a currentMember set
-  if (currentMember) {
-    return currentMember;
-  }
-  
-  // Fallback: find by authUid
-  if (authUid) {
-    const member = members.find((m) => m.userId === authUid);
+  // Use useEffect to update state after render
+  useEffect(() => {
+    // If we already have a current member or no authUid or no members, skip
+    if (currentMember || !authUid || !members || members.length === 0) {
+      return;
+    }
+    
+    // Find the member that matches the authUid
+    const member = members.find((m: any) => m.authUid === authUid);
     if (member) {
       console.log(`[useCurrentMember] Found member by authUid: ${member.fullName}`);
-      // Update the store with the found member
-      (useStore as any).setState({ currentMember: member });
-      return member;
+      // Use the store's setState method
+      useStore.setState({ currentMember: member });
     }
-  }
+    setHasAttempted(true);
+  }, [authUid, members, currentMember]);
   
-  return null;
+  // If we couldn't find a member but have authUid, try looking by email as fallback
+  useEffect(() => {
+    if (currentMember || !authUid || !members || members.length === 0 || hasAttempted) {
+      return;
+    }
+    
+    // Try to find by matching some other criteria if needed
+    // This is a fallback in case authUid isn't set correctly on members
+    const memberByEmail = members.find((m: any) => m.email === authUid);
+    if (memberByEmail) {
+      console.log(`[useCurrentMember] Found member by email fallback: ${memberByEmail.fullName}`);
+      useStore.setState({ currentMember: memberByEmail });
+    }
+  }, [authUid, members, currentMember, hasAttempted]);
+  
+  return useStore((state) => state.currentMember);
 };
 
 /**
- * Get the data view mode (admin or mine)
+ * Get the data view mode (personal or group)
  */
 export const useDataViewMode = () => useStore((s) => s.dataViewMode);
 
 /**
- * Check if the user is in admin view mode.
- * Only true for admin role with dataViewMode === "admin".
+ * Check if the user is in group view mode.
+ * True for authorized roles (admin, accountant, loan_officer, committee) with dataViewMode === "group" (or "admin").
  */
-export const useIsAdminView = () => {
+export const useIsGroupView = () => {
   const role = useCurrentUserRole();
   const dataViewMode = useDataViewMode();
-  return role === "admin" && dataViewMode === "admin";
+  const isAuthorized = role === "admin" || role === "accountant" || role === "loan_officer" || role === "committee";
+  return isAuthorized && (dataViewMode === "group" || dataViewMode === "admin");
 };
+
+/** @deprecated alias for useIsGroupView */
+export const useIsAdminView = () => useIsGroupView();
 
 /**
  * Roles that review other members' loan/investment/meeting approvals
@@ -384,22 +409,22 @@ export const APPROVER_ROLES: MemberRole[] = ["loan_officer", "committee", "accou
 
 /**
  * Check if the user is in approver view mode.
- * True for approver roles with dataViewMode === "admin".
+ * True for approver roles with dataViewMode === "group" (or "admin").
  */
 export const useIsApproverView = () => {
   const role = useCurrentUserRole();
   const dataViewMode = useDataViewMode();
-  return APPROVER_ROLES.includes(role) && dataViewMode === "admin";
+  return APPROVER_ROLES.includes(role) && (dataViewMode === "group" || dataViewMode === "admin");
 };
 
 /**
- * True whenever the current role has ANY "mine vs admin"-style toggle
- * available — admin (full) or an approver role (scoped).
- * Use this to decide whether to render the toggle switch itself.
+ * True whenever the current role has the view toggle
+ * available: admin, accountant, loan_officer, committee.
+ * Regular member, audit, groups do NOT get the switch.
  */
 export const useHasViewToggle = () => {
   const role = useCurrentUserRole();
-  return role === "admin" || APPROVER_ROLES.includes(role);
+  return role === "admin" || role === "accountant" || role === "loan_officer" || role === "committee";
 };
 
 /**
@@ -554,8 +579,8 @@ export const setActiveGroup = (groupId: string | null) => {
 /**
  * Set the data view mode
  */
-export const setDataViewMode = (mode: "admin" | "mine") => {
-  useStore.setState({ dataViewMode: mode });
+export const setDataViewMode = (mode: "personal" | "group" | "admin" | "mine") => {
+  useStore.setState({ dataViewMode: mode as any });
 };
 
 /**

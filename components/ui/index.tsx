@@ -791,3 +791,4 @@ const styles = StyleSheet.create({
 
 export { ModalShell } from './ModalShell';
 export { DatePicker } from './DatePicker';
+export { ViewSwitch } from './ViewSwitch';

@@ -12,14 +12,17 @@ import type {
 } from "../types";
 import type { OverdueContribution, OverdueInstallment } from "../utils/lateFees";
 
+export type DataViewMode = "personal" | "group" | "admin" | "mine";
+
 export interface StoreState {
-  dataViewMode: "admin" | "mine";
+  dataViewMode: DataViewMode;
   authUid: string | null;
   authName: string | null;
   authEmail: string | null;
   groups: Group[];
   activeGroupId: string | null;
   members: Member[];
+  currentMember: Member | null; 
   contributions: Contribution[];
   loans: Loan[];
   investments: Investment[];
@@ -34,7 +37,7 @@ export interface StoreState {
   lastSyncTimestamp: number | null;
   forceSyncTrigger: number;
   isLoading: boolean;
-  setDataViewMode: (mode: "admin" | "mine") => void;
+  setDataViewMode: (mode: DataViewMode) => void;
 
   setAuth: (uid: string, name: string, email: string) => void;
   clearAuth: () => void;
@@ -79,6 +82,8 @@ export interface StoreState {
   setDeletionRecords: (records: DeletionRecord[]) => void;
   setAuditLogs: (logs: AuditLog[]) => void;
   markNotifReadLocal: (id: ID) => void;
+  clearNotification: (id: ID) => Promise<void>;
+  clearAllNotifications: () => Promise<void>;
   setSyncStatus: (s: SyncStatus, error?: string | null) => void;
   triggerForceSync: () => void;
   setLoading: (b: boolean) => void;

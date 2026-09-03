@@ -1,4 +1,5 @@
-// app/(tabs)/reports.tsx
+// app/(tabs)/reports.tsx - Fixed header
+
 import React, { useMemo, useState } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
@@ -44,13 +45,6 @@ const KpiCard = ({ label, value, color, subtext }: { label: string; value: strin
 );
 
 // ─── Safe hand-built charts ──────────────────────────────────────────────────
-// react-native-chart-kit renders raw SVG <text>/<tspan> nodes that are not
-// valid React Native Web children — this is the root cause of the
-// "Unexpected text node" crash on this screen. It also computed its width
-// once from Dimensions.get("window") at module load time, which never
-// updates on rotation/resize (the "chart is off on mobile" report). These
-// replacements use only View/Text and size themselves from the parent's
-// actual rendered width.
 function CashflowBarChart({
   months, income, expenses,
 }: { months: string[]; income: number[]; expenses: number[] }) {
@@ -231,14 +225,7 @@ export default function ReportsScreen() {
   const investments = canSeeAll ? allInvestments : allInvestments.filter(i => i.createdBy === currentMember?.id);
   const wallet = canSeeAll ? allWallet : allWallet.filter(t => t.memberId === currentMember?.id);
 
-  // Same "true earnings" definition as EarningsTab (see that component
-  // for the full reasoning): interest, penalties/late fees, investment
-  // returns, bank fees, and other credits/debits — excluding
-  // contributions (not earnings), loan_disbursement (money going OUT,
-  // previously dragged this number down by every loan's full principal),
-  // and loan_principal_recovery (capital returning, not profit).
-  // Legacy combined loan_repayment records are split proportionally so
-  // only their interest portion counts.
+  // Same "true earnings" definition as EarningsTab
   const EARNING_TYPES_OVERVIEW = [
     "loan_interest_income", "interest", "late_fee",
     "investment_return", "bank_fee", "other_credit", "other_debit",
@@ -258,10 +245,6 @@ export default function ReportsScreen() {
     () => allWallet.filter(t => ["bank_fee", "other_debit"].includes(t.type)).reduce((sum, t) => sum + Math.abs(t.amount), 0),
     [allWallet],
   );
-  // Interest only (subset of groupWalletEarnings), for the Group
-  // Financial Position "Interest Earned" row — same legacy-record
-  // handling as groupWalletEarnings, which the previous version of
-  // this row didn't have, another source of the two figures disagreeing.
   const groupInterestOnly = useMemo(() => {
     return round2(allWallet.reduce((sum, t) => {
       if (t.type === "loan_repayment") {
@@ -364,7 +347,7 @@ export default function ReportsScreen() {
     }));
   }, [allMembers]);
 
-  // Interest earned: read from wallet ledger (loan_interest_income txs) + legacy loan_repayment
+  // Interest earned: read from wallet ledger
   const totalInterest = useMemo(() => {
     const fromLedger = wallet
       .filter(t => t.type === "loan_interest_income" && t.amount > 0)
@@ -463,19 +446,9 @@ export default function ReportsScreen() {
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
 
-      {/* Header */}
-      <View style={[styles.header, isWide && { paddingHorizontal: 32 }]}>
-        <View>
-          <Text style={styles.headerSub}>Analytics & Insights</Text>
-          <Text style={styles.headerTitle}>Reports</Text>
-        </View>
-        <TouchableOpacity style={styles.filterBtn} onPress={openFilterModal} activeOpacity={0.8}>
-          <Text style={styles.filterBtnText}>{hasActiveFilters ? "🎯 Filter" : "🔍 Filter"}</Text>
-          {hasActiveFilters && <View style={styles.filterDot} />}
-        </TouchableOpacity>
-      </View>
+      {/* ── Header removed - global header handles this ── */}
 
-      {/* Active Filters Bar */}
+      {/* ── Active Filters Bar ── */}
       {hasActiveFilters && (
         <TouchableOpacity style={styles.activeFiltersBar} onPress={openFilterModal}>
           <Text style={styles.activeFiltersText} numberOfLines={1}>
@@ -491,19 +464,28 @@ export default function ReportsScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Tabs */}
-      <View style={styles.tabBar}>
-        {TABS.map(tab => (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.tab, activeTab === tab && styles.tabActive]}
-            onPress={() => setActiveTab(tab)}
-          >
-            <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </Text>
+      {/* ── Smart Controls: Tabs + Filter Button ── */}
+      <View style={[styles.controlsSection, isWide && { maxWidth: 960, alignSelf: "center" as any, width: "100%" as any }]}>
+        <View style={styles.controlsLeft}>
+          {TABS.map(tab => (
+            <TouchableOpacity
+              key={tab}
+              style={[styles.tab, activeTab === tab && styles.tabActive]}
+              onPress={() => setActiveTab(tab)}
+            >
+              <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        
+        <View style={styles.controlsRight}>
+          <TouchableOpacity style={styles.filterBtn} onPress={openFilterModal} activeOpacity={0.8}>
+            <Text style={styles.filterBtnText}>{hasActiveFilters ? "🎯 Filter" : "🔍 Filter"}</Text>
+            {hasActiveFilters && <View style={styles.filterDot} />}
           </TouchableOpacity>
-        ))}
+        </View>
       </View>
 
       <ScrollView
@@ -516,27 +498,14 @@ export default function ReportsScreen() {
         {/* Overview Tab */}
         {activeTab === "overview" && (
           <View style={styles.content}>
-            {/* KPI Row — trimmed to figures NOT already shown in Group
-                Financial Position below (Contributions and Interest
-                Earned were duplicated in both places, sometimes with
-                different numbers due to a calculation inconsistency —
-                see groupWalletEarnings below). Group Financial Position
-                is now the one place for those; this row keeps only
-                what it doesn't cover. */}
+            {/* KPI Row */}
             <View style={styles.kpiGrid}>
               <KpiCard label="TOTAL EARNINGS" value={fmtCurrency(groupWalletEarnings)} color={C.info} subtext="interest, fees & other — no principal" />
               <KpiCard label="INVESTMENTS" value={fmtCurrency(allInvestments.reduce((sum, item) => sum + item.investmentAmount, 0))} color={C.success} subtext="group total" />
               <KpiCard label="EXPENSES" value={fmtCurrency(groupExpenses)} color={C.error} subtext="operational" />
             </View>
 
-            {/* Group Financial Position — the whole group's numbers,
-                which is what this Overview tab is for. Total Net Assets
-                is the full signed sum of every wallet transaction
-                (savings, interest, penalties/late fees, other
-                credits/debits — everything), the same formula
-                group.availableBalance already uses internally (see
-                stores/recalcGroupTotals.ts), not a narrower
-                "savings + interest" figure. */}
+            {/* Group Financial Position */}
             <View style={styles.chartCard}>
               <Text style={styles.chartTitle}>Group Financial Position</Text>
               <View style={{ flexDirection: "row" }}>
@@ -599,7 +568,7 @@ export default function ReportsScreen() {
               )}
             </View>
 
-            {/* Savings by Member - Admin only */}
+            {/* Savings by Member */}
             {memberPie.length > 0 && (
               <View style={styles.chartCard}>
                 <Text style={styles.chartTitle}>{canSeeAll ? "Savings by Member (Top 5)" : "My Savings"}</Text>
@@ -607,7 +576,7 @@ export default function ReportsScreen() {
               </View>
             )}
 
-            {/* Export Section - gated by downloadReports permission */}
+            {/* Export Section */}
             {permissions.downloadReports && (
               <View style={styles.exportSection}>
                 <Text style={styles.exportTitle}>Export Data</Text>
@@ -658,7 +627,7 @@ export default function ReportsScreen() {
           </View>
         )}
 
-        {/* Members Tab — scoped by role */}
+        {/* Members Tab */}
         {activeTab === "members" && (
           <MembersTab
             members={canSeeAll ? allMembers : allMembers.filter(m => m.id === currentMember?.id)}
@@ -670,7 +639,7 @@ export default function ReportsScreen() {
           />
         )}
 
-        {/* Earnings Tab — replaces the old Loans tab */}
+        {/* Earnings Tab */}
         {activeTab === "earnings" && (
           <EarningsTab
             wallet={canSeeAll ? allWallet : allWallet.filter(t => t.memberId === currentMember?.id)}
@@ -710,12 +679,9 @@ export default function ReportsScreen() {
 }
 
 // ─── MembersTab ──────────────────────────────────────────────────────────────
-// Shows member directory for admins/officers; shows own report for regular members.
-// ─────────────────────────────────────────────────────────────────────────────
 function MembersTab({ members, contributions, loans, wallet, canSeeAll, currentMember }: any) {
   const [search, setSearch] = useState<string>("");
   const [selectedMember, setSelectedMember] = useState<any>(
-    // Non-admins land directly on their own detail
     !canSeeAll && members.length === 1 ? members[0] : null
   );
 
@@ -779,19 +745,15 @@ function MembersTab({ members, contributions, loans, wallet, canSeeAll, currentM
 }
 
 // ─── MemberDetail ─────────────────────────────────────────────────────────────
-// Full per-member report: contributions, loans, interest earned projection
-// ─────────────────────────────────────────────────────────────────────────────
 function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack }: any) {
   const totalContributions = contributions.reduce((s: number, c: any) => s + c.amount, 0);
   const loanBalance = loans.filter((l: any) => l.status === "disbursed").reduce((s: number, l: any) => s + l.balance, 0);
   const totalLoansAmount = loans.reduce((s: number, l: any) => s + l.amount, 0);
   const totalRepaid = loans.reduce((s: number, l: any) => s + (l.amountRepaid || 0), 0);
 
-  // Interest earned: from ledger loan_interest_income txs
   const interestFromLedger = wallet
     .filter((t: any) => t.type === "loan_interest_income" && t.amount > 0)
     .reduce((s: number, t: any) => s + t.amount, 0);
-  // Legacy loan_repayment combined tx fallback
   const interestLegacy = wallet
     .filter((t: any) => t.type === "loan_repayment" && t.amount > 0)
     .reduce((s: number, t: any) => {
@@ -801,8 +763,6 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
     }, 0);
   const interestEarned = round2(interestFromLedger + interestLegacy);
 
-  // ── Interest projection ─────────────────────────────────────────────────
-  // Project how much interest this member will earn over remaining loan terms
   const projectedInterest = loans
     .filter((l: any) => l.status === "disbursed")
     .reduce((s: number, l: any) => {
@@ -811,7 +771,6 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
       return s + round2(remaining * ratio);
     }, 0);
 
-  // ── Monthly contribution trend (last 6 months) ──────────────────────────
   const trend = Array.from({ length: 6 }, (_, i) => {
     const d = new Date();
     d.setMonth(d.getMonth() - (5 - i));
@@ -837,7 +796,6 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
         </TouchableOpacity>
       )}
 
-      {/* Member identity card */}
       <View style={styles.memberDetailCard}>
         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}>
           <View style={[styles.memberAvatar, { marginRight: 14 }]}>
@@ -857,7 +815,6 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
         </View>
       </View>
 
-      {/* KPI grid */}
       <View style={styles.kpiGrid}>
         <KpiCard label="CONTRIBUTIONS" value={fmtCurrency(totalContributions)} color={C.accent} subtext="total saved" />
         <KpiCard label="LOAN BALANCE" value={fmtCurrency(loanBalance)} color={C.error} subtext="outstanding" />
@@ -865,14 +822,12 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
         <KpiCard label="PROJECTED INTEREST" value={fmtCurrency(projectedInterest)} color={"#7C3AED"} subtext="remaining loans" />
       </View>
 
-      {/* Interest breakdown card */}
       <View style={[styles.chartCard, { marginBottom: 16 }]}>
         <Text style={styles.chartTitle}>Interest Earned Overview</Text>
         <Text style={{ fontSize: 11, color: C.text3, marginBottom: 12 }}>
           Based on all repayments recorded against your loans
         </Text>
         <View style={{ gap: 10 }}>
-          {/* Interest already earned */}
           <View>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
               <Text style={{ fontSize: 12, color: C.text2, fontWeight: "600" }}>Already earned</Text>
@@ -885,7 +840,6 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
               }} />
             </View>
           </View>
-          {/* Still projected */}
           {projectedInterest > 0 && (
             <View>
               <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
@@ -906,7 +860,6 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
         </View>
       </View>
 
-      {/* 6-month contribution trend */}
       {trend.some(t => t.total > 0) && (
         <View style={styles.chartCard}>
           <Text style={styles.chartTitle}>Contributions (Last 6 Months)</Text>
@@ -925,7 +878,6 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
         </View>
       )}
 
-      {/* Loan summary */}
       {(loans.length > 0) && (
         <>
           <SectionHeader title={`Loans (${loans.length})`} />
@@ -961,7 +913,6 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
         </>
       )}
 
-      {/* Recent wallet activity */}
       <SectionHeader title="Recent Transactions" />
       <Card style={styles.card}>
         {recentWallet.length === 0 ? (
@@ -988,29 +939,11 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
   );
 }
 
-// Loans Tab Component
 // ─── EarningsTab ──────────────────────────────────────────────────────────────
-// "Earnings" = every wallet credit that is NOT a regular member contribution:
-// loan interest income, investment returns, late fees, and any other manual
-// credit. Every figure here is derived directly from the wallet ledger
-// (never estimated from loan objects), so it always matches the money that
-// actually moved. Downloadable as CSV/PDF and shows a per-member breakdown.
 function earningsHtmlTable(headers: string[], rows: any[][]) {
   return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
-// True "earnings" transaction types — actual income/cost to the group,
-// not internal capital movements. Deliberately excludes:
-//   - contribution (member savings — not earnings, excluded per the
-//     earnings definition itself)
-//   - loan_disbursement (money going OUT to fund a loan — a large
-//     negative transaction; including it previously dragged the
-//     earnings total down by the full amount of every loan given out)
-//   - loan_principal_recovery (principal simply returning as a loan is
-//     repaid — the group's own capital coming back, not profit;
-//     counting it as "earnings" would double-count money that was
-//     never spent, only lent)
-//   - withdrawal (money leaving the group's coffers — not income)
 const EARNING_TYPES = [
   "loan_interest_income", "interest", "late_fee",
   "investment_return", "bank_fee",
@@ -1035,10 +968,6 @@ function EarningsTab({
   const isWide = width >= 768;
   const [typeFilter, setTypeFilter] = useState<string>("all");
 
-  // A legacy `loan_repayment` transaction combines interest + principal
-  // in one number (see the comment on EARNING_TYPES above) — only the
-  // interest PORTION of it is a real earning. Everything else in
-  // EARNING_TYPES is already a pure earnings amount and used as-is.
   const earningAmount = (t: any): number => {
     if (t.type !== "loan_repayment") return t.amount;
     const loan = allLoans.find((l: any) => l.id === t.loanId);
@@ -1061,9 +990,6 @@ function EarningsTab({
     return earningsTxs.filter((t: any) => t.type === typeFilter);
   }, [earningsTxs, typeFilter]);
 
-  // Breakdown by type — the group total split out by what actually
-  // makes it up (interest vs. penalties vs. other), so the number is
-  // legible rather than one opaque total.
   const breakdown = useMemo(() => {
     const byType: Record<string, number> = {};
     for (const t of groupEarningsTxs) {
@@ -1099,10 +1025,6 @@ function EarningsTab({
 
   return (
     <View style={[styles.content, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
-      {/* ── Headline: one clear number, plus the equal per-member share.
-           No more "Earnings by Member" list repeating the same number
-           for every row — with an equal split, a list only implies a
-           precision/individuality that isn't there. ── */}
       <View style={styles.chartCard}>
         <Text style={styles.chartTitle}>{canSeeAll ? "Net Group Earnings" : "My Earnings Share"}</Text>
         <Text style={{
@@ -1126,8 +1048,6 @@ function EarningsTab({
         )}
       </View>
 
-      {/* ── Breakdown by type — replaces the old redundant "Per Member"
-           KPI card with something that actually explains the total. ── */}
       {breakdown.length > 0 && (
         <View style={styles.chartCard}>
           <Text style={styles.chartTitle}>Breakdown</Text>
@@ -1147,7 +1067,6 @@ function EarningsTab({
         </View>
       )}
 
-      {/* Download buttons */}
       <View style={{ flexDirection: isWide ? "row" : "row", gap: 10, marginTop: 4, marginBottom: 16 }}>
         <TouchableOpacity style={[styles.exportBtn, { flex: 1 }]} onPress={() => handleDownload("csv")}>
           <Text style={styles.exportBtnText}>⬇ Download CSV</Text>
@@ -1157,7 +1076,6 @@ function EarningsTab({
         </TouchableOpacity>
       </View>
 
-      {/* Type filter chips */}
       <View style={styles.filterChips}>
         {["all", ...EARNING_TYPES].map(type => (
           <TouchableOpacity
@@ -1204,10 +1122,6 @@ function EarningsTab({
                     />
                   </View>
                   <View style={{ marginTop: 8, alignItems: "flex-end" }}>
-                    {/* fmtCurrency already prefixes negatives with "-" —
-                        no hardcoded "+" here, which previously produced
-                        "+-RWF 5,000.00" on every debit and rendered it in
-                        the same gold/positive color as real income. */}
                     <Text style={{ fontSize: 15, fontWeight: "800", color: isCredit ? C.success : C.error }}>
                       {isCredit ? "+" : ""}{fmtCurrency(amt)}
                     </Text>
@@ -1224,40 +1138,62 @@ function EarningsTab({
 // Helper Components
 const Divider = () => <View style={{ height: 1, backgroundColor: C.borderLight, marginHorizontal: 16 }} />;
 
-// Group Financial Position stat grid — small, local style set.
+// Group Financial Position stat grid
 const gfp = StyleSheet.create({
   stat: { flex: 1, padding: 14, gap: 3 },
   statValue: { fontSize: 16, fontWeight: "800", color: C.text, letterSpacing: -0.3 },
 });
 
 const styles = StyleSheet.create({
-  header: {
+  // ── Controls Section ──
+  controlsSection: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === "ios" ? 56 : 36,
-    paddingBottom: 14,
-    backgroundColor: C.bg,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: C.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+    marginBottom: 16,
   },
-  headerSub: {
-    fontSize: 11,
+  controlsLeft: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  controlsRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  
+  // ── Tabs ──
+  tab: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  tabActive: {
+    backgroundColor: C.primary,
+    borderColor: C.primary,
+  },
+  tabText: {
+    fontSize: 13,
     fontWeight: "600",
-    color: C.text3,
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
+    color: C.text2,
   },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: C.text,
-    letterSpacing: -0.5,
-    marginTop: 1,
+  tabTextActive: {
+    color: "#fff",
   },
+  
+  // ── Filter Button ──
   filterBtn: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: C.surface,
+    backgroundColor: C.elevated,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
@@ -1276,6 +1212,8 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: C.accent,
   },
+  
+  // ── Active Filters Bar ──
   activeFiltersBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -1298,35 +1236,12 @@ const styles = StyleSheet.create({
     color: C.error,
     fontWeight: "700",
   },
-  tabBar: {
-    flexDirection: "row",
-    paddingHorizontal: 16,
-    gap: 8,
-    marginBottom: 16,
-  },
-  tab: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    backgroundColor: C.surface,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  tabActive: {
-    backgroundColor: C.primary,
-    borderColor: C.primary,
-  },
-  tabText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: C.text2,
-  },
-  tabTextActive: {
-    color: "#fff",
-  },
+  
   content: {
     paddingHorizontal: 16,
   },
+  
+  // ── KPI Grid ──
   kpiGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1361,6 +1276,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: C.text3,
   },
+  
+  // ── Chart Cards ──
   chartCard: {
     backgroundColor: C.surface,
     borderRadius: 16,
@@ -1375,26 +1292,8 @@ const styles = StyleSheet.create({
     color: C.text,
     marginBottom: 12,
   },
-  chartLegend: {
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 16,
-    marginTop: 12,
-  },
-  legendItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  legendDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  legendText: {
-    fontSize: 11,
-    color: C.text3,
-  },
+  
+  // ── Export Section ──
   exportSection: {
     marginTop: 8,
     marginBottom: 20,
@@ -1453,6 +1352,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
+  
+  // ── Section Header ──
   sectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1460,6 +1361,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     marginTop: 8,
   },
+  
+  // ── Card ──
   card: {
     backgroundColor: C.surface,
     borderRadius: 14,
@@ -1467,6 +1370,8 @@ const styles = StyleSheet.create({
     borderColor: C.border,
     overflow: "hidden",
   },
+  
+  // ── Transaction Row ──
   txRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1483,6 +1388,8 @@ const styles = StyleSheet.create({
   txMid: { flex: 1 },
   txDesc: { fontSize: 13, fontWeight: "600", color: C.text, marginBottom: 2 },
   txAmount: { fontSize: 13, fontWeight: "700" },
+  
+  // ── Chip ──
   chip: {
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -1492,6 +1399,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
   },
+  
+  // ── Member Detail ──
   backButton: {
     marginBottom: 16,
   },
@@ -1528,16 +1437,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: C.text2,
   },
-  statsGrid: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 16,
-  },
-  resultsCount: {
-    fontSize: 12,
-    color: C.text3,
-    marginBottom: 10,
-  },
+  
+  // ── Member Row ──
   memberRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1564,8 +1465,16 @@ const styles = StyleSheet.create({
   memberAmount: { fontSize: 13, fontWeight: "700", color: C.primary },
   memberRole: { fontSize: 10, color: C.text3, textTransform: "capitalize", marginTop: 2 },
   chevron: { fontSize: 16, color: C.text3 },
+  resultsCount: {
+    fontSize: 12,
+    color: C.text3,
+    marginBottom: 10,
+  },
+  
+  // ── Filter Chips ──
   filterChips: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     marginBottom: 16,
   },
@@ -1589,6 +1498,8 @@ const styles = StyleSheet.create({
   filterChipTextActive: {
     color: "#fff",
   },
+  
+  // ── Loan Item ──
   loanItem: {
     padding: 16,
     marginBottom: 12,
@@ -1622,50 +1533,8 @@ const styles = StyleSheet.create({
     color: C.text3,
     marginTop: 2,
   },
-  loanItemAmounts: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: C.borderLight,
-    marginBottom: 12,
-  },
-  loanItemLabel: {
-    fontSize: 10,
-    color: C.text3,
-    textTransform: "uppercase",
-    marginBottom: 4,
-  },
-  loanItemValue: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: C.text,
-  },
-  loanProgress: {
-    marginTop: 4,
-  },
-  loanProgressBar: {
-    height: 4,
-    backgroundColor: C.elevated,
-    borderRadius: 2,
-    overflow: "hidden",
-  },
-  loanProgressFill: {
-    height: "100%" as any,
-    backgroundColor: C.accent,
-    borderRadius: 2,
-  },
-  loanProgressText: {
-    fontSize: 10,
-    color: C.text3,
-    marginTop: 4,
-  },
-  emptyText: {
-    textAlign: "center",
-    paddingVertical: 20,
-    color: C.text3,
-  },
+  
+  // ── Modal ──
   modalSectionLabel: {
     fontSize: 13,
     fontWeight: "700",
@@ -1680,33 +1549,6 @@ const styles = StyleSheet.create({
   },
   modalHalf: {
     flex: 1,
-  },
-  modalSelectLabel: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: C.text2,
-    marginBottom: 6,
-  },
-  modalChip: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    backgroundColor: C.surface,
-    borderWidth: 1,
-    borderColor: C.border,
-    marginRight: 6,
-  },
-  modalChipActive: {
-    backgroundColor: C.primary,
-    borderColor: C.primary,
-  },
-  modalChipText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: C.text2,
-  },
-  modalChipTextActive: {
-    color: "#fff",
   },
   modalClearBtn: {
     flex: 1,
@@ -1733,5 +1575,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     color: "#fff",
+  },
+  emptyText: {
+    textAlign: "center",
+    paddingVertical: 20,
+    color: C.text3,
   },
 });

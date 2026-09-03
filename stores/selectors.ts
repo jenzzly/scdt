@@ -22,6 +22,7 @@ export {
   useCurrentUserRole,
   useCurrentMember,
   useDataViewMode,
+  useIsGroupView,
   useIsAdminView,
   useIsApproverView,
   useHasViewToggle,

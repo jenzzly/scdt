@@ -31,13 +31,14 @@ try {
 const { Home, CreditCard, Wallet, BarChart3, Settings, Calendar, LogOut, DollarSign, TrendingUp, ChevronLeft, ChevronRight, Users, Bell } = Icons || {};
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useStore, useCurrentUserRole, useCurrentMember, useDataViewMode, useHasViewToggle, useUnreadNotifs } from "../../stores/useStore";
+import { useStore, useCurrentUserRole, useCurrentMember, useDataViewMode, useHasViewToggle, useUnreadNotifs, useActiveGroup } from "../../stores/useStore";
 import { useAuth } from "../../hooks/useAuth";
 import { useFirebaseSync, useNotificationSync } from "../../hooks/useFirebaseSync";
 import { useNetworkStatus } from "../../hooks/useNetworkStatus";
-import { Colors, S, R, showConfirm, fmtDateLong } from "../../utils/theme";
+import { Colors, S, R, C, showConfirm, fmtDateLong } from "../../utils/theme";
 import { BRAND } from "../../lib/brand";
-import { getWebNavForRole, hasAdminViewToggle } from "../../lib/auth/permissions";
+import { getWebNavForRole, hasViewToggle, hasAdminViewToggle } from "../../lib/auth/permissions";
+import { ViewSwitch } from "../../components/ui/ViewSwitch";
 
 // Route segment → page title, for the shared desktop top header.
 const PAGE_TITLES: Record<string, string> = {
@@ -201,24 +202,25 @@ const pa = StyleSheet.create({
 });
 
 // ─────────────────────────────────────────────
-// Desktop top header — persistent across every web page: title, date,
-// notification bell, current user + role. The sidebar already carries
-// the user's name/avatar/sign-out for navigation purposes; this header
-// is the page-level identity strip the reference screenshots show.
+// Desktop top header — persistent across every web page
 // ─────────────────────────────────────────────
 function DesktopTopHeader({
-  title, authName, role, unreadCount, onBellPress,
-}: { title: string; authName: string; role: string; unreadCount: number; onBellPress: () => void }) {
+  title, authName, role, unreadCount, onBellPress, groupName,
+}: { title: string; authName: string; role: string; unreadCount: number; onBellPress: () => void; groupName?: string }) {
   const initials = (authName ?? "U").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
   const today = React.useMemo(() => fmtDateLong(), []);
 
   return (
     <View style={dh.root}>
-      <View>
-        <Text style={dh.title}>{title}</Text>
+      <View style={dh.left}>
+        <View style={dh.titleRow}>
+          <Text style={dh.title}>{title}</Text>
+          {groupName && <Text style={dh.groupTag}>· {groupName}</Text>}
+        </View>
         <Text style={dh.date}>{today}</Text>
       </View>
       <View style={dh.right}>
+        <ViewSwitch />
         <TouchableOpacity style={dh.bellBtn} onPress={onBellPress} activeOpacity={0.7} accessibilityLabel="Notifications">
           {Bell ? <Bell size={18} color={Colors.text2} /> : <Text style={{ fontSize: 16 }}>🔔</Text>}
           {unreadCount > 0 && (
@@ -233,9 +235,41 @@ function DesktopTopHeader({
           </View>
           <View>
             <Text style={dh.userName} numberOfLines={1}>{authName ?? "User"}</Text>
-            <Text style={dh.userRole}>{role}</Text>
+            <Text style={dh.userRole}>{role?.replace("_", " ")}</Text>
           </View>
         </View>
+      </View>
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Mobile top header — unified header for mobile screens
+// ─────────────────────────────────────────────
+function MobileTopHeader({
+  title, unreadCount, onBellPress, groupName,
+}: { title: string; unreadCount: number; onBellPress: () => void; groupName?: string }) {
+  return (
+    <View style={mh.root}>
+      <View style={mh.left}>
+        <View style={mh.brandMark}>
+          <Text style={mh.brandLetter}>S</Text>
+        </View>
+        <View style={{ minWidth: 0, flexShrink: 1 }}>
+          <Text style={mh.title} numberOfLines={1}>{title}</Text>
+          {groupName && <Text style={mh.groupSub} numberOfLines={1}>{groupName}</Text>}
+        </View>
+      </View>
+      <View style={mh.right}>
+        <ViewSwitch compact />
+        <TouchableOpacity style={mh.bellBtn} onPress={onBellPress} activeOpacity={0.7} accessibilityLabel="Notifications">
+          {Bell ? <Bell size={16} color={Colors.text2} /> : <Text style={{ fontSize: 14 }}>🔔</Text>}
+          {unreadCount > 0 && (
+            <View style={mh.badge}>
+              <Text style={mh.badgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -244,17 +278,21 @@ function DesktopTopHeader({
 const dh = StyleSheet.create({
   root: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: 32, paddingVertical: 18,
+    paddingHorizontal: 32, paddingVertical: 14,
     backgroundColor: Colors.surface,
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
-  title: { fontSize: 22, fontWeight: "800", color: Colors.text },
-  date: { fontSize: 13, color: Colors.text3, marginTop: 2 },
-  right: { flexDirection: "row", alignItems: "center", gap: 18 },
+  left: { flexDirection: "column", gap: 2 },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  title: { fontSize: 20, fontWeight: "800", color: Colors.text },
+  groupTag: { fontSize: 13, fontWeight: "600", color: Colors.primary },
+  date: { fontSize: 12, color: Colors.text3 },
+  right: { flexDirection: "row", alignItems: "center", gap: 14 },
   bellBtn: {
     width: 36, height: 36, borderRadius: 10,
     alignItems: "center", justifyContent: "center",
     backgroundColor: Colors.elevated,
+    borderWidth: 1, borderColor: Colors.border,
   },
   badge: {
     position: "absolute", top: -4, right: -4,
@@ -270,6 +308,37 @@ const dh = StyleSheet.create({
   avatarText: { fontSize: 13, fontWeight: "800", color: "#fff" },
   userName: { fontSize: 13, fontWeight: "700", color: Colors.text },
   userRole: { fontSize: 11, color: Colors.text3, textTransform: "capitalize", marginTop: 1 },
+});
+
+const mh = StyleSheet.create({
+  root: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 14, paddingVertical: 10,
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
+  },
+  left: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0, marginRight: 8 },
+  brandMark: {
+    width: 28, height: 28, borderRadius: 7,
+    backgroundColor: Colors.primary,
+    alignItems: "center", justifyContent: "center",
+  },
+  brandLetter: { fontSize: 13, fontWeight: "800", color: "#fff" },
+  title: { fontSize: 16, fontWeight: "800", color: Colors.text },
+  groupSub: { fontSize: 9, color: Colors.text3, fontWeight: "600" },
+  right: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 },
+  bellBtn: {
+    width: 32, height: 32, borderRadius: 8,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: Colors.elevated,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  badge: {
+    position: "absolute", top: -3, right: -3,
+    minWidth: 14, height: 14, borderRadius: 7, paddingHorizontal: 2,
+    backgroundColor: Colors.error, alignItems: "center", justifyContent: "center",
+  },
+  badgeText: { fontSize: 8, fontWeight: "800", color: "#fff" },
 });
 
 // ─────────────────────────────────────────────
@@ -327,6 +396,9 @@ export default function TabsLayout() {
     });
   };
 
+  const group = useActiveGroup();
+  const currentTitle = PAGE_TITLES[pathname?.split("/").filter(Boolean).pop() ?? ""] ?? "Dashboard";
+
   // ── Auth guard — redirect to login if no session ──────────────────────────
   const router = useRouter();
   useEffect(() => {
@@ -349,20 +421,6 @@ export default function TabsLayout() {
     }, undefined, true);
   };
 
-  // Admin gets the full "Admin view" toggle (My View <-> Admin View)
-  // Other roles do not get this toggle
-  const viewModeSwitch = hasViewToggle ? (
-    <TouchableOpacity
-      style={[shared.viewModeSwitch, dataViewMode === "admin" && shared.viewModeSwitchActive]}
-      onPress={() => setDataViewMode(dataViewMode === "admin" ? "mine" : "admin")}
-      activeOpacity={0.8}
-    >
-      <Text style={[shared.viewModeText, dataViewMode === "admin" && shared.viewModeTextActive]}>
-        {dataViewMode === "admin" ? "Admin View" : "My View"}
-      </Text>
-    </TouchableOpacity>
-  ) : null;
-
   // ── Pending-approval gate ───────────────────────────────────────────────
   // A member record with status "pending" means an admin hasn't approved
   // this person yet. They must not see ANY app content — not the dashboard,
@@ -384,8 +442,6 @@ export default function TabsLayout() {
 
   // ── Web / Desktop layout ──────────────────
   if (isWide) {
-    const initials = (authName ?? "U").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
-
     return (
       <View style={shared.desktopRoot}>
         {/* Sidebar */}
@@ -432,7 +488,6 @@ export default function TabsLayout() {
 
           {/* Footer */}
           <View style={sb.footer}>
-            {!sidebarCollapsed && viewModeSwitch}
             <TouchableOpacity style={sb.signOutBtn} onPress={handleSignOut} activeOpacity={0.7}>
               <LogOut size={13} color={Colors.error} />
               {!sidebarCollapsed && <Text style={sb.signOutText}>Sign out</Text>}
@@ -443,11 +498,12 @@ export default function TabsLayout() {
         {/* Main content */}
         <View style={shared.desktopContent}>
           <DesktopTopHeader
-            title={PAGE_TITLES[pathname?.split("/").filter(Boolean).pop() ?? ""] ?? "Dashboard"}
+            title={currentTitle}
             authName={authName ?? "User"}
             role={currentUserRole}
             unreadCount={unreadCount}
             onBellPress={() => router.push("/notifications")}
+            groupName={group?.name}
           />
           {offlineBanner}
           <Tabs screenOptions={{ headerShown: false, tabBarStyle: { display: "none" } }}>
@@ -465,16 +521,16 @@ export default function TabsLayout() {
   }
 
   // ── Mobile layout ─────────────────────────
-  // Only the offlineBanner/viewModeSwitch strip gets the safe-area inset
-  // here — each screen underneath (dashboard.tsx, loans.tsx, etc.)
-  // already has its own hardcoded top padding for the status bar/notch.
-  // Adding insets.top to this whole wrapper would stack on top of that
-  // per-screen padding and push every screen down twice.
   return (
     <View style={{ flex: 1, backgroundColor: Colors.bg }}>
-      <View style={{ paddingTop: insets.top, backgroundColor: Colors.bg }}>
+      <View style={{ paddingTop: insets.top, backgroundColor: Colors.surface }}>
         {offlineBanner}
-        {viewModeSwitch}
+        <MobileTopHeader
+          title={currentTitle}
+          unreadCount={unreadCount}
+          onBellPress={() => router.push("/notifications")}
+          groupName={group?.name}
+        />
       </View>
       <Tabs
         screenOptions={{
@@ -521,14 +577,6 @@ export default function TabsLayout() {
 // Shared styles
 // ─────────────────────────────────────────────
 const shared = StyleSheet.create({
-  viewModeSwitch: {
-    marginHorizontal: 14, marginVertical: 8, paddingVertical: 9,
-    borderRadius: 9, borderWidth: 1, borderColor: Colors.border,
-    backgroundColor: Colors.elevated, alignItems: "center",
-  },
-  viewModeSwitchActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  viewModeText: { fontSize: 12, fontWeight: "700", color: Colors.text2 },
-  viewModeTextActive: { color: "#fff" },
   offlineBanner: {
     backgroundColor: Colors.error,
     paddingVertical: 6,

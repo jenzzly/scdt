@@ -14,13 +14,14 @@
 import React, { useState, useMemo } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, useWindowDimensions } from "react-native";
 import { useRouter } from "expo-router";
-import { useStore, useCurrentUserRole, useCurrentMember, useIsAdminView } from "../../stores/useStore";
+import { useStore, useCurrentUserRole, useCurrentMember, useIsGroupView } from "../../stores/useStore";
 import { useGroupInvestments, useCurrentMemberPermissions } from "../../stores/selectors";
 import {
   TabRow, SearchBar, Card, Empty, useToast, Button, BottomModal, Input,
 } from "../../components/ui";
 import { S, R, Colors, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
 import type { Investment } from "../../types";
+import { KpiCard } from "../../components/ui/KpiCard";
 
 const Chip = ({ label, bg, color }: { label: string; bg: string; color: string }) => (
   <View style={{ backgroundColor: bg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
@@ -69,7 +70,7 @@ export default function InvestmentsScreen() {
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
   const permissions = useCurrentMemberPermissions();
-  const isAdminView = useIsAdminView();
+  const isGroupView = useIsGroupView();
   const isAdmin = role === "admin";
   const { show, Toast } = useToast();
 
@@ -91,9 +92,9 @@ export default function InvestmentsScreen() {
   } | null>(null);
 
   const visible = useMemo(() => {
-    if (isAdminView) return investments;
+    if (isGroupView) return investments;
     return investments.filter((i: Investment) => i.createdBy === currentMember?.id);
-  }, [investments, isAdminView, currentMember]);
+  }, [investments, isGroupView, currentMember]);
 
   const byTab = useMemo(() => {
     if (tab === "Active")  return visible.filter((i: Investment) => i.status === "open");
@@ -148,31 +149,29 @@ export default function InvestmentsScreen() {
         pendingAction.approve
           ? pendingAction.step === "committee" ? "Forwarded to accountant" : "Investment approved & activated"
           : "Investment rejected",
-        pendingAction.approve ? "success" : "error",
+        pendingAction.approve ? "success" : "info"
       );
+      setShowApprovalModal(false);
+      setPendingAction(null);
+      setApprovalComment("");
       setShowDetail(false);
     } catch (e: any) {
-      show(e.message || "Action failed", "error");
-    } finally {
-      setShowApprovalModal(false);
-      setApprovalComment("");
-      setPendingAction(null);
+      show(e.message || "Approval failed", "error");
     }
   };
 
-  const handleDelete = (investment: Investment) => {
+  const handleDelete = (inv: Investment) => {
     showConfirm(
       "Delete Investment",
-      `Are you sure you want to delete "${investment.investmentName}"?\n\nInvestment Amount: ${fmtCurrency(investment.investmentAmount)}\nStatus: ${INVESTMENT_STATUS_LABEL[investment.status] || investment.status}\n\n⚠️ This action cannot be undone!`,
+      `Are you sure you want to delete "${inv.investmentName}"? This cannot be undone.`,
       async () => {
         try {
-          await deleteInvestment(investment.id, "Deleted by admin");
-          show("Investment deleted successfully ✅", "success");
+          await deleteInvestment(inv.id, "Deleted by user");
+          show("Investment deleted");
           setShowDetail(false);
-          setShowCloseModal(false);
           setSelected(null);
-        } catch (error: any) {
-          show(error.message || "Failed to delete investment", "error");
+        } catch (e: any) {
+          show(e.message || "Failed to delete", "error");
         }
       },
       undefined,
@@ -210,36 +209,56 @@ export default function InvestmentsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      {/* Header */}
-      <View style={[ivt.header, isWide && ivt.headerWide]}>
+      {/* Top action bar */}
+      <View style={[ivt.topBar, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
         <View>
-          <Text style={ivt.headerSub}>{isAdminView ? "Group" : "My"}</Text>
-          <Text style={ivt.title}>Investments</Text>
+          <Text style={ivt.pageSummaryLabel}>{isGroupView ? "Group Portfolio" : "Personal Portfolio"}</Text>
+          <Text style={ivt.pageSummaryTitle}>{isGroupView ? " " : " "}</Text>
         </View>
         {permissions.addInvestment && (
           <TouchableOpacity style={ivt.primaryBtn} onPress={() => router.push("/modals/add-investment")} activeOpacity={0.8}>
-            <Text style={ivt.primaryBtnText}>+ Investment</Text>
+            <Text style={ivt.primaryBtnText}>+ New Investment</Text>
           </TouchableOpacity>
         )}
       </View>
 
       <ScrollView contentContainerStyle={[{ paddingBottom: 100 }, isWide && { paddingHorizontal: 24 }]} showsVerticalScrollIndicator={false}>
 
-        {/* ── Summary card — same visual language as Wallet's balance card ── */}
-        <View style={[ivt.summaryCard, isWide && { marginHorizontal: 0, maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
-          <View style={ivt.cardAccentDot} />
-          <Text style={ivt.summaryLabel}>{isAdminView ? "TOTAL INVESTED" : "MY TOTAL INVESTED"}</Text>
-          <Text style={ivt.summaryAmount}>{fmtCurrency(totalInvested)}</Text>
-          <View style={ivt.summaryPills}>
-            <View style={ivt.summaryPill}>
-              <Text style={ivt.summaryPillLabel}>RETURNS SO FAR</Text>
-              <Text style={[ivt.summaryPillValue, { color: "#34D399" }]}>{fmtCurrency(totalReturns)}</Text>
-            </View>
-            <View style={ivt.summaryPillDivider} />
-            <View style={ivt.summaryPill}>
-              <Text style={ivt.summaryPillLabel}>COUNT</Text>
-              <Text style={[ivt.summaryPillValue, { color: "#fff" }]}>{filtered.length}</Text>
-            </View>
+        {/* ── Summary card ── */}
+        <View style={[ivt.block, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+          <View style={ivt.kpiGrid}>
+            <KpiCard
+              label="Total Invested"
+              value={fmtCurrency(totalInvested)}
+              icon="📊"
+              subtext={`${visible.length} investments`}
+              accentColor={C.primary}
+              onPress={() => {}} 
+            />
+            <KpiCard
+              label="Returns"
+              value={fmtCurrency(totalReturns)}
+              icon="📈"
+              subtext="Total returns so far"
+              accentColor={C.success}
+              onPress={() => {}} 
+            />
+            <KpiCard
+              label="Active"
+              value={String(visible.filter(i => i.status === "open").length)}
+              icon="🟢"
+              subtext="Active investments"
+              accentColor={C.success}
+              onPress={() => { setTab("Active"); setPage(1); }}
+            />
+            <KpiCard
+              label="Pending"
+              value={String(visible.filter(i => i.status === "pending" || i.status === "pending_committee").length)}
+              icon="⏳"
+              subtext="Awaiting approval"
+              accentColor={C.gold}
+              onPress={() => { setTab("Pending"); setPage(1); }}
+            />
           </View>
         </View>
 
@@ -580,18 +599,21 @@ function InvestmentRow({ investment, onPress }: { investment: Investment; onPres
 }
 
 const ivt = StyleSheet.create({
-  header: {
+  topBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: 20, paddingTop: Platform.OS === "ios" ? 56 : 36,
-    paddingBottom: 14, backgroundColor: C.surface,
-    borderBottomWidth: 1, borderBottomColor: C.border,
+    paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6,
   },
-  headerWide: { paddingHorizontal: 32 },
-  headerSub: { fontSize: 11, fontWeight: "700", color: C.text3, textTransform: "uppercase", letterSpacing: 0.5 },
-  title: { fontSize: 22, fontWeight: "800", color: C.text, letterSpacing: -0.3 },
-  primaryBtn: { backgroundColor: C.primary, borderRadius: 10, paddingVertical: 9, paddingHorizontal: 14 },
-  primaryBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
-
+  pageSummaryLabel: { fontSize: 10, fontWeight: "700", color: C.primary, textTransform: "uppercase", letterSpacing: 0.6 },
+  pageSummaryTitle: { fontSize: 15, fontWeight: "800", color: C.text, letterSpacing: -0.2, marginTop: 1 },
+  primaryBtn: { backgroundColor: C.primary, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 14 },
+  primaryBtnText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  //kpi card 
+  block: { marginHorizontal: 16, marginBottom: 14 },
+  kpiGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
   summaryCard: {
     margin: 16, padding: 20, borderRadius: 18, backgroundColor: "#0B1C3D", overflow: "hidden",
   },

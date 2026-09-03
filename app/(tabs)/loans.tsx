@@ -5,7 +5,7 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, StatusB
 import { useRouter } from "expo-router";
 import {
   useStore, useGroupLoans, useGroupMembers,
-  useCurrentUserRole, useCurrentMember, useIsAdminView,
+  useCurrentUserRole, useCurrentMember, useIsGroupView,
 } from "../../stores/useStore";
 import { useGroupWallet, useCurrentMemberPermissions } from "../../stores/selectors";
 import {
@@ -15,6 +15,7 @@ import {
 import { S, R, Colors, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
 import { exportPdf, generatePaymentScheduleHtml } from "../../utils/export";
 import type { Loan, WalletTransaction, Member } from "../../types";
+import { KpiCard } from "../../components/ui/KpiCard";
 
 // ─── Tiny components ──────────────────────────────────────────────
 const Divider = () => (
@@ -487,21 +488,24 @@ export default function LoansScreen() {
   const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [showLoanDetail, setShowLoanDetail] = useState(false);
+    // ADD THIS - declare pendingAction state
   const [pendingAction, setPendingAction] = useState<{
-    loanId: string; step: string; approve: boolean;
+    loanId: string;
+    step: string;
+    approve: boolean;
   } | null>(null);
-
-  const isAdminView = useIsAdminView();
+  
+  const isGroupView = useIsGroupView();
   const isAdmin = role === "admin";
 
   const getMember = (id: string) => groupMembers.find((m: Member) => m.id === id);
 
   const visibleLoans = useMemo(() => {
-    if (isAdminView) return allLoans;
+    if (isGroupView) return allLoans;
     return allLoans.filter((l: Loan) => l.memberId === currentMember?.id);
-  }, [allLoans, isAdminView, currentMember]);
+  }, [allLoans, isGroupView, currentMember]);
 
-  const LOAN_TABS = isAdminView ? ["All", "Pending", "Active", "Repaid", "Rejected"] : ["All", "Active", "Repaid"];
+  const LOAN_TABS = isGroupView ? ["All", "Pending", "Active", "Repaid", "Rejected"] : ["All", "Pending", "Active", "Repaid"];
   const SORT_OPTIONS = [
     { value: "date_desc", label: "Newest" },
     { value: "date_asc", label: "Oldest" },
@@ -614,15 +618,15 @@ export default function LoansScreen() {
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
 
-      {/* Header */}
-      <View style={[styles.header, isWide && { paddingHorizontal: 32 }]}>
+      {/* Top action bar */}
+      <View style={[styles.topBar, isWide && { maxWidth: 960, alignSelf: "center" as any, width: "100%" as any }]}>
         <View>
-          <Text style={styles.headerSub}>{isAdminView ? "Group" : "My"}</Text>
-          <Text style={styles.headerTitle}>Loans</Text>
+          <Text style={styles.pageSummaryLabel}>{isGroupView ? "Group Portfolio" : "Personal Loans"}</Text>
+          <Text style={styles.pageSummaryTitle}>{isGroupView ? " " : " "}</Text>
         </View>
         {permissions.addLoan && (
           <TouchableOpacity style={styles.addInlineBtn} onPress={() => router.push("/modals/add-loan")} activeOpacity={0.8}>
-            <Text style={styles.addInlineBtnText}>+ Loan</Text>
+            <Text style={styles.addInlineBtnText}>+ New Loan</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -634,45 +638,47 @@ export default function LoansScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Summary card — dark navy, matching wallet */}
-        <View style={styles.balanceCard}>
-          <View style={styles.cardAccentDot} />
-          <Text style={styles.balanceLabel}>{isAdminView ? "PORTFOLIO OVERVIEW" : "MY PORTFOLIO"}</Text>
-          <Text style={styles.balanceAmount}>
-            <Text style={styles.balanceCurrency}>RWF </Text>
-            {fmtCurrency(totalDisbursed).replace("RWF ", "")}
-          </Text>
-          <Text style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{isAdminView ? "total loans disbursed" : "my loans disbursed"}</Text>
-
-          <View style={styles.balancePills}>
-            <View style={styles.balancePill}>
-              <Text style={styles.balancePillLabel}>OUTSTANDING</Text>
-              <Text style={[styles.balancePillValue, { color: "#F87171" }]}>{fmtCurrency(outstanding)}</Text>
-            </View>
-            <View style={styles.balancePillDivider} />
-            <View style={styles.balancePill}>
-              <Text style={styles.balancePillLabel}>REPAID</Text>
-              <Text style={[styles.balancePillValue, { color: "#34D399" }]}>{fmtCurrency(totalRepaid)}</Text>
-            </View>
-            <View style={styles.balancePillDivider} />
-            <View style={styles.balancePill}>
-              <Text style={styles.balancePillLabel}>COUNT</Text>
-              <Text style={[styles.balancePillValue, { color: "#fff" }]}>{filteredLoans.length}</Text>
-            </View>
+        {/* ── KPI Cards ── */}
+        <View style={[styles.block, isWide && { maxWidth: 960, alignSelf: "center" as any, width: "100%" as any }]}>
+          <View style={styles.kpiGrid}>
+            <KpiCard
+              label="Total Disbursed"
+              value={fmtCurrency(totalDisbursed)}
+              icon="💰"
+              subtext={`${visibleLoans.filter(l => ["disbursed", "repaid"].includes(l.status)).length} loans`}
+              accentColor={C.primary}
+              onPress={() => router.push("/(tabs)/loans")}
+            />
+            <KpiCard
+              label="Outstanding"
+              value={fmtCurrency(outstanding)}
+              icon="💳"
+              subtext={`${visibleLoans.filter(l => l.status === "disbursed").length} active loans`}
+              accentColor={C.error}
+              onPress={() => { setTab("Active"); setPage(1); }}
+            />
+            <KpiCard
+              label="Repaid"
+              value={fmtCurrency(totalRepaid)}
+              icon="✅"
+              subtext={`${visibleLoans.filter(l => l.status === "repaid").length} completed`}
+              accentColor={C.success}
+              onPress={() => { setTab("Repaid"); setPage(1); }}
+            />
+            <KpiCard
+              label="Pending"
+              value={String(pendingCount)}
+              icon="⏳"
+              subtext="Awaiting approval"
+              accentColor={C.gold}
+              onPress={() => { setTab("Pending"); setPage(1); }}
+            />
           </View>
-
-          {(pendingCount > 0) && (
-            <View style={styles.pendingBadgeRow}>
-              <View style={styles.pendingBadge}>
-                <Text style={styles.pendingBadgeText}>⏳ {pendingCount} pending approval{pendingCount > 1 ? "s" : ""}</Text>
-              </View>
-            </View>
-          )}
         </View>
 
         {/* ── Controls: search + tabs + sort — matches Wallet's pattern
-             exactly, per an explicit request to make these consistent
-             across the app. ── */}
+        exactly, per an explicit request to make these consistent
+        across the app. ── */}
         <View style={styles.controlsBlock}>
           <View style={styles.controlsTop}>
             <View style={{ flex: 1 }}>
@@ -1036,27 +1042,26 @@ function LoanRow({ loan, member, onPress }: { loan: Loan; member: any; onPress: 
 }
 
 const styles = StyleSheet.create({
-  header: {
+  topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === "ios" ? 56 : 36,
-    paddingBottom: 14,
-    backgroundColor: C.bg,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 6,
   },
-  headerSub: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: C.text3,
-    letterSpacing: 0.5,
+  pageSummaryLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: C.primary,
+    letterSpacing: 0.6,
     textTransform: "uppercase",
   },
-  headerTitle: {
-    fontSize: 22,
+  pageSummaryTitle: {
+    fontSize: 15,
     fontWeight: "800",
     color: C.text,
-    letterSpacing: -0.5,
+    letterSpacing: -0.2,
     marginTop: 1,
   },
   addBtn: {
@@ -1070,7 +1075,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
-
+  // kpi card 
+  block: { marginHorizontal: 16, marginBottom: 14 },
+  kpiGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
   // ── Dark wallet-style summary card ──────────────────────────────
   balanceCard: {
     margin: 16, borderRadius: 20, backgroundColor: C.card,

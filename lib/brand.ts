@@ -17,6 +17,9 @@ import Constants from "expo-constants";
 
 export interface BrandColors {
   primary: string;
+  secondary?: string;
+  accent?: string;
+  highlight?: string;
   navy: string;
   splashBackground: string;
   surface: string;
@@ -56,6 +59,9 @@ const FALLBACK_BRAND: BrandConfig = {
   defaultCurrency: "RWF",
   colors: {
     primary: "#10B981",
+    secondary: "#0F766E",
+    accent: "#3B82F6",
+    highlight: "#EAB308",
     navy: "#0B1C3D",
     splashBackground: "#0A0F1E",
     surface: "#FFFFFF",

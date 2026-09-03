@@ -202,6 +202,11 @@ export function canResetPasswords(role: UserRole, permissions?: MemberPermission
   return permissions?.editMembers === true;
 }
 
+export function hasViewToggle(role: UserRole): boolean {
+  return role === "admin" || role === "accountant" || role === "loan_officer" || role === "committee";
+}
+
+/** @deprecated alias for hasViewToggle */
 export function hasAdminViewToggle(role: UserRole): boolean {
-  return role === "admin";
+  return hasViewToggle(role);
 }

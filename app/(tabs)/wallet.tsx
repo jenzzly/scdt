@@ -8,13 +8,14 @@ import { useRouter } from "expo-router";
 import {
   useActiveGroup, useGroupWallet, useGroupMembers,
   useCurrentUserRole, useCurrentMember,
-  useIsAdminView, useIsApproverView,
+  useIsGroupView,
 } from "../../stores/useStore";
 import { TabRow, SearchBar, useToast } from "../../components/ui";
 import { Colors, S, R, C, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
 import type { WalletTransaction } from "../../types";
 import { useStore } from "../../stores/useStore";
 import { useCurrentMemberPermissions } from "../../stores/selectors";
+import { KpiCard } from "../../components/ui/KpiCard";
 
 const PAGE_SIZE = 20;
 
@@ -69,21 +70,8 @@ export default function WalletScreen() {
   const { show, Toast } = useToast();
 
   const isAdmin   = role === "admin";
-  // Wallet is the group's full financial ledger — anyone toggled to
-  // "admin"/"review" view (admin, or an approver role reviewing group
-  // work) sees every transaction, not just their own. Previously this
-  // only checked admin-view, so e.g. an accountant — whose whole job is
-  // the group's money — only ever saw their own personal transactions
-  // here, never the group ledger they're meant to oversee.
-  //
-  // Both hooks must be called unconditionally, every render, on their
-  // own lines — combining them as `useIsAdminView() || useIsApproverView()`
-  // is a conditional hook call: `||` short-circuits, so the second hook
-  // only runs on some renders, which corrupts React's hooks queue
-  // ("should have a queue" / invalid hook call).
-  const isAdminView = useIsAdminView();
-  const isApproverViewMode = useIsApproverView();
-  const canSeeAll = isAdminView || isApproverViewMode;
+  const isGroupView = useIsGroupView();
+  const canSeeAll = isGroupView;
 
   const txs = useMemo(() =>
     canSeeAll ? allTxs : allTxs.filter(t => t.memberId === currentMember?.id),
@@ -214,11 +202,11 @@ export default function WalletScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      {/* Header */}
-      <View style={[wt.header, isWide && wt.headerWide]}>
+      {/* Top action bar */}
+      <View style={[wt.topBar, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
         <View>
-          <Text style={wt.headerSub}>{canSeeAll ? "Group" : "My"}</Text>
-          <Text style={wt.title}>Wallet</Text>
+          <Text style={wt.pageSummaryLabel}>{canSeeAll ? "Group Vault & Ledger" : "Personal Transactions"}</Text>
+          <Text style={wt.pageSummaryTitle}>{canSeeAll ? " " : " "}</Text>
         </View>
         <View style={{ flexDirection: "row", gap: 8 }}>
           {permissions.addContribution && (
@@ -238,28 +226,41 @@ export default function WalletScreen() {
         showsVerticalScrollIndicator={false}>
 
         {/* ── Balance card ── */}
-        <View style={[wt.balanceCard, isWide && { marginHorizontal: 0, maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
-          <View style={wt.cardAccentDot} />
-          <Text style={wt.balanceLabel}>{canSeeAll ? "AVAILABLE BALANCE" : "MY SAVINGS"}</Text>
-          <Text style={wt.balanceAmount}>
-            <Text style={wt.balanceCurrency}>{group?.currency ?? "RWF"} </Text>
-            {fmtCurrency(displayBalance, group?.currency ?? "RWF").replace(`${group?.currency ?? "RWF"} `, "")}
-          </Text>
-          <View style={wt.balancePills}>
-            <View style={wt.balancePill}>
-              <Text style={wt.balancePillLabel}>TOTAL IN</Text>
-              <Text style={[wt.balancePillValue, { color: "#34D399" }]}>+{fmtCurrency(totalIn)}</Text>
-            </View>
-            <View style={wt.balancePillDivider} />
-            <View style={wt.balancePill}>
-              <Text style={wt.balancePillLabel}>TOTAL OUT</Text>
-              <Text style={[wt.balancePillValue, { color: "#F87171" }]}>−{fmtCurrency(totalOut)}</Text>
-            </View>
-            <View style={wt.balancePillDivider} />
-            <View style={wt.balancePill}>
-              <Text style={wt.balancePillLabel}>TRANSACTIONS</Text>
-              <Text style={[wt.balancePillValue, { color: "#fff" }]}>{filtered.length}</Text>
-            </View>
+        {/* ── KPI Cards ── */}
+        <View style={[wt.block, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+          <View style={wt.kpiGrid}>
+            <KpiCard
+              label="Balance"
+              value={fmtCurrency(displayBalance)}
+              icon="💰"
+              subtext={canSeeAll ? "Group vault balance" : "My savings"}
+              accentColor={C.primary}
+              onPress={() => {}}
+            />
+            <KpiCard
+              label="Total In"
+              value={fmtCurrency(totalIn)}
+              icon="📈"
+              subtext="All credits"
+              accentColor={C.success}
+              onPress={() => { setTab("Income"); setPage(1); }}
+            />
+            <KpiCard
+              label="Total Out"
+              value={fmtCurrency(totalOut)}
+              icon="📉"
+              subtext="All debits"
+              accentColor={C.error}
+              onPress={() => { setTab("Expenses"); setPage(1); }}
+            />
+            <KpiCard
+              label="Transactions"
+              value={String(filtered.length)}
+              icon="📊"
+              subtext="Total records"
+              accentColor={C.accent}
+              onPress={() => {}}
+            />
           </View>
         </View>
 
@@ -368,18 +369,21 @@ function TxRow({ tx, memberName, isAdmin, onDelete }: {
 }
 
 const wt = StyleSheet.create({
-  header: {
+  topBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: 20, paddingTop: Platform.OS === "ios" ? 56 : 36,
-    paddingBottom: 14, backgroundColor: C.surface,
-    borderBottomWidth: 1, borderBottomColor: C.border,
+    paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6,
   },
-  headerWide: { paddingHorizontal: 32 },
-  headerSub: { fontSize: 11, fontWeight: "600", color: C.text3, letterSpacing: 0.5, textTransform: "uppercase" },
-  title: { fontSize: 22, fontWeight: "800", color: C.text, letterSpacing: -0.5, marginTop: 1 },
-  primaryBtn: { backgroundColor: C.primary, borderRadius: 10, paddingVertical: 9, paddingHorizontal: 14 },
+  pageSummaryLabel: { fontSize: 10, fontWeight: "700", color: C.primary, textTransform: "uppercase", letterSpacing: 0.6 },
+  pageSummaryTitle: { fontSize: 15, fontWeight: "800", color: C.text, letterSpacing: -0.2, marginTop: 1 },
+  primaryBtn: { backgroundColor: C.primary, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 14 },
   primaryBtnText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-
+  block: { marginHorizontal: 16, marginBottom: 14 },
+  // kpi card
+  kpiGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
   // Balance card
   balanceCard: {
     margin: 16, borderRadius: 20, backgroundColor: C.card, padding: 24, overflow: "hidden",

@@ -54,6 +54,21 @@ export async function markNotificationRead(uid: string, nId: string): Promise<vo
   await updateDoc(doc(notifsCol(uid), nId), { read: true });
 }
 
+export async function deleteNotification(uid: string, nId: string): Promise<void> {
+  const { deleteDoc } = await import("firebase/firestore");
+  await deleteDoc(doc(notifsCol(uid), nId));
+}
+
+export async function clearAllUserNotifications(uid: string): Promise<void> {
+  const { writeBatch } = await import("firebase/firestore");
+  const { db } = await import("./core");
+  const snap = await getDocs(notifsCol(uid));
+  if (snap.empty) return;
+  const batch = writeBatch(db);
+  snap.docs.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+}
+
 export function subscribeNotifications(
   uid: string,
   cb: (ns: AppNotification[]) => void,

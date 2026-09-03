@@ -31,18 +31,21 @@ export const Colors = {
   borderLight: "#EEF1F6",
   muted: "#CBD2DC",
 
-  // Brand — sourced from BRAND.colors, not hardcoded
-  primary: BRAND.colors.navy,
-  primaryLight: BRAND.colors.navy,
-  primaryFaint: "#EBF1F8",
-  accent: BRAND.colors.primary,
-  accentLight: BRAND.colors.primary,
+  // Brand — sourced from BRAND.colors
+  primary: BRAND.colors.secondary || "#0F766E",
+  primaryLight: BRAND.colors.secondary || "#0F766E",
+  primaryFaint: "#E6F4F2",
+  accent: BRAND.colors.primary || "#10B981",
+  accentLight: BRAND.colors.primary || "#10B981",
   accentFaint: "#CCFBF1",
+  brandBlue: BRAND.colors.accent || "#3B82F6",
+  brandAmber: BRAND.colors.highlight || "#EAB308",
+  brandNavy: BRAND.colors.navy || "#0B1C3D",
 
-  /** @deprecated kept for screens not yet migrated to `C`; now aliases the brand accent instead of a separately-hardcoded teal. */
-  teal: BRAND.colors.primary,
-  tealLight: BRAND.colors.primary,
-  tealDim: BRAND.colors.navy,
+  /** @deprecated kept for screens not yet migrated to `C` */
+  teal: BRAND.colors.secondary || "#0F766E",
+  tealLight: BRAND.colors.primary || "#10B981",
+  tealDim: BRAND.colors.navy || "#0B1C3D",
   tealFaint: "#CCFBF1",
   gold: "#D97706",
   goldDim: "#B45309",
@@ -52,18 +55,22 @@ export const Colors = {
   text2: "#4A607A",
   text3: "#8FA3BA",
 
-  // Semantic — intentionally NOT brand-driven. Error/warning/success/info
-  // colors are UX conventions (red = danger, green = success, etc); letting
-  // a client's brand palette override these would break comprehension, so
-  // they stay fixed regardless of client.
+  // Semantic — standard accessible UX colors
   success: "#059669",
   warning: "#D97706",
   error: "#DC2626",
-  info: "#2563EB",
+  info: BRAND.colors.accent || "#3B82F6",
 
-  chartColors: ["#0D9488", "#D97706", "#2563EB", "#059669", "#7C3AED", "#EA580C"],
+  chartColors: [
+    BRAND.colors.secondary || "#0F766E",
+    BRAND.colors.primary || "#10B981",
+    BRAND.colors.accent || "#3B82F6",
+    BRAND.colors.highlight || "#EAB308",
+    "#0B1C3D",
+    "#EA580C"
+  ],
 
-  // Semantic bg/text pairs — used by screens still on Colors
+  // Semantic bg/text pairs
   greenBg:  "#ECFDF5",
   greenText:"#065F46",
   redBg:    "#FEF2F2",
@@ -74,8 +81,8 @@ export const Colors = {
   infoText: "#1D4ED8",
   mutedBg:  "#F1F5F9",
 
-  // Card color (dark navy) — used by login.tsx desktop panel
-  card: BRAND.colors.navy,
+  // Card color (dark navy)
+  card: BRAND.colors.navy || "#0B1C3D",
 };
 
 export const Fonts = {
@@ -91,45 +98,41 @@ export const S = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };
 
 // ─── Design tokens (current system) ──────────────────────────────────
 export const C = {
-  bg:         "#F0F3F8",
-  surface:    "#FFFFFF",
-  card:       BRAND.colors.navy,    // dark navy account card
-  cardText:   "#FFFFFF",
-  primary:    "#1A56DB",
-  accent:     BRAND.colors.primary,
-  debit:      "#EF4444",
-  text:       "#0F172A",
-  text2:      "#475569",
-  text3:      "#94A3B8",
-  border:     "#E2E8F0",
-  pill:       "#EFF6FF",
-  pillText:   "#1A56DB",
-  goldBg:     "#FFFBEB",
-  goldText:   "#B45309",
-  greenBg:    "#ECFDF5",
-  greenText:  "#065F46",
-  redBg:      "#FEF2F2",
-  redText:    "#991B1B",
-  // NOTE: `info` is the readable foreground/accent color (used for text,
-  // borders, icons) — it must stay a solid, high-contrast blue. `infoBg`
-  // (below) is the pale wash meant for backgrounds only. These were
-  // previously swapped in effect (info was near-white), which made any
-  // text or KPI value using `color: C.info` nearly invisible on light
-  // card backgrounds throughout Reports and Loans.
-  info:       "#1D4ED8",
-  infoText:   "#1D4ED8",
-  infoBg:     "#DBEAFE",
-  mutedBg:    "#F1F5F9",
-  success:    BRAND.colors.primary,
-  warning:    "#F59E0B",
-  error:      "#EF4444",
-  gold:       "#D97706",
-  elevated:   "#F0F2F5",
+  bg:          "#F0F3F8",
+  surface:     "#FFFFFF",
+  card:        BRAND.colors.navy || "#0B1C3D",    // dark navy account card
+  cardText:    "#FFFFFF",
+  primary:     BRAND.colors.secondary || "#0F766E", // SCDT Brand deep teal
+  accent:      BRAND.colors.primary || "#10B981",   // Emerald green
+  brandBlue:   BRAND.colors.accent || "#3B82F6",    // Logo blue
+  brandAmber:  BRAND.colors.highlight || "#EAB308", // Logo amber
+  debit:       "#EF4444",
+  text:        "#0F172A",
+  text2:       "#475569",
+  text3:       "#94A3B8",
+  border:      "#E2E8F0",
+  pill:        "#EFF6FF",
+  pillText:    BRAND.colors.secondary || "#0F766E",
+  goldBg:      "#FFFBEB",
+  goldText:    "#B45309",
+  greenBg:     "#ECFDF5",
+  greenText:   "#065F46",
+  redBg:       "#FEF2F2",
+  redText:     "#991B1B",
+  info:        "#1D4ED8",
+  infoText:    "#1D4ED8",
+  infoBg:      "#DBEAFE",
+  mutedBg:     "#F1F5F9",
+  success:     "#059669",
+  warning:     "#F59E0B",
+  error:       "#EF4444",
+  gold:        "#D97706",
+  elevated:    "#F0F2F5",
   tealBg:      "#CCFBF1",
-  tealText:    BRAND.colors.primary,
-  tealDim:     BRAND.colors.navy,
+  tealText:    BRAND.colors.secondary || "#0F766E",
+  tealDim:     BRAND.colors.navy || "#0B1C3D",
   borderLight: "#EEF1F6",
-  teal:      BRAND.colors.primary,
+  teal:        BRAND.colors.secondary || "#0F766E",
 };
 
 export const T = StyleSheet.create({

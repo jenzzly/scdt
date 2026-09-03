@@ -7,7 +7,7 @@ import {
 import { useRouter } from "expo-router";
 import {
   useStore, useGroupContributions, useGroupMembers,
-  useCurrentUserRole, useCurrentMember, useCanSeeAllFinancial, useIsAdminView,
+  useCurrentUserRole, useCurrentMember, useCanSeeAllFinancial, useIsAdminView,useIsGroupView,
   useCurrentMemberPermissions, useActiveGroup, useGroupWallet, useDataViewMode,
 } from "../../stores/useStore";
 import { SearchBar, Card, Badge, Empty, BottomModal, useToast, Select, DatePicker, TabRow } from "../../components/ui";
@@ -16,6 +16,7 @@ import { exportCsv, exportPdf } from "../../utils/export";
 import { findOverdueContributions } from "../../utils/lateFees";
 import { getCurrentGoalPeriod } from "../../lib/firestore/contributionGoals";
 import type { Contribution, ContributionGoalPeriod } from "../../types";
+import { KpiCard } from "../../components/ui/KpiCard";
 
 const STATUS_COLOR: Record<string, "teal" | "gold" | "green" | "red" | "muted"> = {
   approved: "green",
@@ -66,7 +67,7 @@ export default function ContributionsScreen() {
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
   const canSeeAll = useCanSeeAllFinancial();
-  const isAdminView = useIsAdminView();
+  const isGroupView = useIsGroupView();
   const dataViewMode = useDataViewMode();
   const permissions = useCurrentMemberPermissions();
   const { show, Toast } = useToast();
@@ -78,8 +79,8 @@ export default function ContributionsScreen() {
   const canExport = permissions.downloadReports || isAdmin;
   const canManageFees = ["admin", "accountant", "loan_officer"].includes(role);
 
-  // Scope: use toggle for admins, members always see only their own
-  const contributions = isAdminView
+  // Scope: group view shows all, personal view shows only their own
+  const contributions = isGroupView
     ? allContributions
     : allContributions.filter(c => c.memberId === currentMember?.id);
 
@@ -94,11 +95,33 @@ export default function ContributionsScreen() {
   const [applyingFeeId, setApplyingFeeId] = useState<string | null>(null);
   const [goalPeriod, setGoalPeriod] = useState<ContributionGoalPeriod | null>(null);
 
-  // Late fee calculation
+  // Late fees
   const overdueContributions = useMemo(() => {
     if (!group) return [];
     return findOverdueContributions(group, allMembers, allContributions, allWallet);
-  }, [canManageFees, group, allMembers, allContributions, allWallet]);
+  }, [group, allMembers, allContributions]);
+
+  const visibleLateFees = useMemo(() => {
+    if (!allWallet || !allContributions) return [];
+
+    const paidByTx = new Set<string>();
+    for (const tx of allWallet) {
+      if (tx.type === "late_fee" && tx.sourceId && tx.feePaid) {
+        paidByTx.add(tx.sourceId);
+      }
+    }
+    const fees = overdueContributions.map((item) => {
+      const isPaid = paidByTx.has(item.feeTxId);
+      const applied = allContributions.some((c) =>
+        c.contributionType === "late_fee" &&
+        c.memberId === item.memberId &&
+        c.status === "approved"
+      );
+      return { ...item, isPaid, applied };
+    }).filter((item) => !item.isPaid);
+
+    return isGroupView ? fees : fees.filter(item => item.memberId === currentMember?.id);
+  }, [overdueContributions, allWallet, allMembers, isGroupView, currentMember, allContributions]);
 
   // Load current goal period
   React.useEffect(() => {
@@ -113,26 +136,26 @@ export default function ContributionsScreen() {
     })();
   }, [activeGroupId]);
 
-  const visibleLateFees = useMemo(
-    () => {
-      const calculated = overdueContributions.map(item => ({ ...item, applied: false }));
-      const unpaidApplied = allWallet
-        .filter(tx => tx.type === "late_fee" && !tx.loanId && !tx.feePaid && tx.description?.startsWith("Late contribution fee"))
-        .map(tx => ({
-          memberId: tx.memberId ?? "",
-          memberName: allMembers.find(member => member.id === tx.memberId)?.fullName ?? "Unknown",
-          periodLabel: tx.description?.replace("Late contribution fee — ", "").replace(/ \(.*\)$/, "") ?? "Late contribution",
-          amountDue: 0,
-          daysLate: 0,
-          feeAmount: tx.amount,
-          feeTxId: tx.id,
-          applied: true,
-        }));
-      const fees = [...calculated, ...unpaidApplied];
-      return isAdminView ? fees : fees.filter(item => item.memberId === currentMember?.id);
-    },
-    [overdueContributions, allWallet, allMembers, isAdminView, currentMember],
-  );
+  // const visibleLateFees = useMemo(
+  //   () => {
+  //     const calculated = overdueContributions.map(item => ({ ...item, applied: false }));
+  //     const unpaidApplied = allWallet
+  //       .filter(tx => tx.type === "late_fee" && !tx.loanId && !tx.feePaid && tx.description?.startsWith("Late contribution fee"))
+  //       .map(tx => ({
+  //         memberId: tx.memberId ?? "",
+  //         memberName: allMembers.find(member => member.id === tx.memberId)?.fullName ?? "Unknown",
+  //         periodLabel: tx.description?.replace("Late contribution fee — ", "").replace(/ \(.*\)$/, "") ?? "Late contribution",
+  //         amountDue: 0,
+  //         daysLate: 0,
+  //         feeAmount: tx.amount,
+  //         feeTxId: tx.id,
+  //         applied: true,
+  //       }));
+  //     const fees = [...calculated, ...unpaidApplied];
+  //     return isAdminView ? fees : fees.filter(item => item.memberId === currentMember?.id);
+  //   },
+  //   [overdueContributions, allWallet, allMembers, isAdminView, currentMember],
+  // );
 
   // Calculate contribution goal progress
   const goalProgress = useMemo(() => {
@@ -297,27 +320,25 @@ export default function ContributionsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      {/* Header */}
-      <View style={[st.header, isWide && st.headerWide]}>
+      {/* Page action bar */}
+      <View style={[st.topBar, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
         <View>
-          <Text style={st.headerSub}>{isAdminView ? "Admin" : "My"}</Text>
-          <Text style={st.title}>Contributions</Text>
+          <Text style={st.pageSummaryLabel}>
+            {isGroupView ? "Group Overview" : "Personal Overview"}
+          </Text>
+          <Text style={st.pageSummaryTitle}>
+            {statusFilter === "late_fee" ? "Late Fees Record" : isGroupView ? "All Member Contributions" : "My Contribution History"}
+          </Text>
         </View>
         <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-          {isAdmin && (
-            <TouchableOpacity 
-              style={[st.toggleBtn, dataViewMode === "admin" && st.toggleBtnActive]} 
-              onPress={() => setDataViewMode(dataViewMode === "admin" ? "mine" : "admin")}
-              activeOpacity={0.8}
-            >
-              <Text style={[st.toggleBtnText, dataViewMode === "admin" && st.toggleBtnTextActive]}>
-                {dataViewMode === "admin" ? "👥" : "👤"}
-              </Text>
+          {canExport && (
+            <TouchableOpacity style={st.iconBtn} onPress={() => handleExport("csv")} activeOpacity={0.8}>
+              <Text style={st.iconBtnText}>Export</Text>
             </TouchableOpacity>
           )}
           {canAdd && (
             <TouchableOpacity style={st.primaryBtn} onPress={() => router.push("/modals/add-contribution")} activeOpacity={0.8}>
-              <Text style={st.primaryBtnText}>+ Contribution</Text>
+              <Text style={st.primaryBtnText}>+ Add</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -327,28 +348,41 @@ export default function ContributionsScreen() {
         showsVerticalScrollIndicator={false}>
 
         {/* ── Balance card ── */}
-        <View style={[st.balanceCard, isWide && { marginHorizontal: 0, maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
-          <View style={st.cardAccentDot} />
-          <Text style={st.balanceLabel}>{statusFilter === "late_fee" ? "LATE FEES OWED" : isAdminView ? "TOTAL CONTRIBUTIONS" : "MY CONTRIBUTIONS"}</Text>
-          <Text style={st.balanceAmount}>
-            <Text style={st.balanceCurrency}>{group?.currency ?? "RWF"} </Text>
-            {fmtCurrency(totalAmount, group?.currency ?? "RWF").replace(`${group?.currency ?? "RWF"} `, "")}
-          </Text>
-          <View style={st.balancePills}>
-            <View style={st.balancePill}>
-              <Text style={st.balancePillLabel}>APPROVED</Text>
-              <Text style={[st.balancePillValue, { color: "#34D399" }]}>{approvedCount}</Text>
-            </View>
-            <View style={st.balancePillDivider} />
-            <View style={st.balancePill}>
-              <Text style={st.balancePillLabel}>PENDING</Text>
-              <Text style={[st.balancePillValue, { color: "#F87171" }]}>{pendingCount}</Text>
-            </View>
-            <View style={st.balancePillDivider} />
-            <View style={st.balancePill}>
-              <Text style={st.balancePillLabel}>RECORDS</Text>
-              <Text style={[st.balancePillValue, { color: "#fff" }]}>{statusFilter === "late_fee" ? visibleLateFees.length : filtered.length}</Text>
-            </View>
+        {/* ── KPI Cards ── */}
+        <View style={[st.block, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+          <View style={st.kpiGrid}>
+            <KpiCard
+              label="Total Contributions"
+              value={fmtCurrency(totalAmount)}
+              icon="💵"
+              subtext={`${approvedCount} approved · ${pendingCount} pending`}
+              accentColor={C.primary}
+              onPress={() => {}} // Optional: navigate to filtered view
+            />
+            <KpiCard
+              label="Approved"
+              value={String(approvedCount)}
+              icon="✅"
+              subtext="Approved contributions"
+              accentColor={C.success}
+              onPress={() => setStatusFilter("approved")}
+            />
+            <KpiCard
+              label="Pending"
+              value={String(pendingCount)}
+              icon="⏳"
+              subtext="Awaiting approval"
+              accentColor={C.gold}
+              onPress={() => setStatusFilter("pending")}
+            />
+            <KpiCard
+              label="Total Records"
+              value={String(filtered.length)}
+              icon="📊"
+              subtext="All contributions"
+              accentColor={C.accent}
+              onPress={() => {}} 
+            />
           </View>
         </View>
 
@@ -434,9 +468,9 @@ export default function ContributionsScreen() {
                   <React.Fragment key={item.feeTxId}>
                     <View style={st.lateFeeRow}>
                       <View style={{ flex: 1 }}>
-                        <Text style={st.lateFeeMemberName}>{isAdminView ? item.memberName : item.periodLabel}</Text>
+                        <Text style={st.lateFeeMemberName}>{isGroupView ? item.memberName : item.periodLabel}</Text>
                         <Text style={st.lateFeeDetail}>
-                          {item.applied ? "Unpaid late fee" : `${isAdminView ? `${item.periodLabel} · ` : ""}${item.daysLate}d late · due ${fmtCurrency(item.amountDue)}`}
+                          {item.applied ? "Unpaid late fee" : `${isGroupView ? `${item.periodLabel} · ` : ""}${item.daysLate}d late · due ${fmtCurrency(item.amountDue)}`}
                         </Text>
                       </View>
                       <View style={st.lateFeeAmountWrap}>
@@ -473,12 +507,12 @@ export default function ContributionsScreen() {
                 <View style={{ width: 40 }} />
                 <Text style={[st.tableHeadCell, { flex: 2 }]}>DESCRIPTION</Text>
                 <Text style={[st.tableHeadCell, { width: 160 }]}>TYPE</Text>
-                {isAdminView && <Text style={[st.tableHeadCell, { width: 150 }]}>MEMBER</Text>}
+                {isGroupView && <Text style={[st.tableHeadCell, { width: 150 }]}>MEMBER</Text>}
                 <Text style={[st.tableHeadCell, { width: 120 }]}>DATE</Text>
                 <Text style={[st.tableHeadCell, { width: 120, textAlign: "right" }]}>AMOUNT</Text>
                 {canApprove && <View style={{ width: 60 }} />}
               </View>
-              {paginated.map(c => <React.Fragment key={c.id}><TableRow contribution={c} showMember={isAdminView} /></React.Fragment>)}
+              {paginated.map(c => <React.Fragment key={c.id}><TableRow contribution={c} showMember={isGroupView} /></React.Fragment>)}
             </View>
           ) : (
             // Mobile cards
@@ -487,7 +521,7 @@ export default function ContributionsScreen() {
                 <React.Fragment key={c.id}>
                   <ContributionRow
                     contribution={c}
-                    memberName={isAdminView ? getMemberName(c.memberId) : ""}
+                    memberName={isGroupView ? getMemberName(c.memberId) : ""}
                     canApprove={canApprove}
                     onApprove={() => handleApprove(c.id)}
                     onReject={() => handleReject(c.id)}
@@ -609,16 +643,13 @@ const Pagination = ({ page, totalPages, setPage, filtered }: { page: number; tot
 };
 
 const st = StyleSheet.create({
-  header: {
+  topBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: 20, paddingTop: Platform.OS === "ios" ? 56 : 36,
-    paddingBottom: 14, backgroundColor: C.surface,
-    borderBottomWidth: 1, borderBottomColor: C.border,
+    paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6,
   },
-  headerWide: { paddingHorizontal: 32 },
-  headerSub: { fontSize: 11, fontWeight: "600", color: C.text3, letterSpacing: 0.5, textTransform: "uppercase" },
-  title: { fontSize: 22, fontWeight: "800", color: C.text, letterSpacing: -0.5, marginTop: 1 },
-  primaryBtn: { backgroundColor: C.primary, borderRadius: 10, paddingVertical: 9, paddingHorizontal: 14 },
+  pageSummaryLabel: { fontSize: 10, fontWeight: "700", color: C.primary, textTransform: "uppercase", letterSpacing: 0.6 },
+  pageSummaryTitle: { fontSize: 15, fontWeight: "800", color: C.text, marginTop: 1 },
+  primaryBtn: { backgroundColor: C.primary, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 14 },
   primaryBtnText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   iconBtn: {
     paddingHorizontal: 12, paddingVertical: 8,
@@ -634,6 +665,13 @@ const st = StyleSheet.create({
   toggleBtnActive: { backgroundColor: C.primary, borderColor: C.primary },
   toggleBtnText: { fontSize: 12, fontWeight: "700", color: C.text2 },
   toggleBtnTextActive: { color: "#fff" },
+   // kpi card
+  block: { marginHorizontal: 16, marginBottom: 14 },
+  kpiGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
 
   // Balance card
   balanceCard: {
