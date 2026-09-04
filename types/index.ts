@@ -111,72 +111,16 @@ export interface Group {
   contributionFrequency: "monthly" | "weekly" | "biweekly" | "yearly";
   contributionDay: number;
   loanInterestRate: number;
-  /**
-   * How interest is calculated on loans in this group.
-   * - "flat": principal * rate * months, charged up front (simple interest).
-   * - "reducing_balance": interest recalculated each period on the
-   *   outstanding balance (standard amortizing/bank-style loan).
-   * Existing loans keep whichever method was active when they were
-   * submitted (see Loan.interestMethod) — changing this setting only
-   * affects loans submitted afterward.
-   */
   loanInterestMethod: LoanInterestMethod;
   loanInterestRatePeriod: "monthly" | "annual"; // whether rate is per-month or per-year
-
-  /**
-   * Meeting penalties are interest-based: a percentage of the group's
-   * standard contribution amount, not a fixed currency figure. This keeps
-   * penalties proportional as the group's contribution amount changes over
-   * time, instead of needing manual re-entry of fixed amounts.
-   *   penalty = contributionAmount × (ratePct / 100)
-   * Legacy fixed-amount fields are kept (optional) for backward
-   * compatibility with groups that haven't been migrated yet — when both
-   * are present, the percentage fields take priority.
-   */
   latePenaltyRatePct?: number;           // % of contributionAmount, per meeting lateness
   absencePenaltyMemberRatePct?: number;  // % of contributionAmount, member absence
   absencePenaltyOfficerRatePct?: number; // % of contributionAmount, officer absence
-
-  /**
-   * Late-payment fees — separate from meeting-attendance penalties above.
-   * Both are calculated on the AMOUNT DUE (not a flat figure):
-   *   - Contributions: contributionAmount for the missed period
-   *   - Loans: the specific overdue installment's total (schedule[i].total)
-   * A contribution/installment becomes eligible once its due date has
-   * passed and it is still unpaid. Grace-period days delay eligibility.
-   */
   contributionLateFeeRatePct?: number;   // % of the missed contribution amount
   contributionLateFeeGraceDays?: number; // days after due date before a fee applies
-  /**
-   * Contribution late fees are only calculated for missed periods on or
-   * after this date (ISO date string, e.g. "2026-01-01") — NOT retroactively
-   * from a member's dateJoined. Without this, enabling late fees on an
-   * existing group would immediately generate fees for every missed period
-   * across each member's entire history, which is rarely what's wanted.
-   * Leave unset to disable contribution late fees regardless of the rate
-   * above (findOverdueContributions treats a missing start date as "not
-   * configured yet").
-   */
   contributionLateFeeStartDate?: string;
   loanLateFeeRatePct?: number;           // % of the overdue installment amount
   loanLateFeeGraceDays?: number;         // days after due date before a fee applies
-
-  /**
-   * Periodic contribution goal — separate from the regular
-   * contributionAmount/contributionFrequency above (which is the
-   * minimum recurring payment, e.g. 50,000 monthly). This is a
-   * higher-level savings TARGET a member should reach every N months —
-   * e.g. 600,000 every 6 months — independent of how they get there
-   * (could be exactly the monthly minimum × 6, or lump sums, or a mix).
-   * Optional/group-configurable: a group not interested in this stays
-   * unaffected by leaving it unset, per client. periodMonths must be a
-   * whole number >= 1; targetAmount must be > 0. anchorDate is the
-   * period start used to compute which period "now" falls in (e.g. the
-   * group's founding date, or whenever the goal was configured) — every
-   * period is periodMonths long starting from there, tiling forward
-   * indefinitely, so "2 goals completed this year" naturally falls out
-   * of period math rather than needing a stored counter.
-   */
   contributionGoalPeriodMonths?: number;
   contributionGoalTargetAmount?: number;
   contributionGoalAnchorDate?: string;
@@ -193,6 +137,29 @@ export interface Group {
   totalInvestments: number;
   totalInterestEarned: number;
   memberCount: number;
+}
+
+export interface ContributionGoalConfig {
+  periodMonths: number;
+  targetAmount: number;
+  anchorDate: string;
+}
+
+export type ContributionGoalPeriodStatus =
+  | "active"
+  | "completed"
+  | "expired";
+
+export interface ContributionGoalPeriod {
+  id: ID;
+  groupId: ID;
+  periodStart: string;
+  periodEnd: string;
+  targetAmount: number;
+  minimumContribution: number;
+  status: ContributionGoalPeriodStatus;
+  createdAt: string;
+  completedAt?: string;
 }
 
 export interface Member {
@@ -259,25 +226,8 @@ export interface Loan {
   memberId: ID;
   amount: number;
   interestRate: number;
-  /**
-   * Snapshot of the group's loanInterestMethod at the time this loan was
-   * submitted. Stored on the loan (not just read live off the group) so
-   * that changing the group's setting later never retroactively changes
-   * the math on a loan that's already disbursed or part-repaid.
-   * Falls back to "flat" for loans created before this field existed.
-   */
   interestMethod?: LoanInterestMethod;
   interestRatePeriod?: "monthly" | "annual"; // snapshot of Group.loanInterestRatePeriod at submission
-  /**
-   * Snapshot of the group's loanLateFeeRatePct / loanLateFeeGraceDays at
-   * the time this loan was submitted — same reasoning as interestMethod
-   * above. Without this, changing the group's penalty rate later would
-   * retroactively change what an existing, already-disbursed loan owes
-   * in late fees, which isn't fair to a borrower who took the loan under
-   * a different policy. Optional because loans created before this
-   * field existed have neither — findOverdueInstallments falls back to
-   * the group's current rate for those (see utils/lateFees.ts).
-   */
   lateFeeRatePct?: number;
   lateFeeGraceDays?: number;
   repaymentPlan: "monthly" | "weekly" | "lump_sum";
@@ -391,14 +341,6 @@ export interface WalletTransaction {
   deletedBy?: ID;
   deletedAt?: string;
   deletionReason?: string;
-  /**
-   * Only meaningful on type === "late_fee" transactions NOT generated by
-   * meeting attendance (those track "cleared" via the meeting attendee's
-   * own penaltyPaid flag instead — see clearAllMemberPenalties). A
-   * standalone contribution/loan late fee has no such flag to piggyback
-   * on, so it gets its own here. Set by clearStandaloneLateFee(), which is
-   * officer-gated the same way meeting-penalty clearing is.
-   */
   feePaid?: boolean;
 }
 

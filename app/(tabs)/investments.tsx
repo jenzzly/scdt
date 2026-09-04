@@ -1,6 +1,6 @@
 // app/(tabs)/investments.tsx
 import React, { useState, useMemo } from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, useWindowDimensions } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, StatusBar, useWindowDimensions } from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useCurrentUserRole, useCurrentMember, useIsGroupView } from "../../stores/useStore";
 import { useGroupInvestments, useCurrentMemberPermissions } from "../../stores/selectors";
@@ -197,6 +197,21 @@ export default function InvestmentsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
+
+      {/* Top action bar */}
+      <View style={[ivt.topBar, isWide && { maxWidth: 960, alignSelf: "center" as any, width: "100%" as any }]}>
+        <View>
+          <Text style={ivt.pageSummaryLabel}>{isGroupView ? "Group" : "Personal"}</Text>
+          <Text style={ivt.pageSummaryTitle}>{isGroupView ? " " : " "}</Text>
+        </View>
+        {permissions.addLoan && (
+          <TouchableOpacity style={ivt.addInlineBtn} onPress={() => router.push("/modals/add-investment")} activeOpacity={0.8}>
+            <Text style={ivt.addInlineBtnText}>+ New Investment</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
       <ScrollView 
         contentContainerStyle={[
           { paddingBottom: 100, paddingTop: 16 },
@@ -575,6 +590,44 @@ function InvestmentRow({ investment, onPress }: { investment: Investment; onPres
 }
 
 const ivt = StyleSheet.create({
+    topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 6,
+  },
+  pageSummaryLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: C.primary,
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  pageSummaryTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: C.text,
+    letterSpacing: -0.2,
+    marginTop: 1,
+  },
+  addBtn: {
+    backgroundColor: C.primary,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  addBtnText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  addInlineBtn: {
+    backgroundColor: C.primary, borderRadius: 10,
+    paddingVertical: 8, paddingHorizontal: 14,
+  },
+  addInlineBtnText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   // kpi card 
   block: { 
     marginHorizontal: 16, 

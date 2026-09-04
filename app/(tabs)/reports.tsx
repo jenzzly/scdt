@@ -465,28 +465,28 @@ export default function ReportsScreen() {
       )}
 
       {/* ── Smart Controls: Tabs + Filter Button ── */}
-      <View style={[styles.controlsSection, isWide && { maxWidth: 960, alignSelf: "center" as any, width: "100%" as any }]}>
-        <View style={styles.controlsLeft}>
-          {TABS.map(tab => (
-            <TouchableOpacity
-              key={tab}
-              style={[styles.tab, activeTab === tab && styles.tabActive]}
-              onPress={() => setActiveTab(tab)}
-            >
-              <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
-              </Text>
+        <View style={[styles.controlsSection, isWide && { maxWidth: 960, alignSelf: "center" as any, width: "100%" as any }]}>
+          <View style={styles.controlsLeft}>
+            {TABS.map(tab => (
+              <TouchableOpacity
+                key={tab}
+                style={[styles.tab, activeTab === tab && styles.tabActive]}
+                onPress={() => setActiveTab(tab)}
+              >
+                <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          
+          <View style={styles.controlsRight}>
+            <TouchableOpacity style={styles.filterBtn} onPress={openFilterModal} activeOpacity={0.8}>
+              <Text style={styles.filterBtnText}>{hasActiveFilters ? "🎯 Filter" : "🔍 Filter"}</Text>
+              {hasActiveFilters && <View style={styles.filterDot} />}
             </TouchableOpacity>
-          ))}
+          </View>
         </View>
-        
-        <View style={styles.controlsRight}>
-          <TouchableOpacity style={styles.filterBtn} onPress={openFilterModal} activeOpacity={0.8}>
-            <Text style={styles.filterBtnText}>{hasActiveFilters ? "🎯 Filter" : "🔍 Filter"}</Text>
-            {hasActiveFilters && <View style={styles.filterDot} />}
-          </TouchableOpacity>
-        </View>
-      </View>
 
       <ScrollView
         contentContainerStyle={[
@@ -879,7 +879,7 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
       )}
 
       {(loans.length > 0) && (
-        <>
+        <View style={[styles.chartCard, { marginBottom: 16 }]}>
           <SectionHeader title={`Loans (${loans.length})`} />
           <Card style={styles.card}>
             {loans.slice(0, 5).map((l: any, i: number) => {
@@ -914,7 +914,7 @@ function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack 
               );
             })}
           </Card>
-        </>
+        </View>
       )}
 
       <SectionHeader title="Recent Transactions" />

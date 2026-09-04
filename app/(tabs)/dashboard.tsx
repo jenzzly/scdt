@@ -139,6 +139,67 @@ export default function DashboardScreen() {
     return activeLoans.reduce((sum, l) => sum + (l.balance ?? l.amount), 0);
   }, [activeLoans]);
 
+  // ── Personalized "My Share" figure for the account card ──────────
+  // Replaces the old flat "MY SAVINGS" (= only currentMember.totalContributions)
+  // with each member's proportional share of the whole pot: the group's
+  // contributions pool, plus interest the group is still projected to
+  // collect on its currently-disbursed loans, plus all other group-level
+  // credit income — everything split evenly across active members.
+  //
+  // Ingredients, each confirmed separately:
+  //   1. Contributions  = group.totalSavings (sum of all approved
+  //      contributions across every member — the group's whole pool,
+  //      not just this member's own contributions).
+  //   2. Projected interest = for every currently-disbursed loan,
+  //      (totalInterest ÷ totalRepayable) × remaining balance, summed
+  //      group-wide. This is the interest still to be collected if
+  //      those loans are repaid on schedule — not interest already
+  //      collected (that's totalInterestEarned, a different figure).
+  //   3. Other credits = penalties + investment returns + any other
+  //      wallet credit type, excluding contributions, loan principal,
+  //      and loan interest (which are already counted in #1 and #2).
+  const groupContributionsPool = group?.totalSavings ?? 0;
+
+  const projectedGroupInterest = useMemo(() => {
+    return loans.reduce((sum, l) => {
+      if (l.status !== "disbursed") return sum;
+      if (!l.totalRepayable || l.totalRepayable <= 0) return sum;
+      const ratio = l.totalInterest / l.totalRepayable;
+      const remainingBalance = l.balance ?? 0;
+      return sum + round2(remainingBalance * ratio);
+    }, 0);
+  }, [loans]);
+
+  // "Other credits": every wallet transaction that isn't a contribution,
+  // loan principal/interest movement, or interest income already
+  // reflected elsewhere in the formula — i.e. penalties, investment
+  // returns, and any other miscellaneous credit type. Uses the same
+  // wallet transaction type strings recalcGroupTotals.ts relies on:
+  // "contribution" (capital, counted separately above), "loan_disbursement"
+  // and "loan_repayment" (loan principal/interest, not "other" income),
+  // "loan_interest_income" and "interest" (both are interest actually
+  // already collected on the ledger — a different figure from the
+  // *projected* interest computed above, so mixing them in here would
+  // misrepresent both numbers). What's left after excluding those is
+  // genuinely everything else: late_fee, investment_return, and any
+  // other credit type.
+  const EXCLUDED_TX_TYPES = new Set([
+    "contribution",
+    "loan_disbursement",
+    "loan_repayment",
+    "loan_interest_income",
+    "interest",
+  ]);
+  const otherGroupCredits = useMemo(() => {
+    return wallet
+      .filter(t => t.amount > 0 && !EXCLUDED_TX_TYPES.has(t.type))
+      .reduce((sum, t) => sum + t.amount, 0);
+  }, [wallet]);
+
+  const groupSharePool = round2(groupContributionsPool + projectedGroupInterest + otherGroupCredits);
+  const activeMemberCount = Math.max(1, groupMembers.filter(m => m.status === "active").length);
+  const myShare = round2(groupSharePool / activeMemberCount);
+
   // Recent transactions (personal vs group)
   const txList = isGroupView ? wallet : myWallet;
   const recentTxs = useMemo(() => {
@@ -343,11 +404,17 @@ export default function DashboardScreen() {
             />
           </View>
         ) : (
-          /* ── Account card — Personal View ── */
+          /* ── Account card — Personal View ──
+              "MY SAVINGS" (= only this member's own totalContributions)
+              is replaced with "MY SHARE": each active member's
+              proportional slice of the group's whole pot — contributions
+              + interest still projected to be collected on disbursed
+              loans + other group credit income (penalties, investment
+              returns, etc.) — split evenly across active members. */
           <View style={st.accountCard}>
             <View style={[st.cardGrid, { pointerEvents: "none" }]} />
-            <Text style={st.cardLabel}>MY SAVINGS</Text>
-            <Text style={st.cardAmount}>{fmtFull(myTotalContribs)}</Text>
+            <Text style={st.cardLabel}>MY SHARE</Text>
+            <Text style={st.cardAmount}>{fmtFull(myShare)}</Text>
             <Text style={st.cardSub}>{group?.name ?? BRAND.defaultGroupName}</Text>
 
             <View style={st.cardPills}>
@@ -700,7 +767,7 @@ const st = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 13, gap: 12,
   },
   txDot: { width: 34, height: 34, borderRadius: 9, alignItems: "center", justifyContent: "center" },
-  txMid: { flex: 1 },
+  txMid: { flex: 1, minWidth: 0 },
   txDesc: { fontSize: 13, fontWeight: "600", color: C.text, marginBottom: 2 },
   txAmount: { fontSize: 13, fontWeight: "700" },
 

@@ -136,66 +136,73 @@ export default function ContributionsScreen() {
     })();
   }, [activeGroupId]);
 
-  // const visibleLateFees = useMemo(
-  //   () => {
-  //     const calculated = overdueContributions.map(item => ({ ...item, applied: false }));
-  //     const unpaidApplied = allWallet
-  //       .filter(tx => tx.type === "late_fee" && !tx.loanId && !tx.feePaid && tx.description?.startsWith("Late contribution fee"))
-  //       .map(tx => ({
-  //         memberId: tx.memberId ?? "",
-  //         memberName: allMembers.find(member => member.id === tx.memberId)?.fullName ?? "Unknown",
-  //         periodLabel: tx.description?.replace("Late contribution fee — ", "").replace(/ \(.*\)$/, "") ?? "Late contribution",
-  //         amountDue: 0,
-  //         daysLate: 0,
-  //         feeAmount: tx.amount,
-  //         feeTxId: tx.id,
-  //         applied: true,
-  //       }));
-  //     const fees = [...calculated, ...unpaidApplied];
-  //     return isAdminView ? fees : fees.filter(item => item.memberId === currentMember?.id);
-  //   },
-  //   [overdueContributions, allWallet, allMembers, isAdminView, currentMember],
-  // );
-
-  // Calculate contribution goal progress. Scoped the same way the
-  // transaction list below it already is: group view aggregates every
-  // member's contributions toward the group goal, personal view shows
-  // only the current member's own contributions toward that same goal
-  // (the target/period is still the group's — only "how much has been
-  // put in" changes based on whose contributions are being counted).
   const goalProgress = useMemo(() => {
-    if (!goalPeriod || !group?.contributionGoal?.enabled) return null;
+    if (!goalPeriod) return null;
 
     const now = new Date();
     const periodStart = new Date(goalPeriod.periodStart);
     const periodEnd = new Date(goalPeriod.periodEnd);
 
-    // Filter contributions in this period, then scope by view mode —
-    // group view counts everyone, personal view counts only the
-    // logged-in member's own approved contributions.
-    const periodContributions = allContributions.filter(c => {
+    // Contributions in the current goal period.
+    // Group view = everyone.
+    // Personal view = current member only.
+    const periodContributions = allContributions.filter((c) => {
       const cDate = new Date(c.date);
-      if (!(cDate >= periodStart && cDate <= periodEnd && c.status === "approved")) return false;
-      if (!isGroupView && c.memberId !== currentMember?.id) return false;
+
+      if (
+        cDate < periodStart ||
+        cDate > periodEnd ||
+        c.status !== "approved"
+      ) {
+        return false;
+      }
+
+      if (!isGroupView && c.memberId !== currentMember?.id) {
+        return false;
+      }
+
       return true;
     });
 
-    const totalContributed = periodContributions.reduce((sum, c) => sum + (c.amount || 0), 0);
-    // The group's overall progress is still shown as context even in
-    // personal view (e.g. "group has hit 62%"), so it's computed
-    // separately from the scoped totalContributed above.
+    const totalContributed = periodContributions.reduce(
+      (sum, c) => sum + (c.amount || 0),
+      0
+    );
+
+    // Always calculate the complete group progress separately.
     const groupTotalContributed = allContributions
-      .filter(c => {
+      .filter((c) => {
         const cDate = new Date(c.date);
-        return cDate >= periodStart && cDate <= periodEnd && c.status === "approved";
+
+        return (
+          cDate >= periodStart &&
+          cDate <= periodEnd &&
+          c.status === "approved"
+        );
       })
       .reduce((sum, c) => sum + (c.amount || 0), 0);
 
     const target = goalPeriod.targetAmount;
-    const percentage = target > 0 ? Math.round((totalContributed / target) * 100) : 0;
-    const groupPercentage = target > 0 ? Math.round((groupTotalContributed / target) * 100) : 0;
+
+    const percentage =
+      target > 0
+        ? Math.round((totalContributed / target) * 100)
+        : 0;
+
+    const groupPercentage =
+      target > 0
+        ? Math.round((groupTotalContributed / target) * 100)
+        : 0;
+
     const remaining = Math.max(0, target - totalContributed);
-    const daysLeft = Math.ceil((periodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+    const daysLeft = Math.max(
+      0,
+      Math.ceil(
+        (periodEnd.getTime() - now.getTime()) /
+          (1000 * 60 * 60 * 24)
+      )
+    );
 
     return {
       totalContributed,
@@ -208,7 +215,12 @@ export default function ContributionsScreen() {
       isCompleted: totalContributed >= target,
       isGroupScoped: isGroupView,
     };
-  }, [goalPeriod, allContributions, group?.contributionGoal?.enabled, isGroupView, currentMember?.id]);
+  }, [
+    goalPeriod,
+    allContributions,
+    isGroupView,
+    currentMember?.id,
+  ]);
 
   const handleApplyContributionFee = async (item: any) => {
     setApplyingFeeId(item.feeTxId);
@@ -347,10 +359,10 @@ export default function ContributionsScreen() {
       <View style={[st.topBar, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
         <View>
           <Text style={st.pageSummaryLabel}>
-            {isGroupView ? "Group Overview" : "Personal Overview"}
+            {isGroupView ? "Group" : "Personal"}
           </Text>
           <Text style={st.pageSummaryTitle}>
-            {statusFilter === "late_fee" ? "Late Fees Record" : isGroupView ? "All Member Contributions" : "My Contribution History"}
+            {statusFilter === "late_fee" ? "Late Fees Record" : isGroupView ? "History" : "History"}
           </Text>
         </View>
         <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
@@ -370,7 +382,7 @@ export default function ContributionsScreen() {
       <ScrollView contentContainerStyle={[{ paddingBottom: 100 }, isWide && { paddingHorizontal: 24 }]}
         showsVerticalScrollIndicator={false}>
         {/* ── Contribution Goals Card ── */}
-        {group?.contributionGoal?.enabled && goalProgress && (
+        {goalProgress && (
           <View style={[st.goalCard, isWide && { marginHorizontal: 0, maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
             <View style={st.cardAccentDot} />
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
@@ -425,7 +437,7 @@ export default function ContributionsScreen() {
               <View style={st.goalStat}>
                 <Text style={st.goalStatLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>Remaining</Text>
                 <Text
-                  style={[st.goalStatValue, goalProgress.isCompleted && { color: Colors.green }]}
+                  style={[st.goalStatValue, goalProgress.isCompleted && { color: Colors.bgWhite }]}
                   numberOfLines={1}
                   adjustsFontSizeToFit
                   minimumFontScale={0.75}

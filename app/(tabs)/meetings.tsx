@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, useWindowDimensions } from "react-native";
 import { useRouter } from "expo-router";
-import { useStore, useGroupMeetings, useGroupMembers, useCurrentUserRole, useCurrentMember, useIsAdminView, useIsGroupView } from "../../stores/useStore";
+import { useStore, useGroupMeetings, useGroupMembers, useCurrentUserRole, useCurrentMember, useIsAdminView } from "../../stores/useStore";
 import { useCurrentMemberPermissions } from "../../stores/selectors";
 import { useToast, Button, BottomModal, Input } from "../../components/ui";
 import { KpiCard } from "../../components/ui/KpiCard";
@@ -21,13 +21,18 @@ function Chip({ label, bg, color }: { label: string; bg: string; color: string }
 
 export default function MeetingsScreen() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+  // Sub-list inside the penalty modal: cap it to a fraction of the actual
+  // viewport instead of a flat 360, so it doesn't overflow BottomModal's
+  // own responsive height on short screens — e.g. a landscape phone or a
+  // small browser window — while still behaving the same as before on
+  // normal-height screens.
+  const penaltyListMaxHeight = Math.min(360, height * 0.4);
   const isWide = width >= 768;
   const meetings = useGroupMeetings();
   const members = useGroupMembers();
   const currentMember = useCurrentMember();
   const isAdminView = useIsAdminView();
-  const isGroupView = useIsGroupView();
   const currentUserRole = useCurrentUserRole();
   const { cancelMeeting, clearMeetingPenalty, deleteMeeting, updateMeeting, activeGroupId } = useStore();
   const { show, Toast } = useToast();
@@ -37,21 +42,25 @@ export default function MeetingsScreen() {
   const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
   const [editForm, setEditForm] = useState({ title: "", date: "", location: "", agenda: "" });
 
-  const isAdmin = currentUserRole === "admin";
   const permissions = useCurrentMemberPermissions();
   const canCancelMeeting = ["admin", "committee", "loan_officer", "accountant"].includes(currentUserRole) && (permissions.updateMeetings ?? false);
   const canClearPenalties = ["admin", "loan_officer"].includes(currentUserRole) && (permissions.updateMeetings ?? false);
   const canRecordAttendance = ["admin", "committee", "loan_officer", "accountant"].includes(currentUserRole) && (permissions.updateMeetings ?? false);
   const canScheduleMeeting = ["admin", "accountant"].includes(currentUserRole) && (permissions.updateMeetings ?? false);
-  const canEditMeeting = isAdmin;
-  const canDeleteMeeting = isAdmin;
+  // Edit/Delete now match Cancel/Record Attendance's role set (admin,
+  // committee, loan_officer, accountant) gated by the same updateMeetings
+  // permission — previously these two were restricted to admin only,
+  // which was narrower than every other meeting-management action here.
+  const canEditMeeting = ["admin", "committee", "loan_officer", "accountant"].includes(currentUserRole) && (permissions.updateMeetings ?? false);
+  const canDeleteMeeting = ["admin", "committee", "loan_officer", "accountant"].includes(currentUserRole) && (permissions.updateMeetings ?? false);
 
-  const visibleMeetings = useMemo(
-    () => isGroupView
-      ? meetings
-      : meetings.filter(meeting => meeting.attendees?.some(attendee => attendee.memberId === currentMember?.id)),
-    [meetings, isGroupView, currentMember],
-  );
+  // Every group meeting is visible to every member, regardless of view
+  // mode or whether attendance has been recorded for them yet — a
+  // member needs to see a meeting is scheduled *before* attendance
+  // exists for it, not only after. Personal vs. Group view no longer
+  // changes which meetings show; only Edit/Delete are gated (by role,
+  // below), not visibility of the meeting list itself.
+  const visibleMeetings = meetings;
 
   const getAttendanceSummary = (meeting: Meeting) => {
     const total = meeting.attendees?.length || 0;
@@ -126,7 +135,7 @@ export default function MeetingsScreen() {
   if (isWide) {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg }}>
-        <Toast />
+        {Toast}
 
         <ScrollView
           contentContainerStyle={st.container}
@@ -296,14 +305,14 @@ export default function MeetingsScreen() {
           <View style={{ padding: 20 }}>
             <Text style={st.modalName}>{selectedMeeting?.title}</Text>
             <Text style={st.modalSub}>Select a member to clear their penalty</Text>
-            <ScrollView style={{ maxHeight: 360 }}>
+            <ScrollView style={{ maxHeight: penaltyListMaxHeight }}>
               {selectedMeeting?.attendees.filter(a => (a.penaltyAmount ?? 0) > 0 && !a.penaltyPaid).map(attendee => {
                 const member = members.find(m => m.id === attendee.memberId);
                 return (
                   <View key={attendee.memberId} style={st.penaltyRow}>
-                    <View>
-                      <Text style={st.penaltyName}>{member?.fullName}</Text>
-                      <Text style={[st.penaltyAmount, { color: C.debit }]}>{fmtCurrency(attendee.penaltyAmount ?? 0)}</Text>
+                    <View style={{ flex: 1, minWidth: 0, marginRight: 10 }}>
+                      <Text style={st.penaltyName} numberOfLines={1}>{member?.fullName}</Text>
+                      <Text style={[st.penaltyAmount, { color: C.debit }]} numberOfLines={1}>{fmtCurrency(attendee.penaltyAmount ?? 0)}</Text>
                     </View>
                     <TouchableOpacity style={st.clearBtn} onPress={() => handleClearPenalty(selectedMeeting!, attendee.memberId)} activeOpacity={0.8}>
                       <Text style={st.clearBtnText}>Clear</Text>
@@ -362,7 +371,7 @@ export default function MeetingsScreen() {
   // ── Mobile layout ──────────────────────────────────────────────────
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <Toast/>
+      {Toast}
 
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
@@ -382,6 +391,7 @@ export default function MeetingsScreen() {
               subtext="All"
               accentColor={C.primary}
               onPress={() => {}}
+              layout="fixed"
             />
             <KpiCard
               label="Upcoming"
@@ -390,6 +400,7 @@ export default function MeetingsScreen() {
               subtext="Scheduled"
               accentColor={C.gold}
               onPress={() => {}}
+              layout="fixed"
             />
             <KpiCard
               label="Past"
@@ -398,6 +409,7 @@ export default function MeetingsScreen() {
               subtext="Completed"
               accentColor={C.success}
               onPress={() => {}}
+              layout="fixed"
             />
             <KpiCard
               label="Cancelled"
@@ -406,6 +418,7 @@ export default function MeetingsScreen() {
               subtext="Cancelled"
               accentColor={C.error}
               onPress={() => {}}
+              layout="fixed"
             />
           </View>
         </ScrollView>
@@ -534,14 +547,14 @@ export default function MeetingsScreen() {
         <View style={{ padding: 20 }}>
           <Text style={st.modalName}>{selectedMeeting?.title}</Text>
           <Text style={st.modalSub}>Select a member to clear their penalty</Text>
-          <ScrollView style={{ maxHeight: 360 }}>
+          <ScrollView style={{ maxHeight: penaltyListMaxHeight }}>
             {selectedMeeting?.attendees.filter(a => (a.penaltyAmount ?? 0) > 0 && !a.penaltyPaid).map(attendee => {
               const member = members.find(m => m.id === attendee.memberId);
               return (
                 <View key={attendee.memberId} style={st.penaltyRow}>
-                  <View>
-                    <Text style={st.penaltyName}>{member?.fullName}</Text>
-                    <Text style={[st.penaltyAmount, { color: C.debit }]}>{fmtCurrency(attendee.penaltyAmount ?? 0)}</Text>
+                  <View style={{ flex: 1, minWidth: 0, marginRight: 10 }}>
+                    <Text style={st.penaltyName} numberOfLines={1}>{member?.fullName}</Text>
+                    <Text style={[st.penaltyAmount, { color: C.debit }]} numberOfLines={1}>{fmtCurrency(attendee.penaltyAmount ?? 0)}</Text>
                   </View>
                   <TouchableOpacity style={st.clearBtn} onPress={() => handleClearPenalty(selectedMeeting!, attendee.memberId)} activeOpacity={0.8}>
                     <Text style={st.clearBtnText}>Clear</Text>

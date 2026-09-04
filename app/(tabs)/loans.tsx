@@ -626,7 +626,7 @@ export default function LoansScreen() {
       {/* Top action bar */}
       <View style={[styles.topBar, isWide && { maxWidth: 960, alignSelf: "center" as any, width: "100%" as any }]}>
         <View>
-          <Text style={styles.pageSummaryLabel}>{isGroupView ? "Group Portfolio" : "Personal Loans"}</Text>
+          <Text style={styles.pageSummaryLabel}>{isGroupView ? "Group" : "Personal"}</Text>
           <Text style={styles.pageSummaryTitle}>{isGroupView ? " " : " "}</Text>
         </View>
         {permissions.addLoan && (
