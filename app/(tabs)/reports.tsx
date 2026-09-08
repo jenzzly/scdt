@@ -115,10 +115,29 @@ function FilterModal({
   onApply,
   searchTerm,
   onSearchChange,
+  dataType,
+  onDataTypeChange,
 }: any) {
+  const DATA_TYPE_OPTIONS = [
+    { label: "All Data", value: "all" },
+    { label: "Contributions", value: "contributions" },
+    { label: "Loans", value: "loans" },
+    { label: "Meetings", value: "meetings" },
+    { label: "Investments", value: "investments" },
+    { label: "Members", value: "members" },
+    { label: "Wallet", value: "wallet" },
+  ];
+
   return (
     <BottomModal visible={visible} onClose={onClose} title="Filter Reports">
       <View style={{ padding: 16 }}>
+        <Select
+          label="Data Type"
+          value={dataType}
+          options={DATA_TYPE_OPTIONS}
+          onChange={onDataTypeChange}
+        />
+        
         <Input
           label="Search"
           value={searchTerm}
@@ -172,6 +191,7 @@ function FilterModal({
             onLoanStatusChange("all");
             onContributionStatusChange("all");
             onSearchChange("");
+            onDataTypeChange("all");
           }}>
             <Text style={styles.modalClearBtnText}>Clear All</Text>
           </TouchableOpacity>
@@ -211,6 +231,7 @@ export default function ReportsScreen() {
   const [selectedToDate, setSelectedToDate] = useState("");
   const [loanStatus, setLoanStatus] = useState<"all" | "pending" | "active" | "repaid">("all");
   const [contributionStatus, setContributionStatus] = useState<"all" | "approved" | "pending" | "rejected">("all");
+  const [dataType, setDataType] = useState<"all" | "contributions" | "loans" | "meetings" | "investments" | "members" | "wallet">("all");
   
   // Temp state for modal
   const [tempSearch, setTempSearch] = useState("");
@@ -218,6 +239,7 @@ export default function ReportsScreen() {
   const [tempToDate, setTempToDate] = useState("");
   const [tempLoanStatus, setTempLoanStatus] = useState<"all" | "pending" | "active" | "repaid">("all");
   const [tempContributionStatus, setTempContributionStatus] = useState<"all" | "approved" | "pending" | "rejected">("all");
+  const [tempDataType, setTempDataType] = useState<"all" | "contributions" | "loans" | "meetings" | "investments" | "members" | "wallet">("all");
 
   // Scope data
   const members = canSeeAll ? allMembers : allMembers.filter(m => m.id === currentMember?.id);
@@ -316,6 +338,120 @@ export default function ReportsScreen() {
     [investments, selectedFromDate, selectedToDate]
   );
 
+  const filteredMembers = useMemo(() => 
+    filterBySearch(members, ["fullName", "email", "phone"]),
+    [members, searchTerm]
+  );
+
+  const filteredWallet = useMemo(() => 
+    filterByDateRange(wallet, "date"),
+    [wallet, selectedFromDate, selectedToDate]
+  );
+
+  // Get filtered data based on data type selection
+  const getFilteredData = () => {
+    switch (dataType) {
+      case "contributions":
+        return filteredContributions;
+      case "loans":
+        return filteredLoans;
+      case "investments":
+        return filteredInvestments;
+      case "members":
+        return filteredMembers;
+      case "wallet":
+        return filteredWallet;
+      default:
+        return null;
+    }
+  };
+
+  const getExportData = () => {
+    const data = getFilteredData();
+    if (!data) return null;
+
+    switch (dataType) {
+      case "contributions":
+        return {
+          headers: ["Date", "Member", "Type", "Amount", "Status", "Description"],
+          rows: data.map((c: any) => [
+            fmtDate(c.date),
+            members.find(m => m.id === c.memberId)?.fullName || "Unknown",
+            c.contributionType,
+            fmtCurrency(c.amount),
+            c.status,
+            c.description || "",
+          ]),
+        };
+      case "loans":
+        return {
+          headers: ["Application Date", "Member", "Amount", "Status", "Purpose", "Repayment Months"],
+          rows: data.map((l: any) => [
+            fmtDate(l.applicationDate),
+            members.find(m => m.id === l.memberId)?.fullName || "Unknown",
+            fmtCurrency(l.amount),
+            l.status,
+            l.purpose || "",
+            l.repaymentMonths,
+          ]),
+        };
+      case "investments":
+        return {
+          headers: ["Start Date", "Type", "Amount", "Status", "Expected Return"],
+          rows: data.map((i: any) => [
+            fmtDate(i.startDate),
+            i.type,
+            fmtCurrency(i.amount),
+            i.status,
+            fmtCurrency(i.expectedReturn || 0),
+          ]),
+        };
+      case "members":
+        return {
+          headers: ["Name", "Email", "Phone", "Role", "Status", "Date Joined"],
+          rows: data.map((m: any) => [
+            m.fullName,
+            m.email || "",
+            m.phone || "",
+            m.role,
+            m.status,
+            fmtDate(m.dateJoined),
+          ]),
+        };
+      case "wallet":
+        return {
+          headers: ["Date", "Type", "Amount", "Description", "Member"],
+          rows: data.map((w: any) => [
+            fmtDate(w.date),
+            w.type,
+            fmtCurrency(w.amount),
+            w.description || "",
+            members.find(m => m.id === w.memberId)?.fullName || "System",
+          ]),
+        };
+      default:
+        return null;
+    }
+  };
+
+  const handleExport = async (format: "csv" | "pdf") => {
+    const exportData = getExportData();
+    if (!exportData) {
+      show("Please select a data type to export", "error");
+      return;
+    }
+
+    const fileName = `${dataType}_report_${selectedFromDate || "all"}_to_${selectedToDate || "all"}`;
+    
+    if (format === "csv") {
+      await exportCsv(fileName, exportData.headers, exportData.rows);
+    } else {
+      await exportPdf(fileName, `${dataType.charAt(0).toUpperCase() + dataType.slice(1)} Report`, 
+        `<table><thead><tr>${exportData.headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${exportData.rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+    }
+    show(`Exported as ${format.toUpperCase()}`);
+  };
+
   const cashflow = useMemo(() => {
     const months: string[] = [];
     const income: number[] = [];
@@ -370,7 +506,7 @@ export default function ReportsScreen() {
   const contributionsTotal = useMemo(() => filteredContributions.reduce((s, c) => s + c.amount, 0), [filteredContributions]);
   const investmentsTotal = useMemo(() => filteredInvestments.reduce((s, i) => s + i.investmentAmount, 0), [filteredInvestments]);
 
-  const hasActiveFilters = selectedFromDate !== "" || selectedToDate !== "" || loanStatus !== "all" || contributionStatus !== "all" || searchTerm !== "";
+  const hasActiveFilters = selectedFromDate !== "" || selectedToDate !== "" || loanStatus !== "all" || contributionStatus !== "all" || searchTerm !== "" || dataType !== "all";
 
   const openFilterModal = () => {
     setTempSearch(searchTerm);
@@ -378,6 +514,7 @@ export default function ReportsScreen() {
     setTempToDate(selectedToDate);
     setTempLoanStatus(loanStatus);
     setTempContributionStatus(contributionStatus);
+    setTempDataType(dataType);
     setShowFilterModal(true);
   };
 
@@ -387,6 +524,7 @@ export default function ReportsScreen() {
     setSelectedToDate(tempToDate);
     setLoanStatus(tempLoanStatus);
     setContributionStatus(tempContributionStatus);
+    setDataType(tempDataType);
     setShowFilterModal(false);
   };
 
@@ -396,11 +534,13 @@ export default function ReportsScreen() {
     setSelectedToDate("");
     setLoanStatus("all");
     setContributionStatus("all");
+    setDataType("all");
     setTempSearch("");
     setTempFromDate("");
     setTempToDate("");
     setTempLoanStatus("all");
     setTempContributionStatus("all");
+    setTempDataType("all");
   };
 
   const exportData = async (type: "loans" | "contributions" | "investments", format: "csv" | "pdf") => {
@@ -482,6 +622,14 @@ export default function ReportsScreen() {
           </View>
           
           <View style={styles.controlsRight}>
+            <TouchableOpacity 
+              style={[styles.exportBtn, { marginRight: 8 }]} 
+              onPress={() => handleExport("csv")} 
+              activeOpacity={0.8}
+              disabled={dataType === "all"}
+            >
+              <Text style={styles.exportBtnText}>📥 Export</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.filterBtn} onPress={openFilterModal} activeOpacity={0.8}>
               <Text style={styles.filterBtnText}>{hasActiveFilters ? "🎯 Filter" : "🔍 Filter"}</Text>
               {hasActiveFilters && <View style={styles.filterDot} />}
@@ -671,6 +819,9 @@ export default function ReportsScreen() {
         onContributionStatusChange={setTempContributionStatus}
         onApply={applyFilters}
         searchTerm={tempSearch}
+        onSearchChange={setTempSearch}
+        dataType={tempDataType}
+        onDataTypeChange={setTempDataType}
         onSearchChange={setTempSearch}
       />
 
@@ -1215,6 +1366,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
     color: C.text2,
+  },
+  exportBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: C.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: C.primary,
+    gap: 6,
+  },
+  exportBtnText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#fff",
   },
   filterDot: {
     width: 6,

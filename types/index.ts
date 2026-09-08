@@ -184,6 +184,8 @@ export interface Member {
   exitDate?: string;
   exitNotes?: string;
   permissions?: MemberPermissions;
+  loginToken?: string;
+  loginTokenExpiry?: string;
 }
 
 export interface Beneficiary {

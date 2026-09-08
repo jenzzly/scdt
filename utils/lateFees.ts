@@ -1,60 +1,264 @@
 // utils/lateFees.ts
 //
-// Late-fee detection and calculation — separate from meeting-attendance
-// penalties (see Group.latePenaltyRatePct etc. for those). Both fee types
-// here are calculated as a PERCENTAGE OF THE AMOUNT DUE, not a flat figure:
+// Late-fee detection and calculation.
 //
-//   • Contribution late fee = missedContributionAmount × (ratePct / 100)
-//   • Loan late fee         = overdueInstallmentAmount  × (ratePct / 100)
+// Contribution late fee:
+//   missedContributionAmount × (ratePct / 100) × newlyOwedDays
 //
-// Nothing in this app runs on a server-side schedule, so "overdue" status
-// is computed on demand (when an officer opens Reports or Group Settings)
-// rather than via a background job. Officers/admins explicitly apply a fee
-// with one tap once it's surfaced — nothing charges silently in the
-// background.
+// Loan late fee:
+//   overdueInstallmentAmount × (ratePct / 100) × newlyOwedDays
+//
+// IMPORTANT:
+//   `lateFeeStartDate` is a GLOBAL activation date.
+//
+//   No late fee is charged for any overdue period whose
+//   late-fee accrual ended before the global activation date.
+//
+//   If an overdue period crosses the activation date,
+//   only fee-days on or after the activation date are counted.
+//
+// Nothing is automatically charged in the background.
+// Overdue amounts are calculated on demand. An officer/admin explicitly
+// applies each newly accrued chunk.
+//
+// A regular contribution that is approved after its due date still produces
+// a late fee. The late-fee accrual stops on the actual contributionDate.
+//
+// Clearing a late-fee transaction does NOT reset the overdue period.
+// Only the actual regular contribution payment stops contribution late-fee
+// accrual for that period.
+
 import { round2 } from "./theme";
-import type { Group, Member, Contribution, Loan, WalletTransaction } from "../types";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Contribution late fees
-// ─────────────────────────────────────────────────────────────────────────────
-export interface OverdueContribution {
-  memberId: string;
-  memberName: string;
-  periodLabel: string;       // e.g. "March 2026"
-  periodStart: string;       // ISO date the period began
-  dueDate: string;           // ISO date payment was due
-  amountDue: number;         // the group's standard contribution amount
-  daysLate: number;
-  feeAmount: number;         // amountDue × ratePct / 100
-  feeTxId: string;           // deterministic ID — used to avoid double-charging
-}
+import type {
+  Group,
+  Member,
+  Contribution,
+  Loan,
+  WalletTransaction,
+} from "../types";
 
-/** Advance a date forward by one contribution period. */
-function nextPeriod(date: Date, frequency: Group["contributionFrequency"]): Date {
-  const d = new Date(date);
-  if (frequency === "weekly") d.setDate(d.getDate() + 7);
-  else if (frequency === "biweekly") d.setDate(d.getDate() + 14);
-  else if (frequency === "yearly") d.setFullYear(d.getFullYear() + 1);
-  else d.setMonth(d.getMonth() + 1); // monthly (default)
-  return d;
-}
+const MS_PER_DAY = 86_400_000;
 
-function periodLabel(date: Date, frequency: Group["contributionFrequency"]): string {
-  if (frequency === "weekly" || frequency === "biweekly") {
-    return `Week of ${date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+// -----------------------------------------------------------------------------
+// Period helpers
+// -----------------------------------------------------------------------------
+
+function nextPeriod(
+  periodStart: Date,
+  frequency?: Group["contributionFrequency"],
+): Date {
+  const next = new Date(periodStart);
+
+  const frequencyValue = String(
+    frequency ?? "monthly",
+  ).toLowerCase();
+
+  switch (frequencyValue) {
+    case "daily":
+      next.setDate(next.getDate() + 1);
+      break;
+
+    case "weekly":
+      next.setDate(next.getDate() + 7);
+      break;
+
+    case "biweekly":
+    case "bi-weekly":
+    case "fortnightly":
+      next.setDate(next.getDate() + 14);
+      break;
+
+    case "monthly":
+      next.setMonth(next.getMonth() + 1);
+      break;
+
+    case "quarterly":
+      next.setMonth(next.getMonth() + 3);
+      break;
+
+    case "yearly":
+    case "annual":
+      next.setFullYear(next.getFullYear() + 1);
+      break;
+
+    default:
+      next.setMonth(next.getMonth() + 1);
+      break;
   }
-  if (frequency === "yearly") return String(date.getFullYear());
-  return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+  return next;
+}
+
+function periodLabel(
+  periodStart: Date,
+  frequency?: Group["contributionFrequency"],
+): string {
+  const frequencyValue = String(
+    frequency ?? "monthly",
+  ).toLowerCase();
+
+  switch (frequencyValue) {
+    case "daily":
+      return periodStart.toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+
+    case "weekly":
+      return `Week of ${periodStart.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })}`;
+
+    case "biweekly":
+    case "bi-weekly":
+    case "fortnightly":
+      return `Period of ${periodStart.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })}`;
+
+    case "quarterly":
+      return `Q${
+        Math.floor(periodStart.getMonth() / 3) + 1
+      } ${periodStart.getFullYear()}`;
+
+    case "yearly":
+    case "annual":
+      return `${periodStart.getFullYear()}`;
+
+    case "monthly":
+    default:
+      return periodStart.toLocaleDateString(undefined, {
+        month: "long",
+        year: "numeric",
+      });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Date helpers
+// -----------------------------------------------------------------------------
+
+function wholeDaysBetween(
+  from: Date,
+  to: Date,
+): number {
+  return Math.floor(
+    (to.getTime() - from.getTime()) /
+      MS_PER_DAY,
+  );
 }
 
 /**
- * Find every contribution period between a member joining and today that
- * has no matching approved contribution and is past its due date + grace
- * period. Returns one entry per missed period, each carrying its own
- * deterministic fee transaction ID so re-running this never double-charges
- * a period that already has a fee applied.
+ * Returns the later of two dates.
+ *
+ * This is used to enforce the global late-fee activation date.
  */
+function maxDate(
+  first: Date,
+  second: Date,
+): Date {
+  return first > second
+    ? new Date(first)
+    : new Date(second);
+}
+
+/**
+ * Returns true when the late-fee calculation is allowed to
+ * start for the supplied date.
+ *
+ * The activation date is inclusive.
+ */
+function isOnOrAfter(
+  date: Date,
+  activationDate: Date,
+): boolean {
+  return date.getTime() >= activationDate.getTime();
+}
+
+// -----------------------------------------------------------------------------
+// Existing late-fee accrual
+// -----------------------------------------------------------------------------
+
+function daysAlreadyCharged(
+  prefix: string,
+  existingWalletTxs: WalletTransaction[],
+): number {
+  let max = 0;
+
+  for (const tx of existingWalletTxs) {
+    if (tx.type !== "late_fee") {
+      continue;
+    }
+
+    if (
+      !tx.id.startsWith(
+        prefix + "-d",
+      )
+    ) {
+      continue;
+    }
+
+    const match =
+      tx.id.match(/-d(\d+)$/);
+
+    if (!match) {
+      continue;
+    }
+
+    const day =
+      Number.parseInt(
+        match[1],
+        10,
+      );
+
+    if (Number.isFinite(day)) {
+      max = Math.max(
+        max,
+        day,
+      );
+    }
+  }
+
+  return max;
+}
+
+// -----------------------------------------------------------------------------
+// Contribution late fees
+// -----------------------------------------------------------------------------
+
+export interface OverdueContribution {
+  memberId: string;
+  memberName: string;
+
+  periodLabel: string;
+  periodStart: string;
+  dueDate: string;
+
+  amountDue: number;
+
+  daysLate: number;
+  daysPastGrace: number;
+  daysNewlyOwed: number;
+  feeAmount: number;
+  feeTxId: string;
+}
+
+function contributionFeeIdPrefix(
+  memberId: string,
+  periodStart: Date,
+): string {
+  return `late-fee-contrib-${memberId}-${periodStart
+    .toISOString()
+    .slice(0, 10)}`;
+}
+
 export function findOverdueContributions(
   group: Group,
   members: Member[],
@@ -62,99 +266,512 @@ export function findOverdueContributions(
   existingWalletTxs: WalletTransaction[],
   asOf: Date = new Date(),
 ): OverdueContribution[] {
-  const ratePct = group.contributionLateFeeRatePct;
-  if (!ratePct || ratePct <= 0) return [];
-  const graceDays = group.contributionLateFeeGraceDays ?? 0;
-  const amountDue = group.contributionAmount ?? 0;
-  if (amountDue <= 0) return [];
+  const ratePct =
+    group.contributionLateFeeRatePct;
 
-  // Fees only ever apply to periods on/after this date — never retroactively
-  // from a member's dateJoined. Unconfigured (no start date set) means the
-  // feature is off, even if a rate is set, so enabling the rate alone can
-  // never surprise-charge a group's entire history.
-  const startDateRaw = group.contributionLateFeeStartDate;
-  if (!startDateRaw) return [];
-  const startDate = new Date(startDateRaw);
-  if (isNaN(startDate.getTime())) return [];
+  if (!ratePct || ratePct <= 0) {
+    return [];
+  }
 
-  const results: OverdueContribution[] = [];
-
-  for (const member of members) {
-    if (member.status !== "active") continue;
-    if (!member.dateJoined) continue;
-
-    const approvedByMember = contributions.filter(
-      (c) => c.memberId === member.id && c.status === "approved" && c.contributionType === "regular",
+  const graceDays =
+    Math.max(
+      0,
+      group.contributionLateFeeGraceDays ??
+        0,
     );
 
-    // Start scanning from whichever is LATER: the member joining, or the
-    // group's configured late-fee start date — so fee calculation never
-    // reaches back before the date an admin explicitly opted in.
-    const memberJoined = new Date(member.dateJoined);
-    let cursor = memberJoined > startDate ? memberJoined : startDate;
-    let guard = 0; // safety valve against runaway loops on bad data
+  const amountDue =
+    group.contributionAmount ?? 0;
+
+  if (amountDue <= 0) {
+    return [];
+  }
+
+  // ---------------------------------------------------------------------------
+  // GLOBAL ACTIVATION DATE
+  //
+  // Late fees must not apply to periods that were already overdue before
+  // this date.
+  // ---------------------------------------------------------------------------
+
+  const startDateRaw =
+    group.contributionLateFeeStartDate;
+
+  if (!startDateRaw) {
+    return [];
+  }
+
+  const startDate =
+    new Date(startDateRaw);
+
+  if (
+    Number.isNaN(
+      startDate.getTime(),
+    )
+  ) {
+    return [];
+  }
+
+  // If the entire calculation is happening before the policy starts,
+  // there can be no late fee.
+  if (asOf < startDate) {
+    return [];
+  }
+
+  const results: OverdueContribution[] =
+    [];
+
+  for (const member of members) {
+    if (member.status !== "active") {
+      continue;
+    }
+
+    if (!member.dateJoined) {
+      continue;
+    }
+
+    const memberJoined =
+      new Date(
+        member.dateJoined,
+      );
+
+    if (
+      Number.isNaN(
+        memberJoined.getTime(),
+      )
+    ) {
+      continue;
+    }
+
+    /**
+     * Only approved regular contributions can stop
+     * contribution late-fee accrual.
+     *
+     * An approved contribution does NOT automatically
+     * mean there is no late fee.
+     *
+     * If contributionDate is after the due/grace date,
+     * the member was late and the fee is calculated
+     * through that contributionDate.
+     */
+    const approvedByMember =
+      contributions.filter(
+        (c) =>
+          c.memberId === member.id &&
+          c.status === "approved" &&
+          c.contributionType === "regular",
+      );
+
+    /**
+     * IMPORTANT:
+     *
+     * The cursor represents NATURAL CONTRIBUTION PERIODS.
+     *
+     * The global start date must NOT become the period start.
+     *
+     * For example:
+     *
+     *   Start calculating from: September 10
+     *   Monthly contribution: September
+     *
+     * The September contribution period still starts on
+     * September 1.
+     */
+    let cursor =
+      memberJoined > startDate
+        ? new Date(memberJoined)
+        : new Date(startDate);
+
+    const frequencyValue =
+      String(
+        group.contributionFrequency ??
+          "monthly",
+      ).toLowerCase();
+
+    if (
+      frequencyValue === "monthly"
+    ) {
+      cursor.setDate(1);
+      cursor.setHours(
+        0,
+        0,
+        0,
+        0,
+      );
+    }
+
+    let guard = 0;
+
     while (guard < 500) {
       guard++;
-      const periodStart = new Date(cursor);
-      const dueDate = new Date(cursor);
-      dueDate.setDate(group.contributionDay || dueDate.getDate());
-      const graceDate = new Date(dueDate);
-      graceDate.setDate(graceDate.getDate() + graceDays);
 
-      if (graceDate > asOf) break; // this and all future periods aren't due yet
+      const periodStart =
+        new Date(cursor);
 
-      const periodEnd = nextPeriod(periodStart, group.contributionFrequency);
-      const wasPaid = approvedByMember.some((c) => {
-        const cd = new Date(c.date);
-        return cd >= periodStart && cd < periodEnd;
-      });
+      const periodEnd =
+        nextPeriod(
+          periodStart,
+          group.contributionFrequency,
+        );
 
-      if (!wasPaid) {
-        const feeTxId = `late-fee-contrib-${member.id}-${periodStart.toISOString().slice(0, 10)}`;
-        const alreadyCharged = existingWalletTxs.some((t) => t.id === feeTxId);
-        if (!alreadyCharged) {
-          const daysLate = Math.floor((asOf.getTime() - dueDate.getTime()) / 86_400_000);
-          results.push({
-            memberId: member.id,
-            memberName: member.fullName,
-            periodLabel: periodLabel(periodStart, group.contributionFrequency),
-            periodStart: periodStart.toISOString(),
-            dueDate: dueDate.toISOString(),
-            amountDue,
-            daysLate,
-            feeAmount: round2(amountDue * (ratePct / 100)),
-            feeTxId,
-          });
+      /**
+       * Do not process a contribution period that ended
+       * completely before the global activation date.
+       *
+       * Example:
+       *
+       * Start date: September 1
+       * August period: August 1 - September 1
+       *
+       * That period is excluded.
+       */
+      if (
+        periodEnd <= startDate
+      ) {
+        const next =
+          periodEnd;
+
+        if (
+          next.getTime() <=
+          periodStart.getTime()
+        ) {
+          break;
         }
+
+        cursor = next;
+        continue;
       }
 
-      cursor = periodEnd;
+      const dueDate =
+        new Date(periodStart);
+
+      if (
+        frequencyValue === "monthly"
+      ) {
+        const configuredDay =
+          Math.max(
+            1,
+            Math.min(
+              group.contributionDay ??
+                1,
+              31,
+            ),
+          );
+
+        dueDate.setDate(1);
+
+        const lastDayOfMonth =
+          new Date(
+            dueDate.getFullYear(),
+            dueDate.getMonth() + 1,
+            0,
+          ).getDate();
+
+        dueDate.setDate(
+          Math.min(
+            configuredDay,
+            lastDayOfMonth,
+          ),
+        );
+      } else {
+        dueDate.setDate(
+          group.contributionDay ||
+            dueDate.getDate(),
+        );
+      }
+
+      const graceDate =
+        new Date(dueDate);
+
+      graceDate.setDate(
+        graceDate.getDate() +
+          graceDays,
+      );
+
+      if (graceDate > asOf) {
+        break;
+      }
+
+      /**
+       * Find the actual approved contribution date
+       * for this contribution period.
+       */
+      const paymentDate =
+        approvedByMember.reduce<Date | null>(
+          (latest, c) => {
+            const contributionDateRaw =
+              (
+                c as Contribution & {
+                  contributionDate?: string;
+                }
+              ).contributionDate ??
+              (
+                c as Contribution & {
+                  date?: string;
+                }
+              ).date;
+
+            if (!contributionDateRaw) {
+              return latest;
+            }
+
+            const contributionDate =
+              new Date(
+                contributionDateRaw,
+              );
+
+            if (
+              Number.isNaN(
+                contributionDate.getTime(),
+              )
+            ) {
+              return latest;
+            }
+
+            if (
+              contributionDate <
+                periodStart ||
+              contributionDate >=
+                periodEnd
+            ) {
+              return latest;
+            }
+
+            if (
+              !latest ||
+              contributionDate >
+                latest
+            ) {
+              return contributionDate;
+            }
+
+            return latest;
+          },
+          null,
+        );
+
+      /**
+       * If the member paid during this period,
+       * stop late-fee accrual on the actual payment date.
+       *
+       * If there is no contribution, continue
+       * accruing through `asOf`.
+       */
+      const accrualAsOf =
+        paymentDate &&
+        paymentDate < asOf
+          ? paymentDate
+          : asOf;
+
+      /**
+       * The first fee day is the day AFTER the grace date.
+       *
+       * Example:
+       *
+       * Due:        September 1
+       * Grace:      5 days
+       * Grace ends: September 5
+       *
+       * First fee day: September 6
+       *
+       * If the global activation date is September 8,
+       * the first fee day becomes September 8.
+       *
+       * Therefore:
+       *
+       *   feeStartBoundary = max(
+       *     graceDate,
+       *     activationDate - 1 day
+       *   )
+       *
+       * This preserves the existing inclusive behavior.
+       */
+      const activationBoundary =
+        new Date(startDate);
+
+      activationBoundary.setDate(
+        activationBoundary.getDate() - 1,
+      );
+
+      const feeStartBoundary =
+        maxDate(
+          graceDate,
+          activationBoundary,
+        );
+
+      /**
+       * If the actual payment happened before the
+       * global activation date, there is no fee to charge.
+       */
+      if (
+        paymentDate &&
+        paymentDate < startDate
+      ) {
+        const next =
+          periodEnd;
+
+        if (
+          next.getTime() <=
+          periodStart.getTime()
+        ) {
+          break;
+        }
+
+        cursor = next;
+        continue;
+      }
+
+      /**
+       * Calculate complete fee-days after BOTH:
+       *
+       * 1. the grace period
+       * 2. the global late-fee activation date
+       *
+       * The end date is inclusive.
+       */
+      const daysPastGrace =
+        Math.max(
+          0,
+          wholeDaysBetween(
+            feeStartBoundary,
+            accrualAsOf,
+          ),
+        );
+
+      if (
+        daysPastGrace <= 0
+      ) {
+        const next =
+          periodEnd;
+
+        if (
+          next.getTime() <=
+          periodStart.getTime()
+        ) {
+          break;
+        }
+
+        cursor = next;
+        continue;
+      }
+
+      const prefix =
+        contributionFeeIdPrefix(
+          member.id,
+          periodStart,
+        );
+
+      const chargedSoFar =
+        daysAlreadyCharged(
+          prefix,
+          existingWalletTxs,
+        );
+
+      if (
+        daysPastGrace >
+        chargedSoFar
+      ) {
+        const daysNewlyOwed =
+          daysPastGrace -
+          chargedSoFar;
+
+        const daysLate =
+          Math.max(
+            0,
+            wholeDaysBetween(
+              dueDate,
+              accrualAsOf,
+            ),
+          );
+
+        const feeAmount =
+          round2(
+            amountDue *
+              (ratePct / 100) *
+              daysNewlyOwed,
+          );
+
+        const feeTxId =
+          `${prefix}-d${daysPastGrace}`;
+
+        results.push({
+          memberId:
+            member.id,
+
+          memberName:
+            member.fullName,
+
+          periodLabel:
+            periodLabel(
+              periodStart,
+              group.contributionFrequency,
+            ),
+
+          periodStart:
+            periodStart.toISOString(),
+
+          dueDate:
+            dueDate.toISOString(),
+
+          amountDue,
+
+          daysLate,
+
+          daysPastGrace,
+
+          daysNewlyOwed,
+
+          feeAmount,
+
+          feeTxId,
+        });
+      }
+
+      const next =
+        periodEnd;
+
+      if (
+        next.getTime() <=
+        periodStart.getTime()
+      ) {
+        break;
+      }
+
+      cursor = next;
     }
   }
 
   return results;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Loan repayment late fees
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+
 export interface OverdueInstallment {
   loanId: string;
   memberId: string;
   memberName: string;
+
   installmentIndex: number;
+
   dueDate: string;
-  amountDue: number;         // the specific installment's total
+  amountDue: number;
+
   daysLate: number;
-  feeAmount: number;         // amountDue × ratePct / 100
+  daysPastGrace: number;
+  daysNewlyOwed: number;
+  feeAmount: number;
   feeTxId: string;
 }
 
-/**
- * Walk every disbursed loan's repayment schedule and surface installments
- * that are past due + grace period and not yet fully paid. Uses the same
- * deterministic-ID guard as contributions to avoid double-charging.
- */
+function loanFeeIdPrefix(
+  loanId: string,
+  index: number,
+): string {
+  return `late-fee-loan-${loanId}-${index}`;
+}
+
 export function findOverdueInstallments(
   group: Group,
   members: Member[],
@@ -162,46 +779,270 @@ export function findOverdueInstallments(
   existingWalletTxs: WalletTransaction[],
   asOf: Date = new Date(),
 ): OverdueInstallment[] {
-  const results: OverdueInstallment[] = [];
+  const results: OverdueInstallment[] =
+    [];
+
+  /**
+   * ---------------------------------------------------------------------------
+   * GLOBAL LOAN LATE-FEE ACTIVATION DATE
+   * ---------------------------------------------------------------------------
+   *
+   * This uses the loan late-fee start date.
+   *
+   * If your Group type uses the same global field for both
+   * contribution and loan late fees, this falls back to
+   * contributionLateFeeStartDate.
+   */
+  const loanStartDateRaw =
+    (
+      group as Group & {
+        loanLateFeeStartDate?: string;
+      }
+    ).loanLateFeeStartDate ??
+    group.contributionLateFeeStartDate;
+
+  if (!loanStartDateRaw) {
+    return [];
+  }
+
+  const loanStartDate =
+    new Date(loanStartDateRaw);
+
+  if (
+    Number.isNaN(
+      loanStartDate.getTime(),
+    )
+  ) {
+    return [];
+  }
+
+  // Nothing can accrue before the global activation date.
+  if (asOf < loanStartDate) {
+    return [];
+  }
 
   for (const loan of loans) {
-    if (loan.status !== "disbursed" || !loan.schedule) continue;
+    if (
+      loan.status !== "disbursed"
+    ) {
+      continue;
+    }
 
-    // Use the rate/grace period that was in effect when THIS loan was
-    // created, not whatever the group's setting is today — otherwise a
-    // later change to group.loanLateFeeRatePct would retroactively
-    // change what an existing borrower owes. Falls back to the group's
-    // current setting for loans created before this snapshot existed.
-    const ratePct = loan.lateFeeRatePct ?? group.loanLateFeeRatePct;
-    if (!ratePct || ratePct <= 0) continue;
-    const graceDays = loan.lateFeeGraceDays ?? group.loanLateFeeGraceDays ?? 0;
+    if (!loan.schedule) {
+      continue;
+    }
 
-    const member = members.find((m) => m.id === loan.memberId);
+    const ratePct =
+      loan.lateFeeRatePct ??
+      group.loanLateFeeRatePct;
 
-    loan.schedule.forEach((item, index) => {
-      if (item.paid) return;
-      const dueDate = new Date(item.dueDate);
-      const graceDate = new Date(dueDate);
-      graceDate.setDate(graceDate.getDate() + graceDays);
-      if (graceDate > asOf) return;
+    if (
+      !ratePct ||
+      ratePct <= 0
+    ) {
+      continue;
+    }
 
-      const feeTxId = `late-fee-loan-${loan.id}-${index}`;
-      const alreadyCharged = existingWalletTxs.some((t) => t.id === feeTxId);
-      if (alreadyCharged) return;
+    const graceDays =
+      Math.max(
+        0,
+        loan.lateFeeGraceDays ??
+          group.loanLateFeeGraceDays ??
+          0,
+      );
 
-      const daysLate = Math.floor((asOf.getTime() - dueDate.getTime()) / 86_400_000);
-      results.push({
-        loanId: loan.id,
-        memberId: loan.memberId,
-        memberName: member?.fullName ?? "Unknown",
-        installmentIndex: index,
-        dueDate: item.dueDate,
-        amountDue: item.total,
-        daysLate,
-        feeAmount: round2(item.total * (ratePct / 100)),
-        feeTxId,
-      });
-    });
+    const member =
+      members.find(
+        (m) =>
+          m.id === loan.memberId,
+      );
+
+    loan.schedule.forEach(
+      (item, index) => {
+        if (item.paid) {
+          return;
+        }
+
+        const dueDate =
+          new Date(
+            item.dueDate,
+          );
+
+        if (
+          Number.isNaN(
+            dueDate.getTime(),
+          )
+        ) {
+          return;
+        }
+
+        /**
+         * If the installment's grace period ended
+         * before the global activation date, we do not
+         * charge anything for the pre-activation days.
+         *
+         * If the installment remains overdue when the
+         * policy activates, calculation begins from the
+         * activation date.
+         */
+        const graceDate =
+          new Date(dueDate);
+
+        graceDate.setDate(
+          graceDate.getDate() +
+            graceDays,
+        );
+
+        /**
+         * First fee day is the day after the grace date.
+         *
+         * Example:
+         *
+         * Due: September 5
+         * Grace: 0
+         *
+         * September 5 => 0 fee-days
+         * September 6 => 1 fee-day
+         * September 7 => 2 fee-days
+         *
+         * If the global activation date is September 10,
+         * fee calculation starts on September 10 instead.
+         */
+        const activationBoundary =
+          new Date(loanStartDate);
+
+        activationBoundary.setDate(
+          activationBoundary.getDate() - 1,
+        );
+
+        const feeStartBoundary =
+          maxDate(
+            graceDate,
+            activationBoundary,
+          );
+
+        /**
+         * If the installment's grace period has not
+         * ended by the activation date, it still needs
+         * to wait for the grace period.
+         *
+         * If the installment itself is entirely before
+         * the activation date, there is no fee.
+         *
+         * For example:
+         *
+         * Due: August 5
+         * Grace: 5
+         * Start: September 1
+         *
+         * Grace ends: August 10
+         * The installment is already overdue when the
+         * policy activates, so calculation begins
+         * September 1.
+         */
+        if (
+          graceDate > asOf
+        ) {
+          return;
+        }
+
+        /**
+         * Calculate complete fee-days after both:
+         *
+         * 1. grace period
+         * 2. global activation date
+         *
+         * The activation date is inclusive.
+         */
+        const daysPastGrace =
+          Math.max(
+            0,
+            wholeDaysBetween(
+              feeStartBoundary,
+              asOf,
+            ),
+          );
+
+        if (
+          daysPastGrace <= 0
+        ) {
+          return;
+        }
+
+        const prefix =
+          loanFeeIdPrefix(
+            loan.id,
+            index,
+          );
+
+        const chargedSoFar =
+          daysAlreadyCharged(
+            prefix,
+            existingWalletTxs,
+          );
+
+        if (
+          daysPastGrace <=
+          chargedSoFar
+        ) {
+          return;
+        }
+
+        const daysNewlyOwed =
+          daysPastGrace -
+          chargedSoFar;
+
+        const daysLate =
+          Math.max(
+            0,
+            wholeDaysBetween(
+              dueDate,
+              asOf,
+            ),
+          );
+
+        const feeAmount =
+          round2(
+            item.total *
+              (ratePct / 100) *
+              daysNewlyOwed,
+          );
+
+        const feeTxId =
+          `${prefix}-d${daysPastGrace}`;
+
+        results.push({
+          loanId:
+            loan.id,
+
+          memberId:
+            loan.memberId,
+
+          memberName:
+            member?.fullName ??
+            "Unknown",
+
+          installmentIndex:
+            index,
+
+          dueDate:
+            item.dueDate,
+
+          amountDue:
+            item.total,
+
+          daysLate,
+
+          daysPastGrace,
+
+          daysNewlyOwed,
+
+          feeAmount,
+
+          feeTxId,
+        });
+      },
+    );
   }
 
   return results;

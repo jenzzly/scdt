@@ -47,9 +47,12 @@ export default function LoginScreen() {
   const [resetLoading, setResetLoading] = useState(false);
   const [resetSent,    setResetSent]    = useState(false);
   const [showPw,       setShowPw]       = useState(false);
+  const [loginMode,    setLoginMode]    = useState<"password" | "token">("password");
+  const [token,        setToken]        = useState("");
 
   const passwordRef = useRef<RNTextInput>(null);
   const emailRef    = useRef<RNTextInput>(null);
+  const tokenRef    = useRef<RNTextInput>(null);
 
   useEffect(() => {
     if (Platform.OS === "web" && emailRef.current) {
@@ -58,30 +61,77 @@ export default function LoginScreen() {
   }, []);
 
   const handleLogin = async () => {
-    if (!email.trim()) { show("Email address is required", "error"); emailRef.current?.focus(); return; }
-    if (!password)     { show("Password is required",      "error"); passwordRef.current?.focus(); return; }
-    setLoading(true);
-    try {
-      const user = await signIn(email.trim(), password);
-      const member = await FS.ensureMemberExists(
-        FIXED_GROUP_ID, user.uid, user.displayName || email.trim(), email.trim(),
-      );
-      if (member && member.totalContributions > 0) {
-        show(`Welcome back! Balance: ${fmtCurrency(member.totalContributions)}`, "success");
-      }
-      recalcTotals();
-      setActiveGroup(FIXED_GROUP_ID);
-      router.replace("/(tabs)/dashboard");
-    } catch (e: any) {
-      const code = e?.code ?? "";
-      const msg =
-        code === "auth/invalid-credential" ? "Invalid email or password" :
-        code === "auth/user-not-found"     ? "No account found with this email" :
-        code === "auth/too-many-requests"  ? "Too many failed attempts. Try again later" :
-        "Login failed. Please try again.";
-      show(msg, "error");
-      passwordRef.current?.focus();
-    } finally { setLoading(false); }
+    if (loginMode === "password") {
+      if (!email.trim()) { show("Email address is required", "error"); emailRef.current?.focus(); return; }
+      if (!password)     { show("Password is required",      "error"); passwordRef.current?.focus(); return; }
+      setLoading(true);
+      try {
+        const user = await signIn(email.trim(), password);
+        const member = await FS.ensureMemberExists(
+          FIXED_GROUP_ID, user.uid, user.displayName || email.trim(), email.trim(),
+        );
+        if (member && member.totalContributions > 0) {
+          show(`Welcome back! Balance: ${fmtCurrency(member.totalContributions)}`, "success");
+        }
+        recalcTotals();
+        setActiveGroup(FIXED_GROUP_ID);
+        router.replace("/(tabs)/dashboard");
+      } catch (e: any) {
+        const code = e?.code ?? "";
+        const msg =
+          code === "auth/invalid-credential" ? "Invalid email or password" :
+          code === "auth/user-not-found"     ? "No account found with this email" :
+          code === "auth/too-many-requests"  ? "Too many failed attempts. Try again later" :
+          "Login failed. Please try again.";
+        show(msg, "error");
+        passwordRef.current?.focus();
+      } finally { setLoading(false); }
+    } else {
+      // Token-based login - simplified version that prompts for email after token verification
+      if (!token.trim()) { show("Login token is required", "error"); tokenRef.current?.focus(); return; }
+      setLoading(true);
+      try {
+        // Look up member by token
+        const members = await FS.getMembers(FIXED_GROUP_ID);
+        const member = members.find(m => m.loginToken === token.trim());
+        
+        if (!member) {
+          show("Invalid login token", "error");
+          setLoading(false);
+          return;
+        }
+        
+        // Check if token is expired
+        if (!member.loginTokenExpiry || new Date(member.loginTokenExpiry) < new Date()) {
+          show("Login token has expired. Please request a new one.", "error");
+          setLoading(false);
+          return;
+        }
+        
+        // For token login, we need their email to proceed with Firebase auth
+        if (!member.email) {
+          show("No email address configured for this account. Contact admin.", "error");
+          setLoading(false);
+          return;
+        }
+        
+        // Token verified - switch to password mode with email pre-filled
+        // They'll need to use password reset to set their password
+        show(`Token verified for ${member.fullName}. Please reset your password to continue.`, "success");
+        
+        // Send password reset email
+        await resetPassword(member.email);
+        
+        // Switch to password mode and pre-fill email
+        setLoginMode("password");
+        setEmail(member.email);
+        setPassword("");
+        setToken("");
+        
+      } catch (e: any) {
+        show(e.message || "Token login failed", "error");
+      } finally { setLoading(false); }
+    }
   };
 
   const handleReset = async () => {
@@ -122,49 +172,95 @@ export default function LoginScreen() {
   // subtree and kicks focus out of the field after each character typed.
   const formJsx = (
     <View style={f.form}>
-      <Input
-        ref={emailRef as any}
-        label="Email Address"
-        value={email}
-        onChangeText={setEmail}
-        placeholder="you@example.com"
-        keyboardType="email-address"
-        autoCapitalize="none"
-        autoComplete="email"
-        returnKeyType="next"
-        onSubmitEditing={() => passwordRef.current?.focus()}
-        leftIcon="📧"
-      />
+      {/* Login mode toggle */}
+      <View style={f.loginModeToggle}>
+        <TouchableOpacity
+          style={[f.modeButton, loginMode === "password" && f.modeButtonActive]}
+          onPress={() => setLoginMode("password")}
+          activeOpacity={0.7}
+        >
+          <Text style={[f.modeButtonText, loginMode === "password" && f.modeButtonTextActive]}>
+            Password
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[f.modeButton, loginMode === "token" && f.modeButtonActive]}
+          onPress={() => setLoginMode("token")}
+          activeOpacity={0.7}
+        >
+          <Text style={[f.modeButtonText, loginMode === "token" && f.modeButtonTextActive]}>
+            Token
+          </Text>
+        </TouchableOpacity>
+      </View>
 
-      <Input
-        ref={passwordRef as any}
-        label="Password"
-        value={password}
-        onChangeText={setPassword}
-        placeholder="Enter your password"
-        secureTextEntry={!showPw}
-        autoCapitalize="none"
-        autoComplete="password"
-        returnKeyType="go"
-        onSubmitEditing={handleLogin}
-        onKeyPress={(e: any) => { if (e.nativeEvent?.key === "Enter" || e.key === "Enter") handleLogin(); }}
-        leftIcon="🔒"
-        right={
-          <TouchableOpacity onPress={() => setShowPw(!showPw)} activeOpacity={0.7}>
-            <Text style={f.showHide}>{showPw ? "HIDE" : "SHOW"}</Text>
+      {loginMode === "password" ? (
+        <>
+          <Input
+            ref={emailRef as any}
+            label="Email Address"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="you@example.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoComplete="email"
+            returnKeyType="next"
+            onSubmitEditing={() => passwordRef.current?.focus()}
+            leftIcon="📧"
+          />
+
+          <Input
+            ref={passwordRef as any}
+            label="Password"
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Enter your password"
+            secureTextEntry={!showPw}
+            autoCapitalize="none"
+            autoComplete="password"
+            returnKeyType="go"
+            onSubmitEditing={handleLogin}
+            onKeyPress={(e: any) => { if (e.nativeEvent?.key === "Enter" || e.key === "Enter") handleLogin(); }}
+            leftIcon="🔒"
+            right={
+              <TouchableOpacity onPress={() => setShowPw(!showPw)} activeOpacity={0.7}>
+                <Text style={f.showHide}>{showPw ? "HIDE" : "SHOW"}</Text>
+              </TouchableOpacity>
+            }
+          />
+
+          <TouchableOpacity onPress={handleReset} disabled={resetLoading} style={f.forgotRow} activeOpacity={0.7}>
+            {resetLoading ? (
+              <ActivityIndicator size="small" color={Colors.accent} />
+            ) : resetSent ? (
+              <Text style={f.resetSent}>✓ Reset email sent!</Text>
+            ) : (
+              <Text style={f.forgot}>Forgot password?</Text>
+            )}
           </TouchableOpacity>
-        }
-      />
-
-      <TouchableOpacity onPress={handleReset} disabled={resetLoading} style={f.forgotRow} activeOpacity={0.7}>
-        {resetLoading ? (
-          <ActivityIndicator size="small" color={Colors.accent} />
-        ) : resetSent ? (
-          <Text style={f.resetSent}>✓ Reset email sent!</Text>
-        ) : (
-          <Text style={f.forgot}>Forgot password?</Text>
-        )}
-      </TouchableOpacity>
+        </>
+      ) : (
+        <>
+          <Input
+            ref={tokenRef as any}
+            label="Login Token"
+            value={token}
+            onChangeText={setToken}
+            placeholder="Enter your login token"
+            autoCapitalize="none"
+            autoComplete="off"
+            returnKeyType="go"
+            onSubmitEditing={handleLogin}
+            onKeyPress={(e: any) => { if (e.nativeEvent?.key === "Enter" || e.key === "Enter") handleLogin(); }}
+            leftIcon="🔑"
+          />
+          <Text style={f.tokenHint}>
+            Enter the token provided by your group administrator. Tokens expire after 24 hours.
+            After verification, you'll need to set your password via email.
+          </Text>
+        </>
+      )}
 
       <Button label="Sign In" onPress={handleLogin} fullWidth loading={loading} size="lg" />
     </View>
@@ -419,10 +515,41 @@ const f = StyleSheet.create({
 
   // Form
   form: { marginBottom: 20 },
+  loginModeToggle: {
+    flexDirection: "row",
+    backgroundColor: Colors.elevated,
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 16,
+  },
+  modeButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  modeButtonActive: {
+    backgroundColor: Colors.surface,
+  },
+  modeButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: Colors.text3,
+  },
+  modeButtonTextActive: {
+    color: Colors.text,
+  },
   showHide: { color: Colors.accent, fontSize: 12, fontWeight: "700" },
   forgotRow: { alignSelf: "flex-end", marginTop: 8, marginBottom: 16, minHeight: 20, justifyContent: "center" },
   forgot:    { color: Colors.accent, fontSize: 13, fontWeight: "600" },
   resetSent: { color: Colors.success, fontSize: 13, fontWeight: "600" },
+  tokenHint: {
+    fontSize: 11,
+    color: Colors.text3,
+    marginTop: 8,
+    marginBottom: 16,
+    textAlign: "center",
+  },
 
   // Footer register link
   registerRow: {

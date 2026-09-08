@@ -187,6 +187,7 @@ export const createWalletSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
           memberId: overdue.memberId,
           createdAt: now,
           createdBy: authUid ?? undefined,
+          feePaid: false,
         };
 
         get().addWalletTxLocal(tx);

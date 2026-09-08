@@ -53,7 +53,7 @@ export const useStore = create<StoreState>()(
   persist(
     (set: SetFn, get: GetFn) => ({
       // ── Initial state ──────────────────────────────────────────────────
-      dataViewMode: "personal",
+      dataViewMode: "personal", // Will be adjusted based on role after auth
       authUid: null, 
       authName: null, 
       authEmail: null,
@@ -99,9 +99,21 @@ export const useStore = create<StoreState>()(
         if (member) {
           console.log(`[Store] Setting current member: ${member.fullName}, role: ${member.role}, id: ${member.id}`);
           set({ currentMember: member });
+          
+          // Set default view mode based on role
+          // Admins and anyone who is not a regular member should default to group view
+          const isNotRegularMember = member.role !== "member";
+          
+          if (isNotRegularMember) {
+            set({ dataViewMode: "group" });
+          } else {
+            set({ dataViewMode: "personal" });
+          }
         } else {
           console.log('[Store] Clearing current member');
           set({ currentMember: null });
+          // Reset to personal view when no member
+          set({ dataViewMode: "personal" });
         }
       },
       

@@ -16,6 +16,7 @@ import type { AuditLog, MemberPermissions, Member } from "../types";
 import { DEFAULT_MEMBER_PERMISSIONS } from "../types";
 import { USER_ROLES, ROLE_LABELS } from "../types/roles";
 import { createUserAsAdmin, resetUserPasswordAsAdmin } from "../lib/auth/adminUsers";
+import { generateLoginToken } from "../utils/authTokens";
 
 // ─────────────────────────────────────────────
 // Constants
@@ -406,6 +407,7 @@ export default function GroupSettingsScreen() {
   const [pendingPerms, setPendingPerms] = useState<Record<string, MemberPermissions>>({});
   const [permSearch, setPermSearch] = useState("");
   const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
+  const [tokenGenerating, setTokenGenerating] = useState<string | null>(null);
 
   // ─── Member Management Stats ────────────────────────────────────────────
   const memberStats = useMemo(() => {
@@ -607,6 +609,22 @@ export default function GroupSettingsScreen() {
       setPermSaving(null);
     }
   }, [getMemberPerms, show]);
+
+  const generateMemberToken = useCallback(async (member: Member) => {
+    setTokenGenerating(member.id);
+    try {
+      const tokenData = generateLoginToken();
+      await useStore.getState().updateMember(member.id, {
+        loginToken: tokenData.token,
+        loginTokenExpiry: tokenData.expiry,
+      });
+      show(`Login token generated for ${member.fullName}: ${tokenData.token}`, "success");
+    } catch (e: any) {
+      show(e.message || "Failed to generate login token", "error");
+    } finally {
+      setTokenGenerating(null);
+    }
+  }, [show]);
 
   // ─── Audit Filters ──────────────────────────────────────────────────────
   useEffect(() => { setCurrentPage(1); }, [activeTab, searchTerm, selectedYear, selectedMonth, selectedDay]);
@@ -1443,6 +1461,15 @@ export default function GroupSettingsScreen() {
                         </Text>
                       </View>
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <TouchableOpacity
+                          style={[permStyles.tokenBtn, tokenGenerating === member.id && permStyles.tokenBtnDisabled]}
+                          onPress={() => generateMemberToken(member)}
+                          disabled={tokenGenerating === member.id}
+                        >
+                          {tokenGenerating === member.id
+                            ? <ActivityIndicator size="small" color="#fff" />
+                            : <Text style={permStyles.tokenBtnText}>🔑 Token</Text>}
+                        </TouchableOpacity>
                         {isDirty && (
                           <TouchableOpacity
                             style={[permStyles.saveBtn, isSaving && permStyles.saveBtnDisabled]}
@@ -2129,6 +2156,14 @@ const permStyles = StyleSheet.create({
   },
   saveBtnDisabled: { opacity: 0.6 },
   saveBtnText: { fontSize: 11, fontWeight: "700", color: "#fff" },
+  tokenBtn: {
+    backgroundColor: C.accent,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  tokenBtnDisabled: { opacity: 0.6 },
+  tokenBtnText: { fontSize: 11, fontWeight: "700", color: "#fff" },
 });
 
 // ─────────────────────────────────────────────

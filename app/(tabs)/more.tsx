@@ -33,7 +33,7 @@ export default function MoreScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { signOut } = useAuth();
+  const { signOut, resetPassword } = useAuth();
   const { show, visible, msg, type } = useToast();
   
   const group = useStore((s) => s.groups.find(g => g.id === s.activeGroupId));
@@ -64,6 +64,7 @@ export default function MoreScreen() {
 
   const [editOpen, setEditOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
 
   const [editForm, setEditForm] = useState({
     fullName: "", email: "", phone: "", languagePreference: "en",
@@ -132,6 +133,22 @@ export default function MoreScreen() {
       undefined,
       true,
     );
+  };
+
+  const handlePasswordReset = async () => {
+    if (!authEmail) {
+      show("No email address found for password reset", "error");
+      return;
+    }
+    setResetLoading(true);
+    try {
+      await resetPassword(authEmail);
+      show("Password reset email sent to " + authEmail, "success");
+    } catch (e: any) {
+      show(e.message || "Failed to send password reset email", "error");
+    } finally {
+      setResetLoading(false);
+    }
   };
 
   // ── Desktop layout ──────────────────────────────────────────────────
@@ -262,6 +279,17 @@ export default function MoreScreen() {
             )}
 
             <View style={st.divider} />
+
+            <TouchableOpacity
+              style={st.passwordResetBtn}
+              onPress={handlePasswordReset}
+              disabled={resetLoading}
+              activeOpacity={0.8}
+            >
+              <Text style={st.passwordResetText}>
+                {resetLoading ? "Sending..." : "Reset Password"}
+              </Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={st.signOutBtn}
@@ -470,6 +498,17 @@ export default function MoreScreen() {
         )}
 
         <View style={st.divider} />
+
+        <TouchableOpacity
+          style={st.passwordResetBtn}
+          onPress={handlePasswordReset}
+          disabled={resetLoading}
+          activeOpacity={0.8}
+        >
+          <Text style={st.passwordResetText}>
+            {resetLoading ? "Sending..." : "Reset Password"}
+          </Text>
+        </TouchableOpacity>
 
         <TouchableOpacity
           style={st.signOutBtn}
@@ -700,6 +739,20 @@ const st = StyleSheet.create({
     height: 1,
     backgroundColor: Colors.border,
     marginVertical: 24,
+  },
+  passwordResetBtn: {
+    backgroundColor: "rgba(59,130,246,0.06)",
+    borderWidth: 1.5,
+    borderColor: "rgba(59,130,246,0.25)",
+    borderRadius: R.lg,
+    paddingVertical: 14,
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  passwordResetText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: Colors.primary,
   },
   signOutBtn: {
     backgroundColor: "rgba(220,38,38,0.06)",
