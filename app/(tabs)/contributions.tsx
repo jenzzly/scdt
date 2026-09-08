@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  Platform,
   useWindowDimensions,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -18,7 +17,6 @@ import {
   useCurrentUserRole,
   useCurrentMember,
   useCanSeeAllFinancial,
-  useIsAdminView,
   useIsGroupView,
   useCurrentMemberPermissions,
   useActiveGroup,
