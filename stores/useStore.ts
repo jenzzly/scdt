@@ -127,7 +127,30 @@ export const useStore = create<StoreState>()(
         }
       },
       
-      reset: () =>
+      clearDataCache: () => {
+        set({
+          members: [],
+          contributions: [],
+          loans: [],
+          investments: [],
+          walletTransactions: [],
+          expenses: [],
+          meetings: [],
+          notifications: [],
+          auditLogs: [],
+          deletionRecords: [],
+          currentMember: null,
+        });
+        try {
+          if (typeof window !== "undefined" && window.localStorage) {
+            window.localStorage.removeItem("scdt-v2");
+          }
+        } catch (e) {
+          console.warn("[Store] Failed to clear local storage cache", e);
+        }
+      },
+
+      reset: () => {
         set({
           dataViewMode: "personal",
           authUid: null, 
@@ -142,9 +165,17 @@ export const useStore = create<StoreState>()(
           expenses: [], 
           meetings: [], 
           notifications: [],
+          auditLogs: [],
+          deletionRecords: [],
           activeGroupId: null,
           currentMember: null,
-        }),
+        });
+        try {
+          if (typeof window !== "undefined" && window.localStorage) {
+            window.localStorage.removeItem("scdt-v2");
+          }
+        } catch (e) {}
+      },
     }),
     {
       name: "scdt-v2",
@@ -193,18 +224,15 @@ export const useStore = create<StoreState>()(
         } else if (state) {
           console.log('[Store] Rehydrating storage...');
           
-          // Set currentMember based on authUid
-          if (state.authUid) {
+          // Populate currentMember synchronously on the rehydrated state object
+          if (state.authUid && state.members) {
             const currentMember = state.members.find((m) => m.userId === state.authUid);
             if (currentMember) {
-              console.log(`[Store] Rehydration: Setting currentMember ${currentMember.fullName}, role: ${currentMember.role}`);
-              (useStore as any).setState({ currentMember });
-            } else {
-              console.log('[Store] Rehydration: No member found for auth uid');
+              state.currentMember = currentMember;
             }
           }
           
-          // Recalculate totals as soon as rehydration completes.
+          // Recalculate totals and sync currentMember as soon as rehydration completes.
           //
           // IMPORTANT: onRehydrateStorage's callback can run *during*
           // the create(...) call below that assigns `useStore` itself —
@@ -215,26 +243,22 @@ export const useStore = create<StoreState>()(
           // the module-level `const useStore = create(...)` hasn't
           // finished executing yet at that point. Every attempt — not
           // just retries — therefore has to go through some async
-          // boundary (setTimeout) before touching `useStore`, even
-          // though `state` itself is already the real, fully-rehydrated
-          // data by this point and needs no further delay on its own
-          // merits.
-          //
-          // What actually changed from the original: the *first*
-          // attempt no longer waits a flat, arbitrary 200ms — it only
-          // waits long enough to escape the current synchronous
-          // execution (setTimeout(..., 0), which still defers to the
-          // next macrotask, by which point `useStore`'s assignment has
-          // completed). That was the real source of user-visible delay
-          // on every app launch: totals sat stale for 200ms+ before the
-          // real numbers appeared on screens like the dashboard that
-          // read them immediately on mount. Retries after a genuine
-          // failure still back off by `attempt * 200`ms, same as before.
+          // boundary (setTimeout) before touching `useStore`.
           const attemptRecalc = (attempt: number) => {
             setTimeout(() => {
               try {
+                let memberUpdates: Partial<StoreState> = {};
+                if (state.authUid && state.members) {
+                  const member = state.members.find((m) => m.userId === state.authUid);
+                  if (member) {
+                    console.log(`[Store] Rehydration: Setting currentMember ${member.fullName}, role: ${member.role}`);
+                    memberUpdates = { currentMember: member };
+                  } else {
+                    console.log('[Store] Rehydration: No member found for auth uid');
+                  }
+                }
                 const updates = recalcGroupTotals(state as StoreState);
-                (useStore as any).setState(updates);
+                (useStore as any).setState({ ...memberUpdates, ...updates });
               } catch (e) {
                 console.error(`Failed to recalc totals during rehydration (attempt ${attempt}):`, e);
                 if (attempt < 3) {
