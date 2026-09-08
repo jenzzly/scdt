@@ -47,7 +47,7 @@ import {
   fmtDate,
 } from "../../utils/theme";
 
-import { exportCsv, exportPdf } from "../../utils/export";
+import { exportXlsx, importXlsx, exportPdf, generatePaymentScheduleHtml as _unused } from "../../utils/export";
 import { findOverdueContributions } from "../../utils/lateFees";
 import { getCurrentGoalPeriod } from "../../lib/firestore/contributionGoals";
 
@@ -58,10 +58,7 @@ import type {
 
 import { KpiCard } from "../../components/ui/KpiCard";
 
-const STATUS_COLOR: Record<
-  string,
-  "teal" | "gold" | "green" | "red" | "muted"
-> = {
+const STATUS_COLOR: Record<string, "teal" | "gold" | "green" | "red" | "muted"> = {
   approved: "green",
   pending: "gold",
   rejected: "red",
@@ -94,28 +91,6 @@ const TYPE_OPTIONS = [
     value,
   })),
 ];
-
-function generateHtmlTable(headers: string[], rows: any[][]) {
-  return `
-    <table>
-      <thead>
-        <tr>
-          ${headers.map((h) => `<th>${h}</th>`).join("")}
-        </tr>
-      </thead>
-      <tbody>
-        ${rows
-          .map(
-            (row) =>
-              `<tr>${row
-                .map((cell) => `<td>${cell}</td>`)
-                .join("")}</tr>`
-          )
-          .join("")}
-      </tbody>
-    </table>
-  `;
-}
 
 const Divider = () => (
   <View
@@ -222,6 +197,8 @@ export default function ContributionsScreen() {
   const [viewMode, setViewMode] =
     useState<"list" | "monthly">("list");
 
+  const [importing, setImporting] = useState(false);
+
   // ---------------------------------------------------------------------------
   // Late fees
   //
@@ -303,22 +280,55 @@ export default function ContributionsScreen() {
   ]);
 
   // ---------------------------------------------------------------------------
+  // Load current goal period
+  // ---------------------------------------------------------------------------
+
+  React.useEffect(() => {
+    if (!activeGroupId) return;
+
+    (async () => {
+      try {
+        const period =
+          await getCurrentGoalPeriod(
+            activeGroupId
+          );
+
+        setGoalPeriod(period);
+      } catch (e) {
+        console.error(
+          "[Contributions] Failed to load goal period:",
+          e
+        );
+      }
+    })();
+  }, [activeGroupId]);
+
+  // ---------------------------------------------------------------------------
   // Collection statistics
+  //
+  // totalExpected is driven directly by the group's goal target — NOT a
+  // "periods elapsed since joining" estimate, which drifted from what's
+  // actually configured in group settings.
+  //
+  //   Group view:    totalExpected = goal target × active member count
+  //   Personal view: totalExpected = goal target (single member)
+  //
+  // Falls back to the plain contributionAmount if no goal period is
+  // configured yet, so the KPI still shows something sensible.
   // ---------------------------------------------------------------------------
 
   const collectionStats = useMemo(() => {
-    if (
-      !group ||
-      !allMembers ||
-      !allContributions
-    ) {
+    if (!group || !allMembers) {
       return null;
     }
 
     const contributionAmount =
       group.contributionAmount || 0;
 
-    if (contributionAmount <= 0) {
+    const perMemberTarget =
+      goalPeriod?.targetAmount ?? contributionAmount;
+
+    if (perMemberTarget <= 0) {
       return null;
     }
 
@@ -326,35 +336,16 @@ export default function ContributionsScreen() {
       (m) => m.status === "active"
     );
 
-    const now = new Date();
-
-    let totalExpected = 0;
-
-    activeMembers.forEach((member) => {
-      if (!member.dateJoined) return;
-
-      const joinDate = new Date(
-        member.dateJoined
-      );
-
-      let periods =
-        Math.floor(
-          (now.getTime() -
-            joinDate.getTime()) /
-            (365 * 24 * 60 * 60 * 1000)
-        ) + 1;
-
-      periods = Math.max(0, periods);
-
-      totalExpected +=
-        contributionAmount * periods;
-    });
+    const totalExpected = isGroupView
+      ? perMemberTarget * activeMembers.length
+      : perMemberTarget;
 
     const totalCollected = allContributions
       .filter(
         (c) =>
           c.status === "approved" &&
-          c.contributionType === "regular"
+          c.contributionType === "regular" &&
+          (isGroupView || c.memberId === currentMember?.id)
       )
       .reduce(
         (sum, c) =>
@@ -388,6 +379,9 @@ export default function ContributionsScreen() {
     allMembers,
     allContributions,
     visibleLateFees,
+    goalPeriod,
+    isGroupView,
+    currentMember?.id,
   ]);
 
   // ---------------------------------------------------------------------------
@@ -494,31 +488,15 @@ export default function ContributionsScreen() {
   ]);
 
   // ---------------------------------------------------------------------------
-  // Load current goal period
-  // ---------------------------------------------------------------------------
-
-  React.useEffect(() => {
-    if (!activeGroupId) return;
-
-    (async () => {
-      try {
-        const period =
-          await getCurrentGoalPeriod(
-            activeGroupId
-          );
-
-        setGoalPeriod(period);
-      } catch (e) {
-        console.error(
-          "[Contributions] Failed to load goal period:",
-          e
-        );
-      }
-    })();
-  }, [activeGroupId]);
-
-  // ---------------------------------------------------------------------------
   // Goal progress
+  //
+  // - target        → personal goal (single member's target for the period)
+  // - groupTarget   → target × active member count (matches collectionStats)
+  // - percentage    → my progress vs my target
+  // - groupPercentage → group progress vs groupTarget
+  //
+  // Both figures are always computed regardless of isGroupView, so the goal
+  // card can show Personal AND Group side by side rather than swapping.
   // ---------------------------------------------------------------------------
 
   const goalProgress = useMemo(() => {
@@ -584,6 +562,14 @@ export default function ContributionsScreen() {
     const target =
       goalPeriod.targetAmount;
 
+    // Group target = personal target × active members — matches
+    // collectionStats.totalExpected exactly.
+    const activeMemberCount = allMembers.filter(
+      (m) => m.status === "active"
+    ).length;
+
+    const groupTarget = target * activeMemberCount;
+
     const percentage =
       target > 0
         ? Math.round(
@@ -594,10 +580,10 @@ export default function ContributionsScreen() {
         : 0;
 
     const groupPercentage =
-      target > 0
+      groupTarget > 0
         ? Math.round(
             (groupTotalContributed /
-              target) *
+              groupTarget) *
               100
           )
         : 0;
@@ -620,6 +606,7 @@ export default function ContributionsScreen() {
       totalContributed,
       groupTotalContributed,
       target,
+      groupTarget,
       remaining,
       percentage,
       groupPercentage,
@@ -631,6 +618,7 @@ export default function ContributionsScreen() {
   }, [
     goalPeriod,
     allContributions,
+    allMembers,
     isGroupView,
     currentMember?.id,
   ]);
@@ -1041,13 +1029,11 @@ export default function ContributionsScreen() {
     };
 
   // ---------------------------------------------------------------------------
-  // Export
+  // Export / Import — Excel (.xlsx) only. CSV has been removed.
   // ---------------------------------------------------------------------------
 
   const handleExport =
-    async (
-      format: "csv" | "pdf"
-    ) => {
+    async () => {
       const headers = [
         "Date",
         "Member",
@@ -1067,9 +1053,7 @@ export default function ContributionsScreen() {
             c.contributionType
           ] ??
             c.contributionType,
-          fmtCurrency(
-            c.amount
-          ),
+          c.amount,
           c.status,
           c.description ?? "",
         ]);
@@ -1086,27 +1070,52 @@ export default function ContributionsScreen() {
             }`
           : "Contributions_Report";
 
-      if (format === "csv") {
-        await exportCsv(
-          fileName,
-          headers,
-          rows
-        );
-      } else {
-        await exportPdf(
-          fileName,
-          "Contributions Report",
-          generateHtmlTable(
-            headers,
-            rows
-          )
-        );
+      try {
+        await exportXlsx(fileName, headers, rows);
+        show("Exported as Excel");
+      } catch (e: any) {
+        show(e?.message || "Failed to export", "error");
+      }
+    };
+
+  const handleImport = async () => {
+    if (!activeGroupId) {
+      show("No active group", "error");
+      return;
+    }
+
+    setImporting(true);
+    try {
+      // Expected columns, in order: Date, Member, Type, Amount, Status, Description
+      const rows = await importXlsx();
+
+      if (!rows || rows.length === 0) {
+        show("No data found in file", "error");
+        return;
       }
 
-      show(
-        `Exported as ${format.toUpperCase()}`
-      );
-    };
+      const bulkImport = (useStore.getState() as any)
+        .bulkImportContributions;
+
+      if (typeof bulkImport !== "function") {
+        show(
+          "Import is not wired up yet — bulkImportContributions is missing from the store",
+          "error"
+        );
+        return;
+      }
+
+      const result = await bulkImport(rows, activeGroupId);
+      show(`Imported ${result?.count ?? rows.length} contributions`);
+      recalcTotals();
+    } catch (e: any) {
+      if (e?.message !== "Cancelled") {
+        show(e?.message || "Failed to import file", "error");
+      }
+    } finally {
+      setImporting(false);
+    }
+  };
 
   // ---------------------------------------------------------------------------
   // Render
@@ -1170,11 +1179,7 @@ export default function ContributionsScreen() {
               style={
                 st.iconBtn
               }
-              onPress={() =>
-                handleExport(
-                  "csv"
-                )
-              }
+              onPress={handleExport}
               activeOpacity={0.8}
             >
               <Text
@@ -1183,6 +1188,25 @@ export default function ContributionsScreen() {
                 }
               >
                 Export
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {canExport && (
+            <TouchableOpacity
+              style={
+                st.iconBtn
+              }
+              onPress={handleImport}
+              activeOpacity={0.8}
+              disabled={importing}
+            >
+              <Text
+                style={
+                  st.iconBtnText
+                }
+              >
+                {importing ? "Importing…" : "Import"}
               </Text>
             </TouchableOpacity>
           )}
@@ -1224,7 +1248,7 @@ export default function ContributionsScreen() {
           false
         }
       >
-        {/* Contribution Goals Card */}
+        {/* Contribution Goals Card — shows BOTH personal and group goal */}
 
         {goalProgress && (
           <View
@@ -1246,6 +1270,7 @@ export default function ContributionsScreen() {
               }
             />
 
+            {/* ── Personal goal ── */}
             <View
               style={{
                 flexDirection:
@@ -1272,9 +1297,7 @@ export default function ContributionsScreen() {
                   }
                 >
                   {goalProgress.isCompleted
-                    ? "✓ GOAL ACHIEVED"
-                    : isGroupView
-                    ? "GROUP CONTRIBUTION GOAL"
+                    ? "✓ MY GOAL ACHIEVED"
                     : "MY CONTRIBUTION GOAL"}
                 </Text>
 
@@ -1355,7 +1378,7 @@ export default function ContributionsScreen() {
               </View>
             </View>
 
-            {/* Progress bar */}
+            {/* Personal progress bar */}
 
             <View
               style={
@@ -1381,48 +1404,86 @@ export default function ContributionsScreen() {
               />
             </View>
 
-            {!isGroupView && (
+            {/* ── Group goal — always shown, not just in one view ── */}
+
+            <View style={st.goalDividerLine} />
+
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                marginTop: 12,
+              }}
+            >
               <View
                 style={{
-                  flexDirection:
-                    "row",
-                  alignItems:
-                    "center",
-                  justifyContent:
-                    "space-between",
-                  marginTop: 8,
-                  gap: 8,
+                  flex: 1,
+                  minWidth: 0,
                 }}
               >
                 <Text
-                  style={
-                    st.goalDaysLeft
-                  }
-                  numberOfLines={
-                    1
-                  }
+                  style={st.goalLabel}
+                  numberOfLines={1}
                 >
-                  Group total:{" "}
-                  {fmtCurrency(
-                    goalProgress.groupTotalContributed
-                  )}
+                  {goalProgress.groupPercentage >= 100
+                    ? "✓ GROUP GOAL ACHIEVED"
+                    : "GROUP CONTRIBUTION GOAL"}
                 </Text>
 
                 <Text
-                  style={
-                    st.goalDaysLeft
-                  }
-                  numberOfLines={
-                    1
-                  }
+                  style={[st.goalAmount, { fontSize: 20 }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
                 >
-                  {
-                    goalProgress.groupPercentage
-                  }
-                  % of goal
+                  <Text style={st.balanceCurrency}>
+                    {group?.currency ?? "RWF"}{" "}
+                  </Text>
+
+                  {fmtCurrency(
+                    goalProgress.groupTotalContributed,
+                    group?.currency ?? "RWF"
+                  ).replace(`${group?.currency ?? "RWF"} `, "")}
                 </Text>
               </View>
-            )}
+
+              <View
+                style={{
+                  alignItems: "flex-end",
+                  flexShrink: 0,
+                  marginLeft: 8,
+                }}
+              >
+                <Text
+                  style={[
+                    st.goalPercentage,
+                    { fontSize: 16 },
+                    goalProgress.groupPercentage >= 100 && {
+                      color: Colors.green,
+                    },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {goalProgress.groupPercentage}%
+                </Text>
+              </View>
+            </View>
+
+            <View style={st.progressBarContainer}>
+              <View
+                style={[
+                  st.progressBar,
+                  {
+                    width: `${Math.min(100, goalProgress.groupPercentage)}%`,
+                    backgroundColor:
+                      goalProgress.groupPercentage >= 100
+                        ? Colors.green
+                        : Colors.accent,
+                  },
+                ]}
+              />
+            </View>
 
             <View
               style={{
@@ -1465,7 +1526,9 @@ export default function ContributionsScreen() {
                   }
                 >
                   {fmtCurrency(
-                    goalProgress.target
+                    isGroupView
+                      ? goalProgress.groupTarget
+                      : goalProgress.target
                   )}
                 </Text>
               </View>
@@ -1583,7 +1646,11 @@ export default function ContributionsScreen() {
                   : "—"
               }
               icon="📋"
-              subtext="Expected contributions"
+              subtext={
+                isGroupView
+                  ? "Goal target × active members"
+                  : "Your goal target"
+              }
               accentColor={
                 C.accent
               }
@@ -2229,8 +2296,7 @@ export default function ContributionsScreen() {
                         </View>
                       </View>
 
-                      {i <
-                        memberGoalRows.length -
+                      {i < memberGoalRows.length -
                           1 && (
                         <Divider />
                       )}
@@ -2383,8 +2449,7 @@ export default function ContributionsScreen() {
                         </View>
                       </View>
 
-                      {index <
-                        visibleLateFees.length -
+                      {index < visibleLateFees.length -
                           1 && (
                         <Divider />
                       )}
@@ -2561,8 +2626,7 @@ export default function ContributionsScreen() {
                       }
                     />
 
-                    {i <
-                      paginated.length -
+                    {i < paginated.length -
                         1 && (
                       <Divider />
                     )}
@@ -3081,8 +3145,7 @@ const Pagination = ({
             st.pageBtnDisabled,
         ]}
         onPress={() =>
-          page <
-            totalPages &&
+          page < totalPages &&
           setPage(page + 1)
         }
         disabled={
@@ -3338,6 +3401,12 @@ const st = StyleSheet.create({
     color:
       "rgba(255,255,255,0.5)",
     marginTop: 2,
+  },
+
+  goalDividerLine: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    marginTop: 4,
   },
 
   progressBarContainer: {

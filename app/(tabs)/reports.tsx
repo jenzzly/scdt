@@ -1,101 +1,513 @@
-// app/(tabs)/reports.tsx - Fixed header
+// app/(tabs)/reports.tsx
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-  View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Platform, StatusBar, useWindowDimensions,
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  StatusBar,
+  useWindowDimensions,
+  Modal,
+  Platform,
 } from "react-native";
-import { useRouter } from "expo-router";
+
 import {
-  useStore,
-  useActiveGroup, useGroupMembers, useGroupLoans,
-  useGroupContributions, useGroupInvestments, useGroupWallet,
-  useCurrentMember, useCurrentMemberPermissions, useIsAdminView,
+  useActiveGroup,
+  useGroupMembers,
+  useGroupLoans,
+  useGroupContributions,
+  useGroupInvestments,
+  useGroupWallet,
+  useCurrentMember,
+  useCurrentMemberPermissions,
+  useIsAdminView,
 } from "../../stores/useStore";
-import { Card, Badge, Empty, useToast, Toast, Input, BottomModal, Select, DatePicker } from "../../components/ui";
-import { Colors, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
-import { exportCsv, exportPdf } from "../../utils/export";
 
-// ─── Tiny components ──────────────────────────────────────────────
-const Chip = ({ label, bg, color }: { label: string; bg: string; color: string }) => (
-  <View style={[styles.chip, { backgroundColor: bg }]}>
-    <Text style={[styles.chipText, { color }]} numberOfLines={1}>{label}</Text>
+import {
+  Card,
+  Empty,
+  useToast,
+  Toast,
+  Input,
+  BottomModal,
+  Select,
+  DatePicker,
+} from "../../components/ui";
+
+import {
+  C,
+  T,
+  fmtCurrency,
+  fmtDate,
+  round2,
+} from "../../utils/theme";
+
+import {
+  exportXlsx,
+  exportPdf,
+} from "../../utils/export";
+
+import {
+  findOverdueContributions,
+} from "../../utils/lateFees";
+
+// ─────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────
+
+type Category =
+  | "contributions"
+  | "loans"
+  | "latefees"
+  | "members"
+  | "expenses"
+  | "investments"
+  | "earnings";
+
+type ReportScope = "group" | "personal";
+
+type DropdownOption = {
+  label: string;
+  value: string;
+};
+
+type FilterState = {
+  search: string;
+  fromDate: string;
+  toDate: string;
+  loanStatus: "all" | "pending" | "active" | "repaid";
+  contributionStatus:
+    | "all"
+    | "approved"
+    | "pending"
+    | "rejected";
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// Categories
+// ─────────────────────────────────────────────────────────────────────────
+
+const CATEGORIES: {
+  key: Category;
+  label: string;
+  icon: string;
+}[] = [
+  {
+    key: "contributions",
+    label: "Contributions",
+    icon: "📈",
+  },
+  {
+    key: "loans",
+    label: "Loans",
+    icon: "🏦",
+  },
+  {
+    key: "latefees",
+    label: "Late Fees",
+    icon: "⚠️",
+  },
+  {
+    key: "members",
+    label: "Members",
+    icon: "👥",
+  },
+  {
+    key: "expenses",
+    label: "Expenses",
+    icon: "🧾",
+  },
+  {
+    key: "investments",
+    label: "Investments",
+    icon: "📊",
+  },
+  {
+    key: "earnings",
+    label: "Earnings",
+    icon: "💰",
+  },
+];
+
+// ─────────────────────────────────────────────────────────────────────────
+// Date helpers
+// ─────────────────────────────────────────────────────────────────────────
+
+function monthKey(dateStr?: string) {
+  if (!dateStr) return "";
+
+  const d = new Date(dateStr);
+
+  if (isNaN(d.getTime())) return "";
+
+  return `${d.getFullYear()}-${String(
+    d.getMonth() + 1
+  ).padStart(2, "0")}`;
+}
+
+function monthLabel(key: string) {
+  const [y, m] = key.split("-").map(Number);
+
+  if (!y || !m) return key;
+
+  return new Date(
+    y,
+    m - 1,
+    1
+  ).toLocaleDateString("en", {
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function monthBounds(key: string) {
+  const [y, m] = key.split("-").map(Number);
+
+  const start = new Date(y, m - 1, 1);
+
+  const end = new Date(
+    y,
+    m,
+    0
+  );
+
+  const iso = (d: Date) =>
+    d.toISOString().slice(0, 10);
+
+  return {
+    from: iso(start),
+    to: iso(end),
+  };
+}
+
+function monthlyTotals(
+  items: any[],
+  dateField: string,
+  amountField: string | null
+) {
+  const byMonth: Record<string, number> = {};
+
+  items.forEach((item) => {
+    const k = monthKey(item[dateField]);
+
+    if (!k) return;
+
+    const v = amountField
+      ? Math.abs(item[amountField] || 0)
+      : 1;
+
+    byMonth[k] =
+      (byMonth[k] || 0) + v;
+  });
+
+  const keys = Object.keys(byMonth).sort();
+
+  return {
+    labels: keys.map(monthLabel),
+    values: keys.map((k) => byMonth[k]),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// KPI
+// ─────────────────────────────────────────────────────────────────────────
+
+const KpiCard = ({
+  label,
+  value,
+  color,
+  subtext,
+}: {
+  label: string;
+  value: string;
+  color: string;
+  subtext?: string;
+}) => (
+  <View
+    style={[
+      styles.kpiCard,
+      {
+        borderTopColor: color,
+      },
+    ]}
+  >
+    <Text
+      style={styles.kpiLabel}
+      numberOfLines={1}
+    >
+      {label}
+    </Text>
+
+    <Text
+      style={[
+        styles.kpiValue,
+        {
+          color,
+        },
+      ]}
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      minimumFontScale={0.75}
+    >
+      {value}
+    </Text>
+
+    {subtext ? (
+      <Text
+        style={styles.kpiSubtext}
+        numberOfLines={1}
+      >
+        {subtext}
+      </Text>
+    ) : null}
   </View>
 );
 
-const SectionHeader = ({
-  title, action, actionLabel,
-}: { title: string; action?: () => void; actionLabel?: string }) => (
-  <View style={styles.sectionHeader}>
-    <Text style={T.h2}>{title}</Text>
-    {action && (
-      <TouchableOpacity onPress={action} activeOpacity={0.7}>
-        <Text style={{ fontSize: 12, fontWeight: "600", color: C.primary }}>{actionLabel ?? "See all"}</Text>
-      </TouchableOpacity>
-    )}
-  </View>
-);
+// ─────────────────────────────────────────────────────────────────────────
+// Cashflow chart
+// ─────────────────────────────────────────────────────────────────────────
 
-const KpiCard = ({ label, value, color, subtext }: { label: string; value: string; color: string; subtext?: string }) => (
-  <View style={[styles.kpiCard, { borderTopColor: color }]}>
-    <Text style={styles.kpiLabel} numberOfLines={1}>{label}</Text>
-    <Text style={[styles.kpiValue, { color }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{value}</Text>
-    {subtext && <Text style={styles.kpiSubtext} numberOfLines={1}>{subtext}</Text>}
-  </View>
-);
-
-// ─── Safe hand-built charts ──────────────────────────────────────────────────
 function CashflowBarChart({
-  months, income, expenses,
-}: { months: string[]; income: number[]; expenses: number[] }) {
-  const max = Math.max(1, ...income, ...expenses);
+  months,
+  income,
+  expenses,
+}: {
+  months: string[];
+  income: number[];
+  expenses: number[];
+}) {
+  const max = Math.max(
+    1,
+    ...income,
+    ...expenses
+  );
+
   return (
     <View style={{ marginTop: 8 }}>
-      <View style={{ flexDirection: "row", gap: 14, marginBottom: 10 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-          <View style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: C.success }} />
-          <Text style={{ fontSize: 11, color: C.text3 }}>Income</Text>
+      <View
+        style={{
+          flexDirection: "row",
+          gap: 14,
+          marginBottom: 10,
+        }}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 5,
+          }}
+        >
+          <View
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 2,
+              backgroundColor: C.success,
+            }}
+          />
+
+          <Text
+            style={{
+              fontSize: 11,
+              color: C.text3,
+            }}
+          >
+            Income
+          </Text>
         </View>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-          <View style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: C.error }} />
-          <Text style={{ fontSize: 11, color: C.text3 }}>Expenses</Text>
+
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 5,
+          }}
+        >
+          <View
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 2,
+              backgroundColor: C.error,
+            }}
+          />
+
+          <Text
+            style={{
+              fontSize: 11,
+              color: C.text3,
+            }}
+          >
+            Expenses
+          </Text>
         </View>
       </View>
-      <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", height: 150 }}>
-        {months.map((m, i) => {
-          const incH = Math.max(2, (income[i] / max) * 120);
-          const expH = Math.max(2, (expenses[i] / max) * 120);
-          return (
-            <View key={i} style={{ flex: 1, alignItems: "center", justifyContent: "flex-end" }}>
-              <View style={{ flexDirection: "row", alignItems: "flex-end", height: 120 }}>
-                <View style={{ width: 12, height: incH, borderRadius: 3, backgroundColor: C.success }} />
-                <View style={{ width: 12, height: expH, borderRadius: 3, backgroundColor: C.error, marginLeft: 3 }} />
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "flex-end",
+            justifyContent: "space-between",
+            height: 150,
+            minWidth:
+              months.length > 6
+                ? months.length * 72
+                : "100%",
+          }}
+        >
+          {months.map((m, i) => {
+            const incH = Math.max(
+              2,
+              (income[i] / max) * 120
+            );
+
+            const expH = Math.max(
+              2,
+              (expenses[i] / max) * 120
+            );
+
+            return (
+              <View
+                key={`${m}_${i}`}
+                style={{
+                  width: 62,
+                  alignItems: "center",
+                  justifyContent:
+                    "flex-end",
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "flex-end",
+                    height: 120,
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 12,
+                      height: incH,
+                      borderRadius: 3,
+                      backgroundColor:
+                        C.success,
+                    }}
+                  />
+
+                  <View
+                    style={{
+                      width: 12,
+                      height: expH,
+                      borderRadius: 3,
+                      backgroundColor:
+                        C.error,
+                      marginLeft: 3,
+                    }}
+                  />
+                </View>
+
+                <Text
+                  style={{
+                    fontSize: 9,
+                    color: C.text3,
+                    marginTop: 6,
+                  }}
+                  numberOfLines={1}
+                >
+                  {m}
+                </Text>
               </View>
-              <Text style={{ fontSize: 9, color: C.text3, marginTop: 6 }} numberOfLines={1}>{m}</Text>
-            </View>
-          );
-        })}
-      </View>
+            );
+          })}
+        </View>
+      </ScrollView>
     </View>
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Member shares
+// ─────────────────────────────────────────────────────────────────────────
+
 function MemberSharesChart({
   data,
-}: { data: { name: string; population: number; color: string }[] }) {
-  const total = data.reduce((s, d) => s + d.population, 0) || 1;
+}: {
+  data: {
+    name: string;
+    population: number;
+    color: string;
+  }[];
+}) {
+  const total =
+    data.reduce(
+      (s, d) => s + d.population,
+      0
+    ) || 1;
+
   return (
     <View style={{ gap: 10 }}>
       {data.map((d, i) => {
-        const pct = (d.population / total) * 100;
+        const pct =
+          (d.population / total) * 100;
+
         return (
           <View key={i}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4, gap: 8 }}>
-              <Text style={{ fontSize: 12, fontWeight: "600", color: C.text2, flex: 1, minWidth: 0 }} numberOfLines={1}>{d.name}</Text>
-              <Text style={{ fontSize: 12, fontWeight: "700", color: d.color, flexShrink: 0 }}>{pct.toFixed(0)}%</Text>
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent:
+                  "space-between",
+                marginBottom: 4,
+                gap: 8,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: "600",
+                  color: C.text2,
+                  flex: 1,
+                  minWidth: 0,
+                }}
+                numberOfLines={1}
+              >
+                {d.name}
+              </Text>
+
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: "700",
+                  color: d.color,
+                  flexShrink: 0,
+                }}
+              >
+                {pct.toFixed(0)}%
+              </Text>
             </View>
-            <View style={{ height: 8, borderRadius: 4, backgroundColor: C.border, overflow: "hidden" }}>
-              <View style={{ height: "100%" as any, width: `${pct}%` as any, backgroundColor: d.color, borderRadius: 4 }} />
+
+            <View
+              style={{
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: C.border,
+                overflow: "hidden",
+              }}
+            >
+              <View
+                style={{
+                  height: "100%" as any,
+                  width: `${pct}%` as any,
+                  backgroundColor: d.color,
+                  borderRadius: 4,
+                }}
+              />
             </View>
           </View>
         );
@@ -104,1665 +516,5554 @@ function MemberSharesChart({
   );
 }
 
-// Filter Modal Component
+// ─────────────────────────────────────────────────────────────────────────
+// Category chart
+// ─────────────────────────────────────────────────────────────────────────
+
+function CategoryBarChart({
+  labels,
+  values,
+  color,
+}: {
+  labels: string[];
+  values: number[];
+  color: string;
+}) {
+  const max = Math.max(
+    1,
+    ...values
+  );
+
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+    >
+      <View
+        style={{
+          height: 200,
+          flexDirection: "row",
+          minWidth: Math.max(
+            320,
+            labels.length * 60
+          ),
+        }}
+      >
+        <View
+          style={{
+            justifyContent:
+              "space-between",
+            paddingBottom: 22,
+            paddingRight: 8,
+          }}
+        >
+          {[1, 0.5, 0].map((f) => (
+            <Text
+              key={f}
+              style={{
+                fontSize: 10,
+                color: C.text3,
+              }}
+            >
+              {Math.round(
+                max * f
+              ).toLocaleString()}
+            </Text>
+          ))}
+        </View>
+
+        <View
+          style={{
+            flex: 1,
+          }}
+        >
+          <View
+            style={{
+              flex: 1,
+              flexDirection: "row",
+              alignItems: "flex-end",
+              justifyContent:
+                labels.length > 6
+                  ? "flex-start"
+                  : "space-around",
+              borderBottomWidth: 1,
+              borderBottomColor:
+                C.borderLight,
+            }}
+          >
+            {labels.map(
+              (label, i) => {
+                const h = Math.max(
+                  2,
+                  (values[i] / max) * 100
+                );
+
+                return (
+                  <View
+                    key={
+                      label + i
+                    }
+                    style={{
+                      alignItems:
+                        "center",
+                      width: 52,
+                    }}
+                  >
+                    <View
+                      style={{
+                        height: 140,
+                        justifyContent:
+                          "flex-end",
+                      }}
+                    >
+                      <View
+                        style={{
+                          width: 22,
+                          height:
+                            `${h}%` as any,
+                          backgroundColor:
+                            color,
+                          borderRadius: 4,
+                        }}
+                      />
+                    </View>
+                  </View>
+                );
+              }
+            )}
+          </View>
+
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent:
+                labels.length > 6
+                  ? "flex-start"
+                  : "space-around",
+              marginTop: 6,
+            }}
+          >
+            {labels.map(
+              (label, i) => (
+                <Text
+                  key={
+                    label + i
+                  }
+                  style={{
+                    fontSize: 10,
+                    color: C.text3,
+                    width: 52,
+                    textAlign:
+                      "center",
+                  }}
+                  numberOfLines={1}
+                >
+                  {label}
+                </Text>
+              )
+            )}
+          </View>
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Responsive dropdown
+// ─────────────────────────────────────────────────────────────────────────
+
+function Dropdown({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: DropdownOption[];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] =
+    useState(false);
+
+  const selected =
+    options.find(
+      (o) => o.value === value
+    );
+
+  return (
+    <>
+      <TouchableOpacity
+        style={styles.dropdownTrigger}
+        onPress={() =>
+          setOpen(true)
+        }
+        activeOpacity={0.7}
+      >
+        <View
+          style={{
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          <Text
+            style={styles.dropdownLabel}
+            numberOfLines={1}
+          >
+            {label}
+          </Text>
+
+          <Text
+            style={styles.dropdownValue}
+            numberOfLines={1}
+          >
+            {selected?.label ??
+              label}
+          </Text>
+        </View>
+
+        <Text
+          style={styles.dropdownChevron}
+        >
+          ▼
+        </Text>
+      </TouchableOpacity>
+
+      <Modal
+        visible={open}
+        transparent
+        animationType={
+          Platform.OS === "web"
+            ? "fade"
+            : "slide"
+        }
+        onRequestClose={() =>
+          setOpen(false)
+        }
+      >
+        <View
+          style={styles.dropdownOverlay}
+        >
+          <TouchableOpacity
+            style={
+              StyleSheet.absoluteFill
+            }
+            activeOpacity={1}
+            onPress={() =>
+              setOpen(false)
+            }
+          />
+
+          <View
+            style={
+              styles.dropdownModal
+            }
+          >
+            <View
+              style={
+                styles.dropdownModalHeader
+              }
+            >
+              <View
+                style={{
+                  flex: 1,
+                }}
+              >
+                <Text
+                  style={
+                    styles.dropdownModalTitle
+                  }
+                >
+                  {label}
+                </Text>
+
+                <Text
+                  style={
+                    styles.dropdownModalSubtitle
+                  }
+                >
+                  Select an option
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={
+                  styles.dropdownClose
+                }
+                onPress={() =>
+                  setOpen(false)
+                }
+              >
+                <Text
+                  style={
+                    styles.dropdownCloseText
+                  }
+                >
+                  ✕
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={{
+                maxHeight:
+                  Platform.OS === "web"
+                    ? 420
+                    : 420,
+              }}
+              contentContainerStyle={{
+                paddingBottom: 8,
+              }}
+              showsVerticalScrollIndicator={
+                false
+              }
+            >
+              {options.map(
+                (option) => {
+                  const active =
+                    option.value ===
+                    value;
+
+                  return (
+                    <TouchableOpacity
+                      key={
+                        option.value
+                      }
+                      style={[
+                        styles.dropdownItem,
+                        active &&
+                          styles.dropdownItemActive,
+                      ]}
+                      onPress={() => {
+                        onChange(
+                          option.value
+                        );
+                        setOpen(
+                          false
+                        );
+                      }}
+                      activeOpacity={
+                        0.7
+                      }
+                    >
+                      <View
+                        style={[
+                          styles.dropdownRadio,
+                          active &&
+                            styles.dropdownRadioActive,
+                        ]}
+                      >
+                        {active ? (
+                          <View
+                            style={
+                              styles.dropdownRadioDot
+                            }
+                          />
+                        ) : null}
+                      </View>
+
+                      <Text
+                        style={[
+                          styles.dropdownItemText,
+                          active &&
+                            styles.dropdownItemTextActive,
+                        ]}
+                        numberOfLines={
+                          2
+                        }
+                      >
+                        {
+                          option.label
+                        }
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                }
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Advanced filter modal
+// ─────────────────────────────────────────────────────────────────────────
+
 function FilterModal({
   visible,
   onClose,
-  fromDate, toDate,
-  onFromDateChange, onToDateChange,
-  loanStatus, contributionStatus,
-  onLoanStatusChange, onContributionStatusChange,
+  fromDate,
+  toDate,
+  onFromDateChange,
+  onToDateChange,
+  loanStatus,
+  contributionStatus,
+  onLoanStatusChange,
+  onContributionStatusChange,
   onApply,
   searchTerm,
   onSearchChange,
-  dataType,
-  onDataTypeChange,
+  onClear,
 }: any) {
-  const DATA_TYPE_OPTIONS = [
-    { label: "All Data", value: "all" },
-    { label: "Contributions", value: "contributions" },
-    { label: "Loans", value: "loans" },
-    { label: "Meetings", value: "meetings" },
-    { label: "Investments", value: "investments" },
-    { label: "Members", value: "members" },
-    { label: "Wallet", value: "wallet" },
-  ];
-
   return (
-    <BottomModal visible={visible} onClose={onClose} title="Filter Reports">
-      <View style={{ padding: 16 }}>
-        <Select
-          label="Data Type"
-          value={dataType}
-          options={DATA_TYPE_OPTIONS}
-          onChange={onDataTypeChange}
-        />
-        
+    <BottomModal
+      visible={visible}
+      onClose={onClose}
+      title="Advanced Filters"
+    >
+      <ScrollView
+        contentContainerStyle={{
+          padding: 16,
+          paddingBottom: 30,
+        }}
+        keyboardShouldPersistTaps="handled"
+      >
         <Input
           label="Search"
           value={searchTerm}
-          onChangeText={onSearchChange}
-          placeholder="Search by member, loan ID..."
+          onChangeText={
+            onSearchChange
+          }
+          placeholder="Search by member, ID, description..."
           leftIcon="🔍"
         />
-        
-        <Text style={styles.modalSectionLabel}>Date Range</Text>
+
+        <Text
+          style={
+            styles.modalSectionLabel
+          }
+        >
+          Custom Date Range
+        </Text>
+
+        <Text
+          style={{
+            fontSize: 11,
+            color: C.text3,
+            marginBottom: 8,
+          }}
+        >
+          Overrides the "All Months"
+          quick filter when set
+        </Text>
+
         <DatePicker
           label="From Date"
           value={fromDate}
-          onChange={onFromDateChange}
+          onChange={
+            onFromDateChange
+          }
           placeholder="Start date"
         />
+
         <DatePicker
           label="To Date"
           value={toDate}
-          onChange={onToDateChange}
+          onChange={
+            onToDateChange
+          }
           placeholder="End date"
         />
 
-        <Text style={styles.modalSectionLabel}>Status Filters</Text>
-        <View style={styles.modalRow}>
-          <View style={styles.modalHalf}>
+        <Text
+          style={
+            styles.modalSectionLabel
+          }
+        >
+          Status Filters
+        </Text>
+
+        <View
+          style={
+            styles.modalRow
+          }
+        >
+          <View
+            style={
+              styles.modalHalf
+            }
+          >
             <Select
               label="Loans"
               value={loanStatus}
-              options={["all", "pending", "active", "repaid"].map(status => ({
-                label: status.charAt(0).toUpperCase() + status.slice(1), value: status,
+              options={[
+                "all",
+                "pending",
+                "active",
+                "repaid",
+              ].map((s) => ({
+                label:
+                  s
+                    .charAt(0)
+                    .toUpperCase() +
+                  s.slice(1),
+                value: s,
               }))}
-              onChange={onLoanStatusChange}
+              onChange={
+                onLoanStatusChange
+              }
             />
           </View>
-          <View style={styles.modalHalf}>
+
+          <View
+            style={
+              styles.modalHalf
+            }
+          >
             <Select
               label="Contributions"
-              value={contributionStatus}
-              options={["all", "approved", "pending", "rejected"].map(status => ({
-                label: status.charAt(0).toUpperCase() + status.slice(1), value: status,
+              value={
+                contributionStatus
+              }
+              options={[
+                "all",
+                "approved",
+                "pending",
+                "rejected",
+              ].map((s) => ({
+                label:
+                  s
+                    .charAt(0)
+                    .toUpperCase() +
+                  s.slice(1),
+                value: s,
               }))}
-              onChange={onContributionStatusChange}
+              onChange={
+                onContributionStatusChange
+              }
             />
           </View>
         </View>
 
-        <View style={{ flexDirection: "row", gap: 10, marginTop: 20 }}>
-          <TouchableOpacity style={styles.modalClearBtn} onPress={() => {
-            onFromDateChange("");
-            onToDateChange("");
-            onLoanStatusChange("all");
-            onContributionStatusChange("all");
-            onSearchChange("");
-            onDataTypeChange("all");
-          }}>
-            <Text style={styles.modalClearBtnText}>Clear All</Text>
+        <View
+          style={
+            styles.modalButtonRow
+          }
+        >
+          <TouchableOpacity
+            style={
+              styles.modalClearBtn
+            }
+            onPress={onClear}
+          >
+            <Text
+              style={
+                styles.modalClearBtnText
+              }
+            >
+              Clear All
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.modalApplyBtn} onPress={onApply}>
-            <Text style={styles.modalApplyBtnText}>Apply Filters</Text>
+
+          <TouchableOpacity
+            style={
+              styles.modalApplyBtn
+            }
+            onPress={onApply}
+          >
+            <Text
+              style={
+                styles.modalApplyBtnText
+              }
+            >
+              Apply Filters
+            </Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
     </BottomModal>
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Main screen
+// ─────────────────────────────────────────────────────────────────────────
+
 export default function ReportsScreen() {
-  const router = useRouter();
-  const { width } = useWindowDimensions();
-  const isWide = width >= 768;
-  const group = useActiveGroup();
-  const allMembers = useGroupMembers();
-  const allLoans = useGroupLoans();
-  const allContributions = useGroupContributions();
-  const allInvestments = useGroupInvestments();
-  const allWallet = useGroupWallet();
-  const permissions = useCurrentMemberPermissions();
-  const currentMember = useCurrentMember();
-  // const { show, Toast } = useToast();
-  const { show, visible, msg, type } = useToast();
+  const { width } =
+    useWindowDimensions();
 
-  // Officers/admins always see all reports. A regular "member" role only
-  // sees group-wide data when explicitly granted the viewAllReports
-  // permission from Group Settings → Permissions — otherwise they only ever
-  // see their own report (enforced below on every data slice).
-  const canSeeAll = useIsAdminView();
-  const [activeTab, setActiveTab] = useState<"overview" | "members" | "earnings">("overview");
-  const [showFilterModal, setShowFilterModal] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedFromDate, setSelectedFromDate] = useState("");
-  const [selectedToDate, setSelectedToDate] = useState("");
-  const [loanStatus, setLoanStatus] = useState<"all" | "pending" | "active" | "repaid">("all");
-  const [contributionStatus, setContributionStatus] = useState<"all" | "approved" | "pending" | "rejected">("all");
-  const [dataType, setDataType] = useState<"all" | "contributions" | "loans" | "meetings" | "investments" | "members" | "wallet">("all");
-  
-  // Temp state for modal
-  const [tempSearch, setTempSearch] = useState("");
-  const [tempFromDate, setTempFromDate] = useState("");
-  const [tempToDate, setTempToDate] = useState("");
-  const [tempLoanStatus, setTempLoanStatus] = useState<"all" | "pending" | "active" | "repaid">("all");
-  const [tempContributionStatus, setTempContributionStatus] = useState<"all" | "approved" | "pending" | "rejected">("all");
-  const [tempDataType, setTempDataType] = useState<"all" | "contributions" | "loans" | "meetings" | "investments" | "members" | "wallet">("all");
+  const isWide = width >= 1024;
+  const isMobile = width < 600;
 
-  // Scope data
-  const members = canSeeAll ? allMembers : allMembers.filter(m => m.id === currentMember?.id);
-  const loans = canSeeAll ? allLoans : allLoans.filter(l => l.memberId === currentMember?.id);
-  const contributions = canSeeAll ? allContributions : allContributions.filter(c => c.memberId === currentMember?.id);
-  const investments = canSeeAll ? allInvestments : allInvestments.filter(i => i.createdBy === currentMember?.id);
-  const wallet = canSeeAll ? allWallet : allWallet.filter(t => t.memberId === currentMember?.id);
+  const group =
+    useActiveGroup();
 
-  // Same "true earnings" definition as EarningsTab
-  const EARNING_TYPES_OVERVIEW = [
-    "loan_interest_income", "interest", "late_fee",
-    "investment_return", "bank_fee", "other_credit", "other_debit",
-  ];
-  const groupWalletEarnings = useMemo(() => {
-    return round2(allWallet.reduce((sum, t) => {
-      if (t.type === "loan_repayment") {
-        const loan = allLoans.find(l => l.id === t.loanId);
-        if (!loan?.totalRepayable) return sum;
-        return sum + round2(t.amount * (loan.totalInterest / loan.totalRepayable));
-      }
-      if (EARNING_TYPES_OVERVIEW.includes(t.type)) return sum + t.amount;
-      return sum;
-    }, 0));
-  }, [allWallet, allLoans]);
-  const groupExpenses = useMemo(
-    () => allWallet.filter(t => ["bank_fee", "other_debit"].includes(t.type)).reduce((sum, t) => sum + Math.abs(t.amount), 0),
-    [allWallet],
-  );
-  const groupInterestOnly = useMemo(() => {
-    return round2(allWallet.reduce((sum, t) => {
-      if (t.type === "loan_repayment") {
-        const loan = allLoans.find(l => l.id === t.loanId);
-        if (!loan?.totalRepayable) return sum;
-        return sum + round2(t.amount * (loan.totalInterest / loan.totalRepayable));
-      }
-      if ((t.type === "loan_interest_income" || t.type === "interest") && t.amount > 0) return sum + t.amount;
-      return sum;
-    }, 0));
-  }, [allWallet, allLoans]);
-  const groupContributionsOnly = useMemo(
-    () => round2(allWallet.filter(t => t.type === "contribution" && t.amount > 0).reduce((s, t) => s + t.amount, 0)),
-    [allWallet],
-  );
-  const groupPenaltiesOnly = useMemo(
-    () => round2(allWallet.filter(t => t.type === "late_fee" && t.amount > 0).reduce((s, t) => s + t.amount, 0)),
-    [allWallet],
-  );
-  const groupOtherOnly = useMemo(() => {
-    const known = ["contribution", "loan_interest_income", "interest", "late_fee", "loan_disbursement", "loan_repayment", "loan_principal_recovery"];
-    return round2(allWallet.filter(t => !known.includes(t.type)).reduce((s, t) => s + t.amount, 0));
-  }, [allWallet]);
-  const groupTotalNetAssets = useMemo(
-    () => round2(allWallet.reduce((s, t) => s + t.amount, 0)),
-    [allWallet],
-  );
+  const allMembers =
+    useGroupMembers();
 
-  // Filter helpers
-  const filterByDateRange = (items: any[], dateField: string) => {
-    return items.filter(item => {
-      const dStr = (item[dateField] || "").slice(0, 10);
-      if (!dStr) return true;
-      if (selectedFromDate && dStr < selectedFromDate) return false;
-      if (selectedToDate && dStr > selectedToDate) return false;
-      return true;
-    });
+  const allLoans =
+    useGroupLoans();
+
+  const allContributions =
+    useGroupContributions();
+
+  const allInvestments =
+    useGroupInvestments();
+
+  const allWallet =
+    useGroupWallet();
+
+  const permissions =
+    useCurrentMemberPermissions();
+
+  const currentMember =
+    useCurrentMember();
+
+  const canSeeAll =
+    useIsAdminView();
+
+  const {
+    show,
+    visible,
+    msg,
+    type,
+  } = useToast();
+
+  const [category, setCategory] =
+    useState<Category>(
+      "contributions"
+    );
+
+  const [reportScope, setReportScope] =
+    useState<ReportScope>(
+      canSeeAll
+        ? "group"
+        : "personal"
+    );
+
+  const [
+    monthFilter,
+    setMonthFilter,
+  ] = useState("all");
+
+  const [
+    memberIdFilter,
+    setMemberIdFilter,
+  ] = useState("all");
+
+  const [
+    showFilterModal,
+    setShowFilterModal,
+  ] = useState(false);
+
+  const [
+    searchTerm,
+    setSearchTerm,
+  ] = useState("");
+
+  const [
+    selectedFromDate,
+    setSelectedFromDate,
+  ] = useState("");
+
+  const [
+    selectedToDate,
+    setSelectedToDate,
+  ] = useState("");
+
+  const [
+    loanStatus,
+    setLoanStatus,
+  ] = useState<
+    "all" |
+      "pending" |
+      "active" |
+      "repaid"
+  >("all");
+
+  const [
+    contributionStatus,
+    setContributionStatus,
+  ] = useState<
+    "all" |
+      "approved" |
+      "pending" |
+      "rejected"
+  >("all");
+
+  const [
+    tempSearch,
+    setTempSearch,
+  ] = useState("");
+
+  const [
+    tempFromDate,
+    setTempFromDate,
+  ] = useState("");
+
+  const [
+    tempToDate,
+    setTempToDate,
+  ] = useState("");
+
+  const [
+    tempLoanStatus,
+    setTempLoanStatus,
+  ] = useState<
+    typeof loanStatus
+  >("all");
+
+  const [
+    tempContributionStatus,
+    setTempContributionStatus,
+  ] = useState<
+    typeof contributionStatus
+  >("all");
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Keep personal users in personal mode
+  // ───────────────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!canSeeAll) {
+      setReportScope(
+        "personal"
+      );
+      setMemberIdFilter("all");
+    }
+  }, [canSeeAll]);
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Scope
+  // ───────────────────────────────────────────────────────────────────────
+
+  const isPersonalView =
+    reportScope ===
+    "personal";
+
+  const members = isPersonalView
+    ? allMembers.filter(
+        (m) =>
+          m.id ===
+          currentMember?.id
+      )
+    : allMembers;
+
+  const loans = isPersonalView
+    ? allLoans.filter(
+        (l) =>
+          l.memberId ===
+          currentMember?.id
+      )
+    : allLoans;
+
+  const contributions =
+    isPersonalView
+      ? allContributions.filter(
+          (c) =>
+            c.memberId ===
+            currentMember?.id
+        )
+      : allContributions;
+
+  const investments =
+    isPersonalView
+      ? allInvestments.filter(
+          (i: any) =>
+            i.createdBy ===
+              currentMember?.id ||
+            i.memberId ===
+              currentMember?.id
+        )
+      : allInvestments;
+
+  const wallet = isPersonalView
+    ? allWallet.filter(
+        (t) =>
+          t.memberId ===
+          currentMember?.id
+      )
+    : allWallet;
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Filters
+  // ───────────────────────────────────────────────────────────────────────
+
+  const handleMonthChange = (
+    mk: string
+  ) => {
+    setMonthFilter(mk);
+
+    if (mk === "all") {
+      setSelectedFromDate("");
+      setSelectedToDate("");
+    } else {
+      const {
+        from,
+        to,
+      } = monthBounds(mk);
+
+      setSelectedFromDate(
+        from
+      );
+
+      setSelectedToDate(to);
+    }
   };
 
-  const filterBySearch = (items: any[], searchFields: string[]) => {
-    if (!searchTerm) return items;
-    const term = searchTerm.toLowerCase();
-    return items.filter(item => 
-      searchFields.some(field => item[field]?.toString().toLowerCase().includes(term))
+  const openFilterModal =
+    () => {
+      setTempSearch(
+        searchTerm
+      );
+
+      setTempFromDate(
+        selectedFromDate
+      );
+
+      setTempToDate(
+        selectedToDate
+      );
+
+      setTempLoanStatus(
+        loanStatus
+      );
+
+      setTempContributionStatus(
+        contributionStatus
+      );
+
+      setShowFilterModal(true);
+    };
+
+  const applyFilters = () => {
+    setSearchTerm(
+      tempSearch
+    );
+
+    setSelectedFromDate(
+      tempFromDate
+    );
+
+    setSelectedToDate(
+      tempToDate
+    );
+
+    setLoanStatus(
+      tempLoanStatus
+    );
+
+    setContributionStatus(
+      tempContributionStatus
+    );
+
+    setMonthFilter("all");
+
+    setShowFilterModal(
+      false
     );
   };
 
-  const filteredLoans = useMemo(() => {
-    let list = filterByDateRange(loans, "applicationDate");
-    if (loanStatus !== "all") {
-      if (loanStatus === "active") list = list.filter(l => l.status === "disbursed");
-      if (loanStatus === "pending") list = list.filter(l => l.status.startsWith("pending_"));
-      if (loanStatus === "repaid") list = list.filter(l => l.status === "repaid");
+  const clearAllFilters =
+    () => {
+      setSearchTerm("");
+      setSelectedFromDate("");
+      setSelectedToDate("");
+      setLoanStatus("all");
+      setContributionStatus(
+        "all"
+      );
+      setMonthFilter("all");
+      setMemberIdFilter(
+        "all"
+      );
+
+      setTempSearch("");
+      setTempFromDate("");
+      setTempToDate("");
+      setTempLoanStatus(
+        "all"
+      );
+      setTempContributionStatus(
+        "all"
+      );
+    };
+
+  const hasActiveFilters =
+    selectedFromDate !== "" ||
+    selectedToDate !== "" ||
+    loanStatus !== "all" ||
+    contributionStatus !==
+      "all" ||
+    searchTerm !== "" ||
+    memberIdFilter !== "all";
+
+  const inDateRange = (
+    dStr?: string
+  ) => {
+    if (!dStr) return true;
+
+    const d =
+      dStr.slice(0, 10);
+
+    if (
+      selectedFromDate &&
+      d < selectedFromDate
+    ) {
+      return false;
     }
-    return filterBySearch(list, ["memberId", "id", "purpose"]);
-  }, [loans, selectedFromDate, selectedToDate, loanStatus, searchTerm]);
 
-  const filteredContributions = useMemo(() => {
-    let list = filterByDateRange(contributions, "date");
-    if (contributionStatus !== "all") {
-      list = list.filter(c => c.status === contributionStatus);
+    if (
+      selectedToDate &&
+      d > selectedToDate
+    ) {
+      return false;
     }
-    return filterBySearch(list, ["memberId", "description"]);
-  }, [contributions, selectedFromDate, selectedToDate, contributionStatus, searchTerm]);
 
-  const filteredInvestments = useMemo(() => 
-    filterByDateRange(investments, "startDate"),
-    [investments, selectedFromDate, selectedToDate]
-  );
-
-  const filteredMembers = useMemo(() => 
-    filterBySearch(members, ["fullName", "email", "phone"]),
-    [members, searchTerm]
-  );
-
-  const filteredWallet = useMemo(() => 
-    filterByDateRange(wallet, "date"),
-    [wallet, selectedFromDate, selectedToDate]
-  );
-
-  // Get filtered data based on data type selection
-  const getFilteredData = () => {
-    switch (dataType) {
-      case "contributions":
-        return filteredContributions;
-      case "loans":
-        return filteredLoans;
-      case "investments":
-        return filteredInvestments;
-      case "members":
-        return filteredMembers;
-      case "wallet":
-        return filteredWallet;
-      default:
-        return null;
-    }
+    return true;
   };
 
-  const getExportData = () => {
-    const data = getFilteredData();
-    if (!data) return null;
+  const inMember = (
+    id?: string
+  ) =>
+    memberIdFilter ===
+      "all" ||
+    id === memberIdFilter;
 
-    switch (dataType) {
-      case "contributions":
-        return {
-          headers: ["Date", "Member", "Type", "Amount", "Status", "Description"],
-          rows: data.map((c: any) => [
+  const matchesSearch = (
+    item: any,
+    fields: string[]
+  ) => {
+    if (!searchTerm)
+      return true;
+
+    const term =
+      searchTerm.toLowerCase();
+
+    return fields.some(
+      (field) =>
+        item[field]
+          ?.toString()
+          .toLowerCase()
+          .includes(term)
+    );
+  };
+
+  const getMemberName = (
+    id?: string
+  ) =>
+    allMembers.find(
+      (m) => m.id === id
+    )?.fullName ??
+    "Unknown";
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Late fees
+  // ───────────────────────────────────────────────────────────────────────
+
+  const overdue = useMemo(() => {
+    if (!group) return [];
+
+    return findOverdueContributions(
+      group,
+      allMembers,
+      allContributions,
+      allWallet
+    );
+  }, [
+    group,
+    allMembers,
+    allContributions,
+    allWallet,
+  ]);
+
+  const lateFees =
+    useMemo(() => {
+      return overdue
+        .map((item: any) => {
+          const tx =
+            allWallet.find(
+              (t) =>
+                t.id ===
+                  item.feeTxId &&
+                t.type ===
+                  "late_fee"
+            );
+
+          return {
+            ...item,
+            isPaid:
+              !!tx?.feePaid,
+          };
+        })
+        .filter(
+          (item: any) =>
+            isPersonalView
+              ? item.memberId ===
+                currentMember?.id
+              : true
+        );
+    }, [
+      overdue,
+      allWallet,
+      isPersonalView,
+      currentMember?.id,
+    ]);
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Overview financial calculations
+  // ───────────────────────────────────────────────────────────────────────
+
+  const EARNING_TYPES_OVERVIEW =
+    [
+      "loan_interest_income",
+      "interest",
+      "late_fee",
+      "investment_return",
+      "bank_fee",
+      "other_credit",
+      "other_debit",
+    ];
+
+  const groupWalletEarnings =
+    useMemo(
+      () =>
+        round2(
+          wallet.reduce(
+            (sum, t) => {
+              if (
+                t.type ===
+                "loan_repayment"
+              ) {
+                const loan =
+                  loans.find(
+                    (l) =>
+                      l.id ===
+                      t.loanId
+                  );
+
+                if (
+                  !loan?.totalRepayable
+                ) {
+                  return sum;
+                }
+
+                return (
+                  sum +
+                  round2(
+                    t.amount *
+                      (loan.totalInterest /
+                        loan.totalRepayable)
+                  )
+                );
+              }
+
+              if (
+                EARNING_TYPES_OVERVIEW.includes(
+                  t.type
+                )
+              ) {
+                return (
+                  sum +
+                  t.amount
+                );
+              }
+
+              return sum;
+            },
+            0
+          )
+        ),
+      [wallet, loans]
+    );
+
+  const groupExpenses =
+    useMemo(
+      () =>
+        wallet
+          .filter((t) =>
+            [
+              "bank_fee",
+              "other_debit",
+            ].includes(
+              t.type
+            )
+          )
+          .reduce(
+            (sum, t) =>
+              sum +
+              Math.abs(
+                t.amount
+              ),
+            0
+          ),
+      [wallet]
+    );
+
+  const groupInterestOnly =
+    useMemo(
+      () =>
+        round2(
+          wallet.reduce(
+            (sum, t) => {
+              if (
+                t.type ===
+                "loan_repayment"
+              ) {
+                const loan =
+                  loans.find(
+                    (l) =>
+                      l.id ===
+                      t.loanId
+                  );
+
+                if (
+                  !loan?.totalRepayable
+                ) {
+                  return sum;
+                }
+
+                return (
+                  sum +
+                  round2(
+                    t.amount *
+                      (loan.totalInterest /
+                        loan.totalRepayable)
+                  )
+                );
+              }
+
+              if (
+                (
+                  t.type ===
+                    "loan_interest_income" ||
+                  t.type ===
+                    "interest"
+                ) &&
+                t.amount > 0
+              ) {
+                return (
+                  sum +
+                  t.amount
+                );
+              }
+
+              return sum;
+            },
+            0
+          )
+        ),
+      [wallet, loans]
+    );
+
+  const groupContributionsOnly =
+    useMemo(
+      () =>
+        round2(
+          wallet
+            .filter(
+              (t) =>
+                t.type ===
+                  "contribution" &&
+                t.amount > 0
+            )
+            .reduce(
+              (s, t) =>
+                s + t.amount,
+              0
+            )
+        ),
+      [wallet]
+    );
+
+  const groupPenaltiesOnly =
+    useMemo(
+      () =>
+        round2(
+          wallet
+            .filter(
+              (t) =>
+                t.type ===
+                  "late_fee" &&
+                t.amount > 0
+            )
+            .reduce(
+              (s, t) =>
+                s + t.amount,
+              0
+            )
+        ),
+      [wallet]
+    );
+
+  const groupOtherOnly =
+    useMemo(() => {
+      const known = [
+        "contribution",
+        "loan_interest_income",
+        "interest",
+        "late_fee",
+        "loan_disbursement",
+        "loan_repayment",
+        "loan_principal_recovery",
+      ];
+
+      return round2(
+        wallet
+          .filter(
+            (t) =>
+              !known.includes(
+                t.type
+              )
+          )
+          .reduce(
+            (s, t) =>
+              s + t.amount,
+            0
+          )
+      );
+    }, [wallet]);
+
+  const groupTotalNetAssets =
+    useMemo(
+      () =>
+        round2(
+          wallet.reduce(
+            (s, t) =>
+              s + t.amount,
+            0
+          )
+        ),
+      [wallet]
+    );
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Cashflow
+  // ───────────────────────────────────────────────────────────────────────
+
+  const cashflow =
+    useMemo(() => {
+      const months: string[] =
+        [];
+
+      const income: number[] =
+        [];
+
+      const expenses: number[] =
+        [];
+
+      for (
+        let i = 5;
+        i >= 0;
+        i--
+      ) {
+        const d =
+          new Date();
+
+        d.setMonth(
+          d.getMonth() - i
+        );
+
+        const startOfMonth =
+          new Date(
+            d.getFullYear(),
+            d.getMonth(),
+            1
+          );
+
+        const endOfMonth =
+          new Date(
+            d.getFullYear(),
+            d.getMonth() + 1,
+            0,
+            23,
+            59,
+            59,
+            999
+          );
+
+        const monthTxs =
+          wallet.filter(
+            (t) => {
+              const txDate =
+                new Date(
+                  t.date
+                );
+
+              return (
+                txDate >=
+                  startOfMonth &&
+                txDate <=
+                  endOfMonth
+              );
+            }
+          );
+
+        months.push(
+          d.toLocaleDateString(
+            "en",
+            {
+              month: "short",
+            }
+          )
+        );
+
+        income.push(
+          monthTxs
+            .filter(
+              (t) =>
+                t.amount > 0
+            )
+            .reduce(
+              (s, t) =>
+                s + t.amount,
+              0
+            )
+        );
+
+        expenses.push(
+          Math.abs(
+            monthTxs
+              .filter(
+                (t) =>
+                  t.amount < 0
+              )
+              .reduce(
+                (s, t) =>
+                  s + t.amount,
+                0
+              )
+          )
+        );
+      }
+
+      return {
+        months,
+        income,
+        expenses,
+      };
+    }, [wallet]);
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Member savings chart
+  // ───────────────────────────────────────────────────────────────────────
+
+  const memberPie =
+    useMemo(() => {
+      const top = members
+        .filter(
+          (m) =>
+            m.status ===
+              "active" &&
+            m.totalContributions >
+              0
+        )
+        .slice(0, 5);
+
+      const palette = [
+        C.accent,
+        C.gold,
+        C.info,
+        C.success,
+        "#7C3AED",
+      ];
+
+      return top.map(
+        (m, i) => ({
+          name: m.fullName.split(
+            " "
+          )[0],
+          population:
+            m.totalContributions,
+          color:
+            palette[
+              i %
+                palette.length
+            ],
+        })
+      );
+    }, [members]);
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Month options
+  // ───────────────────────────────────────────────────────────────────────
+
+  const monthOptions =
+    useMemo(() => {
+      const dateFieldByCat: Record<
+        Category,
+        string
+      > = {
+        contributions: "date",
+        loans: "applicationDate",
+        latefees: "periodStart",
+        members: "dateJoined",
+        expenses: "date",
+        investments: "startDate",
+        earnings: "date",
+      };
+
+      let source: any[] =
+        [];
+
+      switch (category) {
+        case "contributions":
+          source =
+            contributions;
+          break;
+
+        case "loans":
+          source = loans;
+          break;
+
+        case "latefees":
+          source = lateFees;
+          break;
+
+        case "members":
+          source = members;
+          break;
+
+        case "expenses":
+          source =
+            wallet.filter(
+              (t) =>
+                [
+                  "bank_fee",
+                  "other_debit",
+                ].includes(
+                  t.type
+                )
+            );
+          break;
+
+        case "investments":
+          source =
+            investments;
+          break;
+
+        case "earnings":
+          source = wallet;
+          break;
+      }
+
+      const keys =
+        new Set<string>();
+
+      source.forEach(
+        (item) => {
+          const k =
+            monthKey(
+              item[
+                dateFieldByCat[
+                  category
+                ]
+              ] ??
+                item.date
+            );
+
+          if (k) {
+            keys.add(k);
+          }
+        }
+      );
+
+      const sorted =
+        Array.from(
+          keys
+        ).sort().reverse();
+
+      return [
+        {
+          label: "All Months",
+          value: "all",
+        },
+        ...sorted.map(
+          (k) => ({
+            label:
+              monthLabel(k),
+            value: k,
+          })
+        ),
+      ];
+    }, [
+      category,
+      contributions,
+      loans,
+      lateFees,
+      members,
+      wallet,
+      investments,
+    ]);
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Member options
+  // ───────────────────────────────────────────────────────────────────────
+
+  const memberOptions =
+    useMemo(
+      () => [
+        {
+          label:
+            isPersonalView
+              ? "My Records"
+              : "All Members",
+          value: "all",
+        },
+
+        ...(isPersonalView
+          ? []
+          : allMembers.map(
+              (m) => ({
+                label:
+                  m.fullName,
+                value: m.id,
+              })
+            )),
+      ],
+      [
+        allMembers,
+        isPersonalView,
+      ]
+    );
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Category view
+  // ───────────────────────────────────────────────────────────────────────
+
+  const view = useMemo(() => {
+    if (
+      category ===
+      "contributions"
+    ) {
+      let list =
+        contributions.filter(
+          (c) =>
+            inDateRange(
+              c.date
+            ) &&
+            inMember(
+              c.memberId
+            )
+        );
+
+      if (
+        contributionStatus !==
+        "all"
+      ) {
+        list =
+          list.filter(
+            (c) =>
+              c.status ===
+              contributionStatus
+          );
+      }
+
+      list =
+        list.filter(
+          (c) =>
+            matchesSearch(c, [
+              "memberId",
+              "description",
+              "contributionType",
+            ])
+        );
+
+      const chart =
+        monthlyTotals(
+          list.filter(
+            (c) =>
+              c.status ===
+              "approved"
+          ),
+          "date",
+          "amount"
+        );
+
+      return {
+        rows: list,
+        headers: [
+          "Date",
+          "Member",
+          "Type",
+          "Amount",
+          "Status",
+          "Description",
+        ],
+        toRow: (c: any) => [
+          fmtDate(c.date),
+          getMemberName(
+            c.memberId
+          ),
+          c.contributionType ??
+            "",
+          fmtCurrency(
+            c.amount
+          ),
+          c.status,
+          c.description ??
+            "",
+        ],
+        chart,
+        chartColor: C.primary,
+        kpis: [
+          {
+            label: "Total",
+            value:
+              fmtCurrency(
+                list.reduce(
+                  (s, c) =>
+                    s +
+                    c.amount,
+                  0
+                )
+              ),
+          },
+          {
+            label: "Records",
+            value: String(
+              list.length
+            ),
+          },
+        ],
+      };
+    }
+
+    if (
+      category ===
+      "loans"
+    ) {
+      let list =
+        loans.filter(
+          (l) =>
+            inDateRange(
+              l.applicationDate
+            ) &&
+            inMember(
+              l.memberId
+            )
+        );
+
+      if (
+        loanStatus !==
+        "all"
+      ) {
+        if (
+          loanStatus ===
+          "active"
+        ) {
+          list =
+            list.filter(
+              (l) =>
+                l.status ===
+                "disbursed"
+            );
+        } else if (
+          loanStatus ===
+          "pending"
+        ) {
+          list =
+            list.filter(
+              (l) =>
+                l.status.startsWith(
+                  "pending_"
+                )
+            );
+        } else {
+          list =
+            list.filter(
+              (l) =>
+                l.status ===
+                loanStatus
+            );
+        }
+      }
+
+      list =
+        list.filter(
+          (l) =>
+            matchesSearch(l, [
+              "memberId",
+              "id",
+              "purpose",
+            ])
+        );
+
+      const chart =
+        monthlyTotals(
+          list,
+          "applicationDate",
+          "amount"
+        );
+
+      return {
+        rows: list,
+        headers: [
+          "Member",
+          "Amount",
+          "Repaid",
+          "Balance",
+          "Status",
+          "Applied",
+        ],
+        toRow: (l: any) => [
+          getMemberName(
+            l.memberId
+          ),
+          fmtCurrency(
+            l.amount
+          ),
+          fmtCurrency(
+            l.amountRepaid ||
+              0
+          ),
+          fmtCurrency(
+            l.balance ??
+              0
+          ),
+          l.status,
+          fmtDate(
+            l.applicationDate
+          ),
+        ],
+        chart,
+        chartColor: C.accent,
+        kpis: [
+          {
+            label:
+              "Total Disbursed",
+            value:
+              fmtCurrency(
+                list.reduce(
+                  (s, l) =>
+                    s +
+                    l.amount,
+                  0
+                )
+              ),
+          },
+          {
+            label: "Records",
+            value: String(
+              list.length
+            ),
+          },
+        ],
+      };
+    }
+
+    if (
+      category ===
+      "latefees"
+    ) {
+      let list =
+        lateFees.filter(
+          (f: any) =>
+            inDateRange(
+              f.periodStart
+            ) &&
+            inMember(
+              f.memberId
+            )
+        );
+
+      list =
+        list.filter(
+          (f: any) =>
+            matchesSearch(f, [
+              "memberId",
+              "periodLabel",
+            ])
+        );
+
+      const chart =
+        monthlyTotals(
+          list,
+          "periodStart",
+          "feeAmount"
+        );
+
+      return {
+        rows: list,
+        headers: [
+          "Member",
+          "Period",
+          "Days Late",
+          "Fee Amount",
+          "Status",
+        ],
+        toRow: (f: any) => [
+          getMemberName(
+            f.memberId
+          ),
+          f.periodLabel ??
+            "—",
+          f.daysLate ?? 0,
+          fmtCurrency(
+            f.feeAmount ||
+              0
+          ),
+          f.isPaid
+            ? "Paid"
+            : "Unpaid",
+        ],
+        chart,
+        chartColor: C.error,
+        kpis: [
+          {
+            label:
+              "Total Owed",
+            value:
+              fmtCurrency(
+                list
+                  .filter(
+                    (f: any) =>
+                      !f.isPaid
+                  )
+                  .reduce(
+                    (
+                      s: number,
+                      f: any
+                    ) =>
+                      s +
+                      (f.feeAmount ||
+                        0),
+                    0
+                  )
+              ),
+          },
+          {
+            label: "Records",
+            value: String(
+              list.length
+            ),
+          },
+        ],
+      };
+    }
+
+    if (
+      category ===
+      "members"
+    ) {
+      const list =
+        members.filter(
+          (m) =>
+            matchesSearch(
+              m,
+              [
+                "fullName",
+                "email",
+                "phone",
+              ]
+            )
+        );
+
+      return {
+        rows: list,
+        headers: [
+          "Name",
+          "Phone",
+          "Email",
+          "Role",
+          "Status",
+          "Total Contributions",
+          "Joined",
+        ],
+        toRow: (m: any) => [
+          m.fullName,
+          m.phone || "",
+          m.email || "",
+          m.role,
+          m.status,
+          fmtCurrency(
+            m.totalContributions ||
+              0
+          ),
+          fmtDate(
+            m.dateJoined
+          ),
+        ],
+        chart: {
+          labels: [],
+          values: [],
+        },
+        chartColor: C.gold,
+        kpis: [
+          {
+            label:
+              "Active Members",
+            value: String(
+              list.filter(
+                (m) =>
+                  m.status ===
+                  "active"
+              ).length
+            ),
+          },
+          {
+            label: "Total",
+            value: String(
+              list.length
+            ),
+          },
+        ],
+      };
+    }
+
+    if (
+      category ===
+      "expenses"
+    ) {
+      let list =
+        wallet.filter(
+          (t) =>
+            [
+              "bank_fee",
+              "other_debit",
+            ].includes(
+              t.type
+            ) &&
+            inDateRange(
+              t.date
+            ) &&
+            inMember(
+              t.memberId
+            )
+        );
+
+      list =
+        list.filter(
+          (t) =>
+            matchesSearch(t, [
+              "type",
+              "description",
+            ])
+        );
+
+      const chart =
+        monthlyTotals(
+          list,
+          "date",
+          "amount"
+        );
+
+      return {
+        rows: list,
+        headers: [
+          "Date",
+          "Type",
+          "Amount",
+          "Description",
+        ],
+        toRow: (t: any) => [
+          fmtDate(t.date),
+          t.type.replace(
+            /_/g,
+            " "
+          ),
+          fmtCurrency(
+            Math.abs(
+              t.amount ||
+                0
+            )
+          ),
+          t.description ||
+            "",
+        ],
+        chart,
+        chartColor: C.error,
+        kpis: [
+          {
+            label:
+              "Total Expenses",
+            value:
+              fmtCurrency(
+                list.reduce(
+                  (s, t) =>
+                    s +
+                    Math.abs(
+                      t.amount ||
+                        0
+                    ),
+                  0
+                )
+              ),
+          },
+          {
+            label: "Records",
+            value: String(
+              list.length
+            ),
+          },
+        ],
+      };
+    }
+
+    if (
+      category ===
+      "investments"
+    ) {
+      let list =
+        investments.filter(
+          (i: any) =>
+            inDateRange(
+              i.startDate
+            )
+        );
+
+      list =
+        list.filter(
+          (i: any) =>
+            matchesSearch(
+              i,
+              [
+                "investmentName",
+                "type",
+              ]
+            )
+        );
+
+      const chart =
+        monthlyTotals(
+          list,
+          "startDate",
+          "investmentAmount"
+        );
+
+      return {
+        rows: list,
+        headers: [
+          "Investment ID",
+          "Name",
+          "Amount",
+          "Expected Return",
+          "Status",
+          "Start Date",
+          "Maturity Date",
+        ],
+        toRow: (i: any) => [
+          i.id,
+          i.investmentName,
+          fmtCurrency(
+            i.investmentAmount
+          ),
+          fmtCurrency(
+            i.expectedReturn ||
+              0
+          ),
+          i.status,
+          fmtDate(
+            i.startDate
+          ),
+          i.maturityDate
+            ? fmtDate(
+                i.maturityDate
+              )
+            : "",
+        ],
+        chart,
+        chartColor: C.success,
+        kpis: [
+          {
+            label:
+              "Total Invested",
+            value:
+              fmtCurrency(
+                list.reduce(
+                  (
+                    s: number,
+                    i: any
+                  ) =>
+                    s +
+                    (i.investmentAmount ||
+                      0),
+                  0
+                )
+              ),
+          },
+          {
+            label: "Records",
+            value: String(
+              list.length
+            ),
+          },
+        ],
+      };
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // Earnings
+    // ───────────────────────────────────────────────────────────────────
+
+    const EARNING_TYPES = [
+      "loan_interest_income",
+      "interest",
+      "late_fee",
+      "investment_return",
+      "bank_fee",
+      "other_credit",
+      "other_debit",
+    ];
+
+    const earningAmount =
+      (t: any) => {
+        if (
+          t.type !==
+          "loan_repayment"
+        ) {
+          return t.amount;
+        }
+
+        const loan =
+          loans.find(
+            (l) =>
+              l.id ===
+              t.loanId
+          );
+
+        if (
+          !loan?.totalRepayable
+        ) {
+          return 0;
+        }
+
+        return round2(
+          t.amount *
+            (loan.totalInterest /
+              loan.totalRepayable)
+        );
+      };
+
+    let list =
+      wallet.filter(
+        (t) =>
+          (
+            EARNING_TYPES.includes(
+              t.type
+            ) ||
+            t.type ===
+              "loan_repayment"
+          ) &&
+          t.amount !== 0 &&
+          inDateRange(
+            t.date
+          ) &&
+          inMember(
+            t.memberId
+          )
+      );
+
+    list =
+      list.filter(
+        (t) =>
+          matchesSearch(t, [
+            "type",
+            "description",
+          ])
+      );
+
+    const chart =
+      monthlyTotals(
+        list,
+        "date",
+        null
+      );
+
+    const totalEarnings =
+      round2(
+        list.reduce(
+          (s, t) =>
+            s +
+            earningAmount(t),
+          0
+        )
+      );
+
+    return {
+      rows: list,
+      headers: [
+        "Date",
+        "Member",
+        "Type",
+        "Description",
+        "Amount",
+      ],
+      toRow: (t: any) => [
+        fmtDate(t.date),
+        getMemberName(
+          t.memberId
+        ),
+        t.type,
+        t.description ??
+          "",
+        fmtCurrency(
+          earningAmount(t)
+        ),
+      ],
+      chart,
+      chartColor: C.success,
+      kpis: [
+        {
+          label:
+            "Net Earnings",
+          value:
+            fmtCurrency(
+              totalEarnings
+            ),
+        },
+      ],
+    };
+  }, [
+    category,
+    contributions,
+    loans,
+    lateFees,
+    members,
+    wallet,
+    investments,
+    selectedFromDate,
+    selectedToDate,
+    memberIdFilter,
+    searchTerm,
+    loanStatus,
+    contributionStatus,
+  ]);
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Export current report
+  // ───────────────────────────────────────────────────────────────────────
+
+  const exportRows =
+    view.rows.map(
+      view.toRow
+    );
+
+  const handleExport =
+    async (
+      format:
+        | "excel"
+        | "pdf"
+    ) => {
+      if (
+        !exportRows.length
+      ) {
+        show(
+          "No records to export",
+          "error"
+        );
+        return;
+      }
+
+      const fileName = `${category}_report_${monthFilter}_${reportScope}`;
+
+      if (
+        format ===
+        "excel"
+      ) {
+        await exportXlsx(
+          fileName,
+          view.headers,
+          exportRows
+        );
+      } else {
+        const html = `
+          <table>
+            <thead>
+              <tr>
+                ${view.headers
+                  .map(
+                    (h) =>
+                      `<th>${h}</th>`
+                  )
+                  .join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${exportRows
+                .map(
+                  (row) =>
+                    `<tr>${row
+                      .map(
+                        (c) =>
+                          `<td>${c}</td>`
+                      )
+                      .join("")}</tr>`
+                )
+                .join("")}
+            </tbody>
+          </table>
+        `;
+
+        await exportPdf(
+          fileName,
+          `${
+            CATEGORIES.find(
+              (c) =>
+                c.key ===
+                category
+            )?.label
+          } Report`,
+          html
+        );
+      }
+
+      show(
+        `Exported as ${
+          format ===
+          "excel"
+            ? "Excel"
+            : "PDF"
+        }`
+      );
+    };
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Export member contributions
+  // ───────────────────────────────────────────────────────────────────────
+
+  const handleExportMemberContributions =
+    async (
+      memberId?: string,
+      format:
+        | "excel"
+        | "pdf" = "excel"
+    ) => {
+      const targetContributions =
+        contributions
+          .filter((c: any) =>
+            memberId
+              ? c.memberId ===
+                memberId
+              : true
+          )
+          .filter(
+            (c: any) =>
+              c.status ===
+              "approved"
+          )
+          .filter(
+            (c: any) =>
+              inDateRange(
+                c.date
+              )
+          )
+          .filter(
+            (c: any) =>
+              matchesSearch(c, [
+                "memberId",
+                "description",
+                "contributionType",
+              ])
+          );
+
+      if (
+        !targetContributions.length
+      ) {
+        show(
+          "No contributions found for this selection",
+          "error"
+        );
+        return;
+      }
+
+      const headers = [
+        "Date",
+        "Member",
+        "Type",
+        "Amount",
+        "Status",
+        "Description",
+      ];
+
+      const rows =
+        targetContributions.map(
+          (c: any) => [
             fmtDate(c.date),
-            members.find(m => m.id === c.memberId)?.fullName || "Unknown",
-            c.contributionType,
-            fmtCurrency(c.amount),
+            getMemberName(
+              c.memberId
+            ),
+            c.contributionType ??
+              "",
+            fmtCurrency(
+              c.amount
+            ),
             c.status,
-            c.description || "",
-          ]),
-        };
-      case "loans":
-        return {
-          headers: ["Application Date", "Member", "Amount", "Status", "Purpose", "Repayment Months"],
-          rows: data.map((l: any) => [
-            fmtDate(l.applicationDate),
-            members.find(m => m.id === l.memberId)?.fullName || "Unknown",
-            fmtCurrency(l.amount),
-            l.status,
-            l.purpose || "",
-            l.repaymentMonths,
-          ]),
-        };
-      case "investments":
-        return {
-          headers: ["Start Date", "Type", "Amount", "Status", "Expected Return"],
-          rows: data.map((i: any) => [
-            fmtDate(i.startDate),
-            i.type,
-            fmtCurrency(i.amount),
-            i.status,
-            fmtCurrency(i.expectedReturn || 0),
-          ]),
-        };
-      case "members":
-        return {
-          headers: ["Name", "Email", "Phone", "Role", "Status", "Date Joined"],
-          rows: data.map((m: any) => [
-            m.fullName,
-            m.email || "",
-            m.phone || "",
-            m.role,
-            m.status,
-            fmtDate(m.dateJoined),
-          ]),
-        };
-      case "wallet":
-        return {
-          headers: ["Date", "Type", "Amount", "Description", "Member"],
-          rows: data.map((w: any) => [
-            fmtDate(w.date),
-            w.type,
-            fmtCurrency(w.amount),
-            w.description || "",
-            members.find(m => m.id === w.memberId)?.fullName || "System",
-          ]),
-        };
-      default:
-        return null;
-    }
-  };
+            c.description ??
+              "",
+          ]
+        );
 
-  const handleExport = async (format: "csv" | "pdf") => {
-    const exportData = getExportData();
-    if (!exportData) {
-      show("Please select a data type to export", "error");
-      return;
-    }
+      const scopeName =
+        memberId
+          ? getMemberName(
+              memberId
+            ).replace(
+              /\s+/g,
+              "_"
+            )
+          : reportScope;
 
-    const fileName = `${dataType}_report_${selectedFromDate || "all"}_to_${selectedToDate || "all"}`;
-    
-    if (format === "csv") {
-      await exportCsv(fileName, exportData.headers, exportData.rows);
-    } else {
-      await exportPdf(fileName, `${dataType.charAt(0).toUpperCase() + dataType.slice(1)} Report`, 
-        `<table><thead><tr>${exportData.headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${exportData.rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
-    }
-    show(`Exported as ${format.toUpperCase()}`);
-  };
+      const fileName =
+        `contributions_${scopeName}_${monthFilter}`;
 
-  const cashflow = useMemo(() => {
-    const months: string[] = [];
-    const income: number[] = [];
-    const expenses: number[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date();
-      d.setMonth(d.getMonth() - i);
-      const startOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
-      const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-      const monthTxs = allWallet.filter(t => {
-        const txDate = new Date(t.date);
-        return txDate >= startOfMonth && txDate <= endOfMonth;
-      });
-      months.push(d.toLocaleDateString("en", { month: "short" }));
-      income.push(monthTxs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0));
-      expenses.push(Math.abs(monthTxs.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0)));
-    }
-    return { months, income, expenses };
-  }, [allWallet]);
+      if (
+        format ===
+        "excel"
+      ) {
+        await exportXlsx(
+          fileName,
+          headers,
+          rows
+        );
+      } else {
+        const html = `
+          <table>
+            <thead>
+              <tr>
+                ${headers
+                  .map(
+                    (h) =>
+                      `<th>${h}</th>`
+                  )
+                  .join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${rows
+                .map(
+                  (row) =>
+                    `<tr>${row
+                      .map(
+                        (c) =>
+                          `<td>${c}</td>`
+                      )
+                      .join("")}</tr>`
+                )
+                .join("")}
+            </tbody>
+          </table>
+        `;
 
-  const memberPie = useMemo(() => {
-    const top = allMembers.filter(m => m.status === "active" && m.totalContributions > 0).slice(0, 5);
-    const palette = [C.accent, C.gold, C.info, C.success, "#7C3AED"];
-    return top.map((m, i) => ({
-      name: m.fullName.split(" ")[0],
-      population: m.totalContributions,
-      color: palette[i % palette.length],
-      legendFontColor: C.text2,
-      legendFontSize: 11,
-    }));
-  }, [allMembers]);
+        await exportPdf(
+          fileName,
+          "Contributions Report",
+          html
+        );
+      }
 
-  // Interest earned: read from wallet ledger
-  const totalInterest = useMemo(() => {
-    const fromLedger = wallet
-      .filter(t => t.type === "loan_interest_income" && t.amount > 0)
-      .reduce((s, t) => s + t.amount, 0);
-    const legacy = wallet
-      .filter(t => t.type === "loan_repayment" && t.amount > 0)
-      .reduce((s, t) => {
-        const loan = loans.find(l => l.id === t.loanId);
-        if (!loan || !loan.totalRepayable) return s;
-        return s + round2(t.amount * (loan.totalInterest / loan.totalRepayable));
-      }, 0);
-    return round2(fromLedger + legacy);
-  }, [wallet, loans]);
-  const totalExpenses = useMemo(() =>
-    wallet.filter(t => ["bank_fee", "other_debit"].includes(t.type)).reduce((s, t) => s + Math.abs(t.amount), 0), [wallet]
-  );
-
-  const loansTotal = useMemo(() => filteredLoans.reduce((s, l) => s + l.amount, 0), [filteredLoans]);
-  const contributionsTotal = useMemo(() => filteredContributions.reduce((s, c) => s + c.amount, 0), [filteredContributions]);
-  const investmentsTotal = useMemo(() => filteredInvestments.reduce((s, i) => s + i.investmentAmount, 0), [filteredInvestments]);
-
-  const hasActiveFilters = selectedFromDate !== "" || selectedToDate !== "" || loanStatus !== "all" || contributionStatus !== "all" || searchTerm !== "" || dataType !== "all";
-
-  const openFilterModal = () => {
-    setTempSearch(searchTerm);
-    setTempFromDate(selectedFromDate);
-    setTempToDate(selectedToDate);
-    setTempLoanStatus(loanStatus);
-    setTempContributionStatus(contributionStatus);
-    setTempDataType(dataType);
-    setShowFilterModal(true);
-  };
-
-  const applyFilters = () => {
-    setSearchTerm(tempSearch);
-    setSelectedFromDate(tempFromDate);
-    setSelectedToDate(tempToDate);
-    setLoanStatus(tempLoanStatus);
-    setContributionStatus(tempContributionStatus);
-    setDataType(tempDataType);
-    setShowFilterModal(false);
-  };
-
-  const clearFilters = () => {
-    setSearchTerm("");
-    setSelectedFromDate("");
-    setSelectedToDate("");
-    setLoanStatus("all");
-    setContributionStatus("all");
-    setDataType("all");
-    setTempSearch("");
-    setTempFromDate("");
-    setTempToDate("");
-    setTempLoanStatus("all");
-    setTempContributionStatus("all");
-    setTempDataType("all");
-  };
-
-  const exportData = async (type: "loans" | "contributions" | "investments", format: "csv" | "pdf") => {
-    if (type === "loans") {
-      const headers = ["Loan ID", "Member", "Status", "Principal", "Repaid", "Balance", "Application Date", "Disbursement Date"];
-      const rows = filteredLoans.map(loan => [
-        loan.id,
-        allMembers.find(m => m.id === loan.memberId)?.fullName ?? "Unknown",
-        loan.status, fmtCurrency(loan.amount), fmtCurrency(loan.amountRepaid), fmtCurrency(loan.balance),
-        fmtDate(loan.applicationDate), loan.disbursementDate ? fmtDate(loan.disbursementDate) : "",
-      ]);
-      if (format === "csv") await exportCsv(`Loans_Report`, headers, rows);
-      else await exportPdf(`Loans_Report`, "Loans Report", generateHtmlTable(headers, rows));
-    } else if (type === "contributions") {
-      const headers = ["Contribution ID", "Member", "Amount", "Type", "Status", "Date", "Description"];
-      const rows = filteredContributions.map(contribution => [
-        contribution.id,
-        allMembers.find(m => m.id === contribution.memberId)?.fullName ?? "Unknown",
-        fmtCurrency(contribution.amount), contribution.contributionType, contribution.status,
-        fmtDate(contribution.date), contribution.description ?? "",
-      ]);
-      if (format === "csv") await exportCsv(`Contributions_Report`, headers, rows);
-      else await exportPdf(`Contributions_Report`, "Contributions Report", generateHtmlTable(headers, rows));
-    } else {
-      const headers = ["Investment ID", "Name", "Amount", "Expected Return", "Status", "Start Date", "Maturity Date"];
-      const rows = filteredInvestments.map(investment => [
-        investment.id, investment.investmentName, fmtCurrency(investment.investmentAmount),
-        fmtCurrency(investment.expectedReturn), investment.status, fmtDate(investment.startDate), investment.maturityDate ? fmtDate(investment.maturityDate) : "",
-      ]);
-      if (format === "csv") await exportCsv(`Investments_Report`, headers, rows);
-      else await exportPdf(`Investments_Report`, "Investments Report", generateHtmlTable(headers, rows));
-    }
-    show(`Exported ${type} report as ${format.toUpperCase()}`);
-  };
-
-  const generateHtmlTable = (headers: string[], rows: any[][]) => {
-    return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-  };
-
-  // All roles can see Members tab — non-admins see only their own data within it
-  const TABS = ["overview", "members", "earnings"] as const;
+      show(
+        `Exported ${rows.length} contribution${
+          rows.length !== 1
+            ? "s"
+            : ""
+        } as ${
+          format ===
+          "excel"
+            ? "Excel"
+            : "PDF"
+        }`
+      );
+    };
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
-
-      {/* ── Header removed - global header handles this ── */}
-
-      {/* ── Active Filters Bar ── */}
-      {hasActiveFilters && (
-        <TouchableOpacity style={styles.activeFiltersBar} onPress={openFilterModal}>
-          <Text style={styles.activeFiltersText} numberOfLines={1}>
-            {searchTerm && `🔍 "${searchTerm}" `}
-            {selectedFromDate && `📅 From ${fmtDate(selectedFromDate)} `}
-            {selectedToDate && `📌 To ${fmtDate(selectedToDate)} `}
-            {loanStatus !== "all" && `🏦 ${loanStatus} loans `}
-            {contributionStatus !== "all" && `💰 ${contributionStatus} contributions`}
-          </Text>
-          <TouchableOpacity onPress={clearFilters}>
-            <Text style={styles.clearFiltersText}>Clear</Text>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      )}
-
-      {/* ── Smart Controls: Tabs + Filter Button ── */}
-        <View style={[styles.controlsSection, isWide && { maxWidth: 960, alignSelf: "center" as any, width: "100%" as any }]}>
-          <View style={styles.controlsLeft}>
-            {TABS.map(tab => (
-              <TouchableOpacity
-                key={tab}
-                style={[styles.tab, activeTab === tab && styles.tabActive]}
-                onPress={() => setActiveTab(tab)}
-              >
-                <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          
-          <View style={styles.controlsRight}>
-            <TouchableOpacity 
-              style={[styles.exportBtn, { marginRight: 8 }]} 
-              onPress={() => handleExport("csv")} 
-              activeOpacity={0.8}
-              disabled={dataType === "all"}
-            >
-              <Text style={styles.exportBtnText}>📥 Export</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.filterBtn} onPress={openFilterModal} activeOpacity={0.8}>
-              <Text style={styles.filterBtnText}>{hasActiveFilters ? "🎯 Filter" : "🔍 Filter"}</Text>
-              {hasActiveFilters && <View style={styles.filterDot} />}
-            </TouchableOpacity>
-          </View>
-        </View>
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: C.bg,
+      }}
+    >
+      <StatusBar
+        barStyle="dark-content"
+        backgroundColor={C.bg}
+      />
 
       <ScrollView
         contentContainerStyle={[
-          { paddingBottom: 100 },
-          isWide && { maxWidth: 960, alignSelf: "center" as any, width: "100%" as any },
+          styles.page,
+          {
+            paddingBottom: 80,
+          },
         ]}
-        showsVerticalScrollIndicator={false}
+        showsVerticalScrollIndicator={
+          false
+        }
       >
-        {/* Overview Tab */}
-        {activeTab === "overview" && (
-          <View style={styles.content}>
-            {/* KPI Row */}
-            <View style={styles.kpiGrid}>
-              <KpiCard label="TOTAL EARNINGS" value={fmtCurrency(groupWalletEarnings)} color={C.info} subtext="interest, fees & other — no principal" />
-              <KpiCard label="INVESTMENTS" value={fmtCurrency(allInvestments.reduce((sum, item) => sum + item.investmentAmount, 0))} color={C.success} subtext="group total" />
-              <KpiCard label="EXPENSES" value={fmtCurrency(groupExpenses)} color={C.error} subtext="operational" />
-            </View>
+        {/* ═══════════════════════════════════════════════════════════════
+            OVERVIEW
+        ═══════════════════════════════════════════════════════════════ */}
 
-            {/* Group Financial Position */}
-            <View style={styles.chartCard}>
-              <Text style={styles.chartTitle}>Group Financial Position</Text>
-              <View style={{ flexDirection: "row" }}>
-                <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border, borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label} numberOfLines={1}>Members</Text>
-                  <Text style={gfp.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{allMembers.filter(m => m.status === "active").length}</Text>
-                  <Text style={T.small} numberOfLines={1}>active</Text>
-                </View>
-                <View style={[gfp.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label} numberOfLines={1}>Total Net Assets</Text>
-                  <Text style={[gfp.statValue, { color: C.primary }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                    {fmtCurrency(groupTotalNetAssets)}
-                  </Text>
-                  <Text style={T.small} numberOfLines={1}>everything in wallet</Text>
-                </View>
-              </View>
-              <View style={{ flexDirection: "row" }}>
-                <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border, borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label} numberOfLines={1}>Contributions</Text>
-                  <Text style={gfp.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                    {fmtCurrency(groupContributionsOnly)}
-                  </Text>
-                  <Text style={T.small} numberOfLines={1}>total collected</Text>
-                </View>
-                <View style={[gfp.stat, { borderBottomWidth: 1, borderBottomColor: C.border }]}>
-                  <Text style={T.label} numberOfLines={1}>Interest Earned</Text>
-                  <Text style={[gfp.statValue, { color: C.gold }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                    {fmtCurrency(groupInterestOnly)}
-                  </Text>
-                  <Text style={T.small} numberOfLines={1}>from loan repayments</Text>
-                </View>
-              </View>
-              <View style={{ flexDirection: "row" }}>
-                <View style={[gfp.stat, { borderRightWidth: 1, borderRightColor: C.border }]}>
-                  <Text style={T.label} numberOfLines={1}>Penalties &amp; Late Fees</Text>
-                  <Text style={[gfp.statValue, { color: C.error }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                    {fmtCurrency(groupPenaltiesOnly)}
-                  </Text>
-                  <Text style={T.small} numberOfLines={1}>collected</Text>
-                </View>
-                <View style={gfp.stat}>
-                  <Text style={T.label} numberOfLines={1}>Other</Text>
-                  <Text style={gfp.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                    {fmtCurrency(groupOtherOnly)}
-                  </Text>
-                  <Text style={T.small} numberOfLines={1}>bank fees, misc credits/debits</Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Cash Flow Chart */}
-            <View style={styles.chartCard}>
-              <Text style={styles.chartTitle}>Cash Flow (Last 6 Months)</Text>
-              {cashflow.months.length > 0 && (
-                <CashflowBarChart
-                  months={cashflow.months}
-                  income={cashflow.income}
-                  expenses={cashflow.expenses}
-                />
+        <View
+          style={[
+            styles.contentContainer,
+            isWide &&
+              styles.contentContainerWide,
+          ]}
+        >
+          <View
+            style={
+              styles.kpiGrid
+            }
+          >
+            <KpiCard
+              label="TOTAL EARNINGS"
+              value={fmtCurrency(
+                groupWalletEarnings
               )}
-            </View>
+              color={C.info}
+              subtext={
+                isPersonalView
+                  ? "my interest, fees & other"
+                  : "interest, fees & other"
+              }
+            />
 
-            {/* Savings by Member */}
-            {memberPie.length > 0 && (
-              <View style={styles.chartCard}>
-                <Text style={styles.chartTitle}>{canSeeAll ? "Savings by Member (Top 5)" : "My Savings"}</Text>
-                <MemberSharesChart data={memberPie} />
-              </View>
-            )}
+            <KpiCard
+              label="INVESTMENTS"
+              value={fmtCurrency(
+                investments.reduce(
+                  (
+                    sum: number,
+                    item: any
+                  ) =>
+                    sum +
+                    (item.investmentAmount ||
+                      0),
+                  0
+                )
+              )}
+              color={C.success}
+              subtext={
+                isPersonalView
+                  ? "my investments"
+                  : "group total"
+              }
+            />
 
-            {/* Export Section */}
-            {permissions.downloadReports && (
-              <View style={styles.exportSection}>
-                <Text style={styles.exportTitle}>Export Data</Text>
-                <Text style={styles.exportSubtitle}>Filtered data based on your current filters</Text>
-                <View style={styles.exportGrid}>
-                  <View style={styles.exportCard}>
-                    <Text style={styles.exportCardTitle}>Loans</Text>
-                    <Text style={styles.exportCardValue}>{fmtCurrency(loansTotal)}</Text>
-                    <Text style={styles.exportCardMeta}>{filteredLoans.length} records</Text>
-                    <View style={styles.exportButtons}>
-                      <TouchableOpacity style={[styles.exportBtn, { backgroundColor: C.primary }]} onPress={() => exportData("loans", "csv")}>
-                        <Text style={styles.exportBtnText}>CSV</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[styles.exportBtn, { backgroundColor: C.redText }]} onPress={() => exportData("loans", "pdf")}>
-                        <Text style={styles.exportBtnText}>PDF</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  <View style={styles.exportCard}>
-                    <Text style={styles.exportCardTitle}>Contributions</Text>
-                    <Text style={styles.exportCardValue}>{fmtCurrency(contributionsTotal)}</Text>
-                    <Text style={styles.exportCardMeta}>{filteredContributions.length} records</Text>
-                    <View style={styles.exportButtons}>
-                      <TouchableOpacity style={[styles.exportBtn, { backgroundColor: C.primary }]} onPress={() => exportData("contributions", "csv")}>
-                        <Text style={styles.exportBtnText}>CSV</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[styles.exportBtn, { backgroundColor: C.redText }]} onPress={() => exportData("contributions", "pdf")}>
-                        <Text style={styles.exportBtnText}>PDF</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  <View style={styles.exportCard}>
-                    <Text style={styles.exportCardTitle}>Investments</Text>
-                    <Text style={styles.exportCardValue}>{fmtCurrency(investmentsTotal)}</Text>
-                    <Text style={styles.exportCardMeta}>{filteredInvestments.length} records</Text>
-                    <View style={styles.exportButtons}>
-                      <TouchableOpacity style={[styles.exportBtn, { backgroundColor: C.primary }]} onPress={() => exportData("investments", "csv")}>
-                        <Text style={styles.exportBtnText}>CSV</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[styles.exportBtn, { backgroundColor: C.redText }]} onPress={() => exportData("investments", "pdf")}>
-                        <Text style={styles.exportBtnText}>PDF</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-              </View>
-            )}
+            <KpiCard
+              label="EXPENSES"
+              value={fmtCurrency(
+                groupExpenses
+              )}
+              color={C.error}
+              subtext={
+                isPersonalView
+                  ? "my wallet"
+                  : "operational"
+              }
+            />
           </View>
-        )}
 
-        {/* Members Tab */}
-        {activeTab === "members" && (
-          <MembersTab
-            members={canSeeAll ? allMembers : allMembers.filter(m => m.id === currentMember?.id)}
-            contributions={canSeeAll ? allContributions : allContributions.filter(c => c.memberId === currentMember?.id)}
-            loans={canSeeAll ? allLoans : allLoans.filter(l => l.memberId === currentMember?.id)}
-            wallet={canSeeAll ? allWallet : allWallet.filter(t => t.memberId === currentMember?.id)}
-            canSeeAll={canSeeAll}
-            currentMember={currentMember}
-          />
-        )}
-
-        {/* Earnings Tab */}
-        {activeTab === "earnings" && (
-          <EarningsTab
-            wallet={canSeeAll ? allWallet : allWallet.filter(t => t.memberId === currentMember?.id)}
-            members={canSeeAll ? allMembers : allMembers.filter(m => m.id === currentMember?.id)}
-            canSeeAll={canSeeAll}
-            currency={group?.currency ?? "RWF"}
-            group={group}
-            allMembers={allMembers}
-            allContributions={allContributions}
-            allLoans={allLoans}
-            allWallet={allWallet}
-            permissions={permissions}
-          />
-        )}
-      </ScrollView>
-
-      {/* Filter Modal */}
-      <FilterModal
-        visible={showFilterModal}
-        onClose={() => setShowFilterModal(false)}
-        fromDate={tempFromDate}
-        toDate={tempToDate}
-        onFromDateChange={setTempFromDate}
-        onToDateChange={setTempToDate}
-        loanStatus={tempLoanStatus}
-        contributionStatus={tempContributionStatus}
-        onLoanStatusChange={setTempLoanStatus}
-        onContributionStatusChange={setTempContributionStatus}
-        onApply={applyFilters}
-        searchTerm={tempSearch}
-        onSearchChange={setTempSearch}
-        dataType={tempDataType}
-        onDataTypeChange={setTempDataType}
-        onSearchChange={setTempSearch}
-      />
-
-      <Toast visible={visible} msg={msg} type={type}/>
-    </View>
-  );
-}
-
-// ─── MembersTab ──────────────────────────────────────────────────────────────
-function MembersTab({ members, contributions, loans, wallet, canSeeAll, currentMember }: any) {
-  const [search, setSearch] = useState<string>("");
-  const [selectedMember, setSelectedMember] = useState<any>(
-    !canSeeAll && members.length === 1 ? members[0] : null
-  );
-
-  const filteredMembers = members
-    .filter((m: any) =>
-      m.fullName.toLowerCase().includes(search.toLowerCase()) ||
-      m.phone?.includes(search) ||
-      m.email?.toLowerCase().includes(search.toLowerCase())
-    )
-    .sort((a: any, b: any) => b.totalContributions - a.totalContributions);
-
-  if (selectedMember) {
-    return <MemberDetail
-      member={selectedMember}
-      loans={loans.filter((l: any) => l.memberId === selectedMember.id)}
-      contributions={contributions.filter((c: any) => c.memberId === selectedMember.id && c.status === "approved")}
-      wallet={wallet.filter((w: any) => w.memberId === selectedMember.id)}
-      canGoBack={canSeeAll}
-      onBack={() => setSelectedMember(null)}
-    />;
-  }
-
-  return (
-    <View style={styles.content}>
-      <Input
-        placeholder="Search members by name, phone, email..."
-        value={search}
-        onChangeText={setSearch}
-        leftIcon="🔍"
-      />
-      <Text style={styles.resultsCount}>{filteredMembers.length} member{filteredMembers.length !== 1 ? "s" : ""}</Text>
-      <Card>
-        {filteredMembers.length === 0 ? (
-          <Empty message="No members found" icon="👥" />
-        ) : (
-          filteredMembers.map((m: any, i: number) => (
-            <TouchableOpacity key={m.id} onPress={() => setSelectedMember(m)} activeOpacity={0.7}>
-              <View style={styles.memberRow}>
-                <View style={styles.memberAvatar}>
-                  <Text style={styles.memberAvatarText}>
-                    {m.fullName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
-                  </Text>
-                </View>
-                <View style={styles.memberInfo}>
-                  <Text style={styles.memberName} numberOfLines={1}>{m.fullName}</Text>
-                  <Text style={styles.memberContact} numberOfLines={1}>{m.phone || m.email || "No contact"}</Text>
-                </View>
-                <View style={styles.memberStats}>
-                  <Text style={styles.memberAmount} numberOfLines={1}>{fmtCurrency(m.totalContributions)}</Text>
-                  <Text style={styles.memberRole} numberOfLines={1}>{m.role}</Text>
-                </View>
-                <Text style={styles.chevron}>›</Text>
-              </View>
-              {i < filteredMembers.length - 1 && <Divider />}
-            </TouchableOpacity>
-          ))
-        )}
-      </Card>
-    </View>
-  );
-}
-
-// ─── MemberDetail ─────────────────────────────────────────────────────────────
-function MemberDetail({ member, loans, contributions, wallet, canGoBack, onBack }: any) {
-  const totalContributions = contributions.reduce((s: number, c: any) => s + c.amount, 0);
-  const loanBalance = loans.filter((l: any) => l.status === "disbursed").reduce((s: number, l: any) => s + l.balance, 0);
-  const totalLoansAmount = loans.reduce((s: number, l: any) => s + l.amount, 0);
-  const totalRepaid = loans.reduce((s: number, l: any) => s + (l.amountRepaid || 0), 0);
-
-  const interestFromLedger = wallet
-    .filter((t: any) => t.type === "loan_interest_income" && t.amount > 0)
-    .reduce((s: number, t: any) => s + t.amount, 0);
-  const interestLegacy = wallet
-    .filter((t: any) => t.type === "loan_repayment" && t.amount > 0)
-    .reduce((s: number, t: any) => {
-      const loan = loans.find((l: any) => l.id === t.loanId);
-      if (!loan || !loan.totalRepayable) return s;
-      return s + round2(t.amount * (loan.totalInterest / loan.totalRepayable));
-    }, 0);
-  const interestEarned = round2(interestFromLedger + interestLegacy);
-
-  const projectedInterest = loans
-    .filter((l: any) => l.status === "disbursed")
-    .reduce((s: number, l: any) => {
-      const remaining = round2(l.totalRepayable - (l.amountRepaid || 0));
-      const ratio = l.totalRepayable > 0 ? l.totalInterest / l.totalRepayable : 0;
-      return s + round2(remaining * ratio);
-    }, 0);
-
-  const trend = Array.from({ length: 6 }, (_, i) => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - (5 - i));
-    const month = d.toLocaleDateString("en", { month: "short" });
-    const total = contributions
-      .filter((c: any) => {
-        const cd = new Date(c.date);
-        return cd.getFullYear() === d.getFullYear() && cd.getMonth() === d.getMonth();
-      })
-      .reduce((s: number, c: any) => s + c.amount, 0);
-    return { month, total };
-  });
-
-  const recentWallet = [...wallet]
-    .sort((a: any, b: any) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime())
-    .slice(0, 8);
-
-  return (
-    <View style={styles.content}>
-      {canGoBack && (
-        <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backButtonText}>← Back to Directory</Text>
-        </TouchableOpacity>
-      )}
-
-      <View style={styles.memberDetailCard}>
-        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}>
-          <View style={[styles.memberAvatar, { marginRight: 14 }]}>
-            <Text style={styles.memberAvatarText}>
-              {member.fullName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
+          <View
+            style={
+              styles.chartCard
+            }
+          >
+            <Text
+              style={
+                styles.chartTitle
+              }
+            >
+              {isPersonalView
+                ? "Personal Financial Position"
+                : "Group Financial Position"}
             </Text>
-          </View>
-          <View>
-            <Text style={styles.memberDetailName}>{member.fullName}</Text>
-            <Text style={styles.memberDetailRole}>{member.role.replace(/_/g," ")} · {member.status}</Text>
-          </View>
-        </View>
-        <View style={styles.memberDetailInfo}>
-          {member.phone ? <Text style={styles.memberDetailText}>📞 {member.phone}</Text> : null}
-          {member.email ? <Text style={styles.memberDetailText}>✉️ {member.email}</Text> : null}
-          <Text style={styles.memberDetailText}>📅 Joined {fmtDate(member.dateJoined)}</Text>
-        </View>
-      </View>
 
-      <View style={styles.kpiGrid}>
-        <KpiCard label="CONTRIBUTIONS" value={fmtCurrency(totalContributions)} color={C.accent} subtext="total saved" />
-        <KpiCard label="LOAN BALANCE" value={fmtCurrency(loanBalance)} color={C.error} subtext="outstanding" />
-        <KpiCard label="INTEREST EARNED" value={fmtCurrency(interestEarned)} color={C.gold} subtext="from repayments" />
-        <KpiCard label="PROJECTED INTEREST" value={fmtCurrency(projectedInterest)} color={"#7C3AED"} subtext="remaining loans" />
-      </View>
+            <View
+              style={
+                styles.gfpRow
+              }
+            >
+              <View
+                style={[
+                  styles.gfpStat,
+                  styles.gfpStatBorderRight,
+                  styles.gfpStatBorderBottom,
+                ]}
+              >
+                <Text
+                  style={T.label}
+                  numberOfLines={1}
+                >
+                  {isPersonalView
+                    ? "My Account"
+                    : "Members"}
+                </Text>
 
-      <View style={[styles.chartCard, { marginBottom: 16 }]}>
-        <Text style={styles.chartTitle}>Interest Earned Overview</Text>
-        <Text style={{ fontSize: 11, color: C.text3, marginBottom: 12 }}>
-          Based on all repayments recorded against your loans
-        </Text>
-        <View style={{ gap: 10 }}>
-          <View>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
-              <Text style={{ fontSize: 12, color: C.text2, fontWeight: "600" }}>Already earned</Text>
-              <Text style={{ fontSize: 13, fontWeight: "700", color: C.gold }}>{fmtCurrency(interestEarned)}</Text>
+                <Text
+                  style={
+                    styles.gfpStatValue
+                  }
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={
+                    0.75
+                  }
+                >
+                  {isPersonalView
+                    ? "1"
+                    : members.filter(
+                        (m) =>
+                          m.status ===
+                          "active"
+                      ).length}
+                </Text>
+
+                <Text
+                  style={T.small}
+                  numberOfLines={1}
+                >
+                  {isPersonalView
+                    ? "personal"
+                    : "active"}
+                </Text>
+              </View>
+
+              <View
+                style={[
+                  styles.gfpStat,
+                  styles.gfpStatBorderBottom,
+                ]}
+              >
+                <Text
+                  style={T.label}
+                  numberOfLines={1}
+                >
+                  Total Net Assets
+                </Text>
+
+                <Text
+                  style={[
+                    styles.gfpStatValue,
+                    {
+                      color:
+                        C.primary,
+                    },
+                  ]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={
+                    0.65
+                  }
+                >
+                  {fmtCurrency(
+                    groupTotalNetAssets
+                  )}
+                </Text>
+
+                <Text
+                  style={T.small}
+                  numberOfLines={1}
+                >
+                  {isPersonalView
+                    ? "my wallet"
+                    : "everything in wallet"}
+                </Text>
+              </View>
             </View>
-            <View style={{ height: 6, borderRadius: 3, backgroundColor: C.border, overflow: "hidden" }}>
-              <View style={{
-                height: "100%" as any, borderRadius: 3, backgroundColor: C.gold,
-                width: `${Math.min(100, (interestEarned / Math.max(1, interestEarned + projectedInterest)) * 100)}%` as any,
-              }} />
+
+            <View
+              style={
+                styles.gfpRow
+              }
+            >
+              <View
+                style={[
+                  styles.gfpStat,
+                  styles.gfpStatBorderRight,
+                  styles.gfpStatBorderBottom,
+                ]}
+              >
+                <Text
+                  style={T.label}
+                  numberOfLines={1}
+                >
+                  Contributions
+                </Text>
+
+                <Text
+                  style={
+                    styles.gfpStatValue
+                  }
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={
+                    0.7
+                  }
+                >
+                  {fmtCurrency(
+                    groupContributionsOnly
+                  )}
+                </Text>
+
+                <Text
+                  style={T.small}
+                  numberOfLines={1}
+                >
+                  {isPersonalView
+                    ? "my contributions"
+                    : "total collected"}
+                </Text>
+              </View>
+
+              <View
+                style={[
+                  styles.gfpStat,
+                  styles.gfpStatBorderBottom,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.gfpStatLabel,
+                  ]}
+                  numberOfLines={1}
+                >
+                  Interest Earned
+                </Text>
+
+                <Text
+                  style={[
+                    styles.gfpStatValue,
+                    {
+                      color:
+                        C.gold,
+                    },
+                  ]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={
+                    0.7
+                  }
+                >
+                  {fmtCurrency(
+                    groupInterestOnly
+                  )}
+                </Text>
+
+                <Text
+                  style={T.small}
+                  numberOfLines={1}
+                >
+                  from loan repayments
+                </Text>
+              </View>
+            </View>
+
+            <View
+              style={
+                styles.gfpRow
+              }
+            >
+              <View
+                style={[
+                  styles.gfpStat,
+                  styles.gfpStatBorderRight,
+                ]}
+              >
+                <Text
+                  style={T.label}
+                  numberOfLines={1}
+                >
+                  Penalties & Late Fees
+                </Text>
+
+                <Text
+                  style={[
+                    styles.gfpStatValue,
+                    {
+                      color:
+                        C.error,
+                    },
+                  ]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={
+                    0.7
+                  }
+                >
+                  {fmtCurrency(
+                    groupPenaltiesOnly
+                  )}
+                </Text>
+
+                <Text
+                  style={T.small}
+                  numberOfLines={1}
+                >
+                  collected
+                </Text>
+              </View>
+
+              <View
+                style={
+                  styles.gfpStat
+                }
+              >
+                <Text
+                  style={T.label}
+                  numberOfLines={1}
+                >
+                  Other
+                </Text>
+
+                <Text
+                  style={
+                    styles.gfpStatValue
+                  }
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={
+                    0.7
+                  }
+                >
+                  {fmtCurrency(
+                    groupOtherOnly
+                  )}
+                </Text>
+
+                <Text
+                  style={T.small}
+                  numberOfLines={1}
+                >
+                  bank fees, misc
+                </Text>
+              </View>
             </View>
           </View>
-          {projectedInterest > 0 && (
-            <View>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
-                <Text style={{ fontSize: 12, color: C.text2, fontWeight: "600" }}>Projected (remaining)</Text>
-                <Text style={{ fontSize: 13, fontWeight: "700", color: "#7C3AED" }}>{fmtCurrency(projectedInterest)}</Text>
-              </View>
-              <View style={{ height: 6, borderRadius: 3, backgroundColor: C.border, overflow: "hidden" }}>
-                <View style={{
-                  height: "100%" as any, borderRadius: 3, backgroundColor: "#7C3AED",
-                  width: `${Math.min(100, (projectedInterest / Math.max(1, interestEarned + projectedInterest)) * 100)}%` as any,
-                }} />
-              </View>
-              <Text style={{ fontSize: 10, color: C.text3, marginTop: 4 }}>
-                Total interest pool: {fmtCurrency(interestEarned + projectedInterest)}
+
+          <View
+            style={
+              styles.chartCard
+            }
+          >
+            <Text
+              style={
+                styles.chartTitle
+              }
+            >
+              Cash Flow (Last 6 Months)
+            </Text>
+
+            <CashflowBarChart
+              months={
+                cashflow.months
+              }
+              income={
+                cashflow.income
+              }
+              expenses={
+                cashflow.expenses
+              }
+            />
+          </View>
+
+          {memberPie.length >
+            0 && (
+            <View
+              style={
+                styles.chartCard
+              }
+            >
+              <Text
+                style={
+                  styles.chartTitle
+                }
+              >
+                {isPersonalView
+                  ? "My Savings"
+                  : "Savings by Member (Top 5)"}
               </Text>
+
+              <MemberSharesChart
+                data={
+                  memberPie
+                }
+              />
             </View>
           )}
         </View>
+
+        {/* ═══════════════════════════════════════════════════════════════
+            REPORT CONTROLS
+        ═══════════════════════════════════════════════════════════════ */}
+
+        <View
+          style={[
+            styles.contentContainer,
+            isWide &&
+              styles.contentContainerWide,
+          ]}
+        >
+          {/* Scope */}
+
+          {canSeeAll && (
+            <View
+              style={
+                styles.scopeSection
+              }
+            >
+              <Text
+                style={
+                  styles.scopeLabel
+                }
+              >
+                VIEW
+              </Text>
+
+              <View
+                style={
+                  styles.scopeToggle
+                }
+              >
+                <TouchableOpacity
+                  style={[
+                    styles.scopeOption,
+                    reportScope ===
+                      "group" &&
+                      styles.scopeOptionActive,
+                  ]}
+                  onPress={() => {
+                    setReportScope(
+                      "group"
+                    );
+                    setMemberIdFilter(
+                      "all"
+                    );
+                  }}
+                  activeOpacity={
+                    0.8
+                  }
+                >
+                  <Text
+                    style={[
+                      styles.scopeOptionText,
+                      reportScope ===
+                        "group" &&
+                        styles.scopeOptionTextActive,
+                    ]}
+                  >
+                    👥 Group
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.scopeOption,
+                    reportScope ===
+                      "personal" &&
+                      styles.scopeOptionActive,
+                  ]}
+                  onPress={() => {
+                    setReportScope(
+                      "personal"
+                    );
+                    setMemberIdFilter(
+                      "all"
+                    );
+                  }}
+                  activeOpacity={
+                    0.8
+                  }
+                >
+                  <Text
+                    style={[
+                      styles.scopeOptionText,
+                      reportScope ===
+                        "personal" &&
+                        styles.scopeOptionTextActive,
+                    ]}
+                  >
+                    👤 Personal
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Categories */}
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={
+              false
+            }
+            style={
+              styles.categoryScroller
+            }
+            contentContainerStyle={
+              styles.categoryContent
+            }
+          >
+            {CATEGORIES.map(
+              (c) => (
+                <TouchableOpacity
+                  key={c.key}
+                  style={[
+                    styles.pill,
+                    category ===
+                      c.key &&
+                      styles.pillActive,
+                  ]}
+                  onPress={() => {
+                    setCategory(
+                      c.key
+                    );
+                    setMonthFilter(
+                      "all"
+                    );
+                    setSelectedFromDate(
+                      ""
+                    );
+                    setSelectedToDate(
+                      ""
+                    );
+                  }}
+                  activeOpacity={
+                    0.8
+                  }
+                >
+                  <Text
+                    style={
+                      styles.pillIcon
+                    }
+                  >
+                    {c.icon}
+                  </Text>
+
+                  <Text
+                    style={[
+                      styles.pillLabel,
+                      category ===
+                        c.key &&
+                        styles.pillLabelActive,
+                    ]}
+                  >
+                    {c.label}
+                  </Text>
+                </TouchableOpacity>
+              )
+            )}
+          </ScrollView>
+
+          {/* Filters */}
+
+          <View
+            style={[
+              styles.filterArea,
+              isMobile &&
+                styles.filterAreaMobile,
+            ]}
+          >
+            <View
+              style={[
+                styles.filterDropdown,
+                isMobile &&
+                  styles.filterDropdownMobile,
+              ]}
+            >
+              <Dropdown
+                label="Month"
+                value={
+                  monthFilter
+                }
+                options={
+                  monthOptions
+                }
+                onChange={
+                  handleMonthChange
+                }
+              />
+            </View>
+
+            {!isPersonalView && (
+              <View
+                style={[
+                  styles.filterDropdown,
+                  isMobile &&
+                    styles.filterDropdownMobile,
+                ]}
+              >
+                <Dropdown
+                  label="Member"
+                  value={
+                    memberIdFilter
+                  }
+                  options={
+                    memberOptions
+                  }
+                  onChange={
+                    setMemberIdFilter
+                  }
+                />
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={
+                styles.filterBtn
+              }
+              onPress={
+                openFilterModal
+              }
+              activeOpacity={
+                0.8
+              }
+            >
+              <Text
+                style={
+                  styles.filterBtnText
+                }
+              >
+                {hasActiveFilters
+                  ? "🎯 Advanced"
+                  : "🔍 Advanced"}
+              </Text>
+
+              {hasActiveFilters && (
+                <View
+                  style={
+                    styles.filterDot
+                  }
+                />
+              )}
+            </TouchableOpacity>
+
+            {hasActiveFilters && (
+              <TouchableOpacity
+                onPress={
+                  clearAllFilters
+                }
+                style={
+                  styles.clearBtn
+                }
+              >
+                <Text
+                  style={
+                    styles.clearBtnText
+                  }
+                >
+                  Clear
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {searchTerm !==
+            "" && (
+            <Text
+              style={
+                styles.searchIndicator
+              }
+            >
+              🔍 "{searchTerm}"
+            </Text>
+          )}
+
+          {/* ═════════════════════════════════════════════════════════════
+              MEMBERS
+          ═════════════════════════════════════════════════════════════ */}
+
+          {category ===
+          "members" ? (
+            <MembersTab
+              members={
+                view.rows
+              }
+              contributions={
+                contributions
+              }
+              loans={loans}
+              wallet={wallet}
+              canSeeAll={
+                canSeeAll
+              }
+              currentMember={
+                currentMember
+              }
+              onExport={
+                handleExport
+              }
+              onExportContributions={
+                handleExportMemberContributions
+              }
+              exportRows={
+                exportRows
+              }
+            />
+          ) : (
+            <View
+              style={[
+                styles.reportColumns,
+                isWide &&
+                  styles.reportColumnsWide,
+              ]}
+            >
+              {/* Chart */}
+
+              <View
+                style={[
+                  styles.card,
+                  isWide &&
+                    styles.reportColumn,
+                ]}
+              >
+                <Text
+                  style={
+                    styles.cardTitle
+                  }
+                >
+                  {
+                    CATEGORIES.find(
+                      (c) =>
+                        c.key ===
+                        category
+                    )?.label
+                  }{" "}
+                  Overview
+                </Text>
+
+                <View
+                  style={
+                    styles.kpiMiniRow
+                  }
+                >
+                  {view.kpis.map(
+                    (k) => (
+                      <View
+                        key={
+                          k.label
+                        }
+                        style={
+                          styles.kpiMini
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.kpiMiniLabel
+                          }
+                        >
+                          {k.label}
+                        </Text>
+
+                        <Text
+                          style={
+                            styles.kpiMiniValue
+                          }
+                          numberOfLines={
+                            1
+                          }
+                          adjustsFontSizeToFit
+                          minimumFontScale={
+                            0.7
+                          }
+                        >
+                          {k.value}
+                        </Text>
+                      </View>
+                    )
+                  )}
+                </View>
+
+                {view.chart
+                  .labels
+                  .length >
+                0 ? (
+                  <CategoryBarChart
+                    labels={
+                      view.chart
+                        .labels
+                    }
+                    values={
+                      view.chart
+                        .values
+                    }
+                    color={
+                      view.chartColor
+                    }
+                  />
+                ) : (
+                  <Text
+                    style={
+                      styles.noData
+                    }
+                  >
+                    No data for this
+                    selection
+                  </Text>
+                )}
+              </View>
+
+              {/* Data preview */}
+
+              <View
+                style={[
+                  styles.card,
+                  isWide &&
+                    styles.reportColumn,
+                ]}
+              >
+                <View
+                  style={
+                    styles.previewHeader
+                  }
+                >
+                  <Text
+                    style={
+                      styles.cardTitle
+                    }
+                  >
+                    Data Preview
+                  </Text>
+
+                  <View
+                    style={
+                      styles.exportActions
+                    }
+                  >
+                    <TouchableOpacity
+                      style={
+                        styles.exportBtn
+                      }
+                      onPress={() =>
+                        handleExport(
+                          "excel"
+                        )
+                      }
+                      disabled={
+                        !exportRows.length
+                      }
+                      activeOpacity={
+                        0.8
+                      }
+                    >
+                      <Text
+                        style={
+                          styles.exportBtnText
+                        }
+                      >
+                        📊 Excel
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={
+                        styles.exportBtn
+                      }
+                      onPress={() =>
+                        handleExport(
+                          "pdf"
+                        )
+                      }
+                      disabled={
+                        !exportRows.length
+                      }
+                      activeOpacity={
+                        0.8
+                      }
+                    >
+                      <Text
+                        style={
+                          styles.exportBtnText
+                        }
+                      >
+                        🖨 PDF
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {exportRows.length ===
+                0 ? (
+                  <Text
+                    style={
+                      styles.noData
+                    }
+                  >
+                    No records match your
+                    filters
+                  </Text>
+                ) : (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={
+                      false
+                    }
+                  >
+                    <View>
+                      <View
+                        style={
+                          styles.previewRow
+                        }
+                      >
+                        {view.headers.map(
+                          (h) => (
+                            <Text
+                              key={h}
+                              style={
+                                styles.previewHeadCell
+                              }
+                            >
+                              {h}
+                            </Text>
+                          )
+                        )}
+                      </View>
+
+                      <ScrollView
+                        style={{
+                          maxHeight: 420,
+                        }}
+                        nestedScrollEnabled
+                        showsVerticalScrollIndicator={
+                          true
+                        }
+                      >
+                        {exportRows.map(
+                          (
+                            row,
+                            i
+                          ) => (
+                            <View
+                              key={
+                                i
+                              }
+                              style={[
+                                styles.previewRow,
+                                i %
+                                    2 ===
+                                  1 && {
+                                  backgroundColor:
+                                    C.elevated,
+                                },
+                              ]}
+                            >
+                              {row.map(
+                                (
+                                  cell,
+                                  j
+                                ) => (
+                                  <Text
+                                    key={
+                                      j
+                                    }
+                                    style={
+                                      styles.previewCell
+                                    }
+                                    numberOfLines={
+                                      2
+                                    }
+                                  >
+                                    {String(
+                                      cell
+                                    )}
+                                  </Text>
+                                )
+                              )}
+                            </View>
+                          )
+                        )}
+                      </ScrollView>
+                    </View>
+                  </ScrollView>
+                )}
+
+                {exportRows.length >
+                  0 && (
+                  <Text
+                    style={
+                      styles.previewCount
+                    }
+                  >
+                    {
+                      exportRows.length
+                    }{" "}
+                    record
+                    {exportRows.length !==
+                    1
+                      ? "s"
+                      : ""}
+                  </Text>
+                )}
+              </View>
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      <FilterModal
+        visible={
+          showFilterModal
+        }
+        onClose={() =>
+          setShowFilterModal(
+            false
+          )
+        }
+        fromDate={
+          tempFromDate
+        }
+        toDate={
+          tempToDate
+        }
+        onFromDateChange={
+          setTempFromDate
+        }
+        onToDateChange={
+          setTempToDate
+        }
+        loanStatus={
+          tempLoanStatus
+        }
+        contributionStatus={
+          tempContributionStatus
+        }
+        onLoanStatusChange={
+          setTempLoanStatus
+        }
+        onContributionStatusChange={
+          setTempContributionStatus
+        }
+        onApply={
+          applyFilters
+        }
+        searchTerm={
+          tempSearch
+        }
+        onSearchChange={
+          setTempSearch
+        }
+        onClear={
+          clearAllFilters
+        }
+      />
+
+      <Toast
+        visible={visible}
+        msg={msg}
+        type={type}
+      />
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Members tab
+// ─────────────────────────────────────────────────────────────────────────
+
+function MembersTab({
+  members,
+  contributions,
+  loans,
+  wallet,
+  canSeeAll,
+  currentMember,
+  onExport,
+  onExportContributions,
+  exportRows,
+}: any) {
+  const [
+    selectedMember,
+    setSelectedMember,
+  ] = useState<any>(
+    !canSeeAll &&
+      members.length === 1
+      ? members[0]
+      : null
+  );
+
+  useEffect(() => {
+    if (
+      !canSeeAll &&
+      members.length === 1
+    ) {
+      setSelectedMember(
+        members[0]
+      );
+      return;
+    }
+
+    if (
+      canSeeAll &&
+      selectedMember
+    ) {
+      const exists =
+        members.some(
+          (m: any) =>
+            m.id ===
+            selectedMember.id
+        );
+
+      if (!exists) {
+        setSelectedMember(
+          null
+        );
+      }
+    }
+  }, [
+    canSeeAll,
+    members,
+  ]);
+
+  if (selectedMember) {
+    return (
+      <MemberDetail
+        member={
+          selectedMember
+        }
+        loans={loans.filter(
+          (l: any) =>
+            l.memberId ===
+            selectedMember.id
+        )}
+        contributions={contributions.filter(
+          (c: any) =>
+            c.memberId ===
+              selectedMember.id &&
+            c.status ===
+              "approved"
+        )}
+        wallet={wallet.filter(
+          (w: any) =>
+            w.memberId ===
+            selectedMember.id
+        )}
+        canGoBack={
+          canSeeAll
+        }
+        onBack={() =>
+          setSelectedMember(
+            null
+          )
+        }
+        onExportContributions={(
+          format:
+            | "excel"
+            | "pdf"
+        ) =>
+          onExportContributions(
+            selectedMember.id,
+            format
+          )
+        }
+      />
+    );
+  }
+
+  const approvedContributions =
+    contributions.filter(
+      (c: any) =>
+        c.status ===
+        "approved"
+    );
+
+  return (
+    <View>
+      <View
+        style={[
+          styles.previewHeader,
+          {
+            flexWrap:
+              "wrap",
+          },
+        ]}
+      >
+        <View
+          style={{
+            flex: 1,
+            minWidth: 140,
+          }}
+        >
+          <Text
+            style={
+              styles.resultsCount
+            }
+          >
+            {members.length} member
+            {members.length !==
+            1
+              ? "s"
+              : ""}
+          </Text>
+
+          <Text
+            style={
+              styles.resultsSubtext
+            }
+          >
+            {
+              approvedContributions.length
+            }{" "}
+            approved contribution
+            {approvedContributions.length !==
+            1
+              ? "s"
+              : ""}
+          </Text>
+        </View>
+
+        <View
+          style={
+            styles.exportActions
+          }
+        >
+          <TouchableOpacity
+            style={
+              styles.exportBtn
+            }
+            onPress={() =>
+              onExportContributions(
+                undefined,
+                "excel"
+              )
+            }
+            disabled={
+              !approvedContributions.length
+            }
+            activeOpacity={0.8}
+          >
+            <Text
+              style={
+                styles.exportBtnText
+              }
+            >
+              📈 Contributions
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={
+              styles.exportBtn
+            }
+            onPress={() =>
+              onExport(
+                "excel"
+              )
+            }
+            disabled={
+              !exportRows.length
+            }
+            activeOpacity={0.8}
+          >
+            <Text
+              style={
+                styles.exportBtnText
+              }
+            >
+              📊 Members
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {trend.some(t => t.total > 0) && (
-        <View style={styles.chartCard}>
-          <Text style={styles.chartTitle}>Contributions (Last 6 Months)</Text>
-          <View style={{ flexDirection: "row", alignItems: "flex-end", height: 80, gap: 6, marginTop: 8 }}>
-            {trend.map((t, i) => {
-              const max = Math.max(...trend.map(x => x.total), 1);
-              const h = Math.max(4, (t.total / max) * 72);
-              return (
-                <View key={i} style={{ flex: 1, alignItems: "center" }}>
-                  <View style={{ width: "100%" as any, height: h, backgroundColor: C.primary, borderRadius: 3, marginBottom: 4 }} />
-                  <Text style={{ fontSize: 9, color: C.text3 }}>{t.month}</Text>
-                </View>
-              );
-            })}
-          </View>
-        </View>
-      )}
-
-      {(loans.length > 0) && (
-        <View style={[styles.chartCard, { marginBottom: 16 }]}>
-          <SectionHeader title={`Loans (${loans.length})`} />
-          <Card style={styles.card}>
-            {loans.slice(0, 5).map((l: any, i: number) => {
-              const pct = l.totalRepayable > 0 ? Math.min(100, (l.amountRepaid / l.totalRepayable) * 100) : 0;
-              return (
-                <React.Fragment key={l.id}>
-                  <View style={{ paddingVertical: 10 }}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4, gap: 8 }}>
-                      <Text style={{ fontSize: 13, fontWeight: "600", color: C.text, flexShrink: 0 }}>{fmtCurrency(l.amount)}</Text>
-                      <View style={[styles.chip, {
-                        backgroundColor: l.status === "repaid" ? C.greenBg : l.status === "disbursed" ? C.infoBg : C.elevated,
-                        flexShrink: 1,
-                      }]}>
-                        <Text
-                          style={[styles.chipText, {
-                            color: l.status === "repaid" ? C.success : l.status === "disbursed" ? C.info : C.text3,
-                          }]}
-                          numberOfLines={1}
-                        >{l.status}</Text>
-                      </View>
-                    </View>
-                    {l.purpose ? <Text style={{ fontSize: 11, color: C.text3, marginBottom: 6 }}>{l.purpose}</Text> : null}
-                    <View style={{ height: 4, borderRadius: 2, backgroundColor: C.border, overflow: "hidden" }}>
-                      <View style={{ height: "100%" as any, width: `${pct}%` as any, backgroundColor: C.accent, borderRadius: 2 }} />
-                    </View>
-                    <Text style={{ fontSize: 10, color: C.text3, marginTop: 3 }}>
-                      {pct.toFixed(0)}% repaid · {fmtCurrency(l.amountRepaid || 0)} of {fmtCurrency(l.totalRepayable)}
+      <Card
+        style={
+          styles.card
+        }
+      >
+        {members.length ===
+        0 ? (
+          <Empty
+            message="No members found"
+            icon="👥"
+          />
+        ) : (
+          members.map(
+            (
+              m: any,
+              i: number
+            ) => (
+              <TouchableOpacity
+                key={m.id}
+                onPress={() =>
+                  setSelectedMember(
+                    m
+                  )
+                }
+                activeOpacity={
+                  0.7
+              }
+              >
+                <View
+                  style={
+                    styles.memberRow
+                  }
+                >
+                  <View
+                    style={
+                      styles.memberAvatar
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.memberAvatarText
+                      }
+                    >
+                      {m.fullName
+                        .split(
+                          " "
+                        )
+                        .map(
+                          (
+                            w: string
+                          ) =>
+                            w[0]
+                        )
+                        .join(
+                          ""
+                        )
+                        .slice(
+                          0,
+                          2
+                        )
+                        .toUpperCase()}
                     </Text>
                   </View>
-                  {i < Math.min(loans.length, 5) - 1 && <Divider />}
-                </React.Fragment>
-              );
-            })}
-          </Card>
-        </View>
-      )}
 
-      <SectionHeader title="Recent Transactions" />
-      <Card style={styles.card}>
-        {recentWallet.length === 0 ? (
-          <Text style={styles.emptyText}>No transactions yet</Text>
-        ) : recentWallet.map((w: any, i: number) => (
-          <React.Fragment key={`${w.id}_${i}`}>
-            <View style={styles.txRow}>
-              <View style={[styles.txDot, { backgroundColor: w.amount > 0 ? C.greenBg : C.redBg }]}>
-                <Text style={{ fontSize: 13, color: w.amount > 0 ? C.success : C.error }}>{w.amount > 0 ? "↓" : "↑"}</Text>
-              </View>
-              <View style={styles.txMid}>
-                <Text style={styles.txDesc} numberOfLines={1}>{w.type.replace(/_/g, " ")}</Text>
-                <Text style={T.small} numberOfLines={1}>{fmtDate(w.date || w.createdAt)}</Text>
-              </View>
-              <Text
-                style={[styles.txAmount, { color: w.amount > 0 ? C.success : C.error, flexShrink: 0, marginLeft: 8 }]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.8}
-              >
-                {w.amount > 0 ? "+" : ""}{fmtCurrency(w.amount)}
-              </Text>
-            </View>
-            {i < recentWallet.length - 1 && <Divider />}
-          </React.Fragment>
-        ))}
+                  <View
+                    style={
+                      styles.memberInfo
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.memberName
+                      }
+                      numberOfLines={
+                        1
+                      }
+                    >
+                      {m.fullName}
+                    </Text>
+
+                    <Text
+                      style={
+                        styles.memberContact
+                      }
+                      numberOfLines={
+                        1
+                      }
+                    >
+                      {m.phone ||
+                        m.email ||
+                        "No contact"}
+                    </Text>
+                  </View>
+
+                  <View
+                    style={
+                      styles.memberStats
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.memberAmount
+                      }
+                      numberOfLines={
+                        1
+                      }
+                    >
+                      {fmtCurrency(
+                        m.totalContributions ||
+                          0
+                      )}
+                    </Text>
+
+                    <Text
+                      style={
+                        styles.memberRole
+                      }
+                      numberOfLines={
+                        1
+                      }
+                    >
+                      {m.role}
+                    </Text>
+                  </View>
+
+                  <Text
+                    style={
+                      styles.chevron
+                    }
+                  >
+                    ›
+                  </Text>
+                </View>
+
+                {i <
+                  members.length -
+                    1 && (
+                  <Divider />
+                )}
+              </TouchableOpacity>
+            )
+          )
+        )}
       </Card>
     </View>
   );
 }
 
-// ─── EarningsTab ──────────────────────────────────────────────────────────────
-function earningsHtmlTable(headers: string[], rows: any[][]) {
-  return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-}
+// ─────────────────────────────────────────────────────────────────────────
+// Member detail
+// ─────────────────────────────────────────────────────────────────────────
 
-const EARNING_TYPES = [
-  "loan_interest_income", "interest", "late_fee",
-  "investment_return", "bank_fee",
-  "other_credit", "other_debit",
-];
-const EARNING_TYPE_LABEL: Record<string, string> = {
-  loan_interest_income: "Loan Interest",
-  interest:             "Interest",
-  late_fee:             "Late Fee / Penalty",
-  investment_return:    "Investment Return",
-  bank_fee:             "Bank Fee",
-  other_credit:         "Other Credit",
-  other_debit:          "Other Debit",
-};
-
-function EarningsTab({
-  wallet, members, canSeeAll, currency,
-  group, allMembers, allContributions, allLoans, allWallet, permissions,
+function MemberDetail({
+  member,
+  loans,
+  contributions,
+  wallet,
+  canGoBack,
+  onBack,
+  onExportContributions,
 }: any) {
-  const { show } = useToast();
-  const { width } = useWindowDimensions();
-  const isWide = width >= 768;
-  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const totalContributions =
+    contributions.reduce(
+      (
+        s: number,
+        c: any
+      ) =>
+        s + c.amount,
+      0
+    );
 
-  const earningAmount = (t: any): number => {
-    if (t.type !== "loan_repayment") return t.amount;
-    const loan = allLoans.find((l: any) => l.id === t.loanId);
-    if (!loan || !loan.totalRepayable) return 0;
-    return round2(t.amount * (loan.totalInterest / loan.totalRepayable));
-  };
+  const loanBalance =
+    loans
+      .filter(
+        (l: any) =>
+          l.status ===
+          "disbursed"
+      )
+      .reduce(
+        (
+          s: number,
+          l: any
+        ) =>
+          s +
+          (l.balance ||
+            0),
+        0
+      );
 
-  const earningsTxs = useMemo(
-    () => wallet.filter((t: any) => (EARNING_TYPES.includes(t.type) || t.type === "loan_repayment") && t.amount !== 0),
-    [wallet]
-  );
+  const interestFromLedger =
+    wallet
+      .filter(
+        (t: any) =>
+          t.type ===
+            "loan_interest_income" &&
+          t.amount > 0
+      )
+      .reduce(
+        (
+          s: number,
+          t: any
+        ) =>
+          s + t.amount,
+        0
+      );
 
-  const groupEarningsTxs = useMemo(
-    () => allWallet.filter((t: any) => (EARNING_TYPES.includes(t.type) || t.type === "loan_repayment") && t.amount !== 0),
-    [allWallet],
-  );
+  const interestLegacy =
+    wallet
+      .filter(
+        (t: any) =>
+          t.type ===
+            "loan_repayment" &&
+          t.amount > 0
+      )
+      .reduce(
+        (
+          s: number,
+          t: any
+        ) => {
+          const loan =
+            loans.find(
+              (l: any) =>
+                l.id ===
+                t.loanId
+            );
 
-  const filtered = useMemo(() => {
-    if (typeFilter === "all") return earningsTxs;
-    return earningsTxs.filter((t: any) => t.type === typeFilter);
-  }, [earningsTxs, typeFilter]);
+          if (
+            !loan?.totalRepayable
+          ) {
+            return s;
+          }
 
-  const breakdown = useMemo(() => {
-    const byType: Record<string, number> = {};
-    for (const t of groupEarningsTxs) {
-      const key = t.type === "loan_repayment" ? "loan_interest_income" : t.type;
-      byType[key] = round2((byType[key] ?? 0) + earningAmount(t));
-    }
-    return Object.entries(byType)
-      .filter(([, amt]) => amt !== 0)
-      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
-  }, [groupEarningsTxs, allLoans]);
+          return (
+            s +
+            round2(
+              t.amount *
+                (loan.totalInterest /
+                  loan.totalRepayable)
+            )
+          );
+        },
+        0
+      );
 
-  const totalEarnings = useMemo(
-    () => round2(groupEarningsTxs.reduce((sum: number, t: any) => sum + earningAmount(t), 0)),
-    [groupEarningsTxs, allLoans],
-  );
-  const activeMemberCount = Math.max(1, allMembers.filter((member: any) => member.status === "active").length);
-  const earningsPerMember = round2(totalEarnings / activeMemberCount);
+  const interestEarned =
+    round2(
+      interestFromLedger +
+        interestLegacy
+    );
 
-  const getMember = (id?: string) => members.find((m: any) => m.id === id);
+  const recentWallet =
+    [...wallet]
+      .sort(
+        (
+          a: any,
+          b: any
+        ) =>
+          new Date(
+            b.date ||
+              b.createdAt
+          ).getTime() -
+          new Date(
+            a.date ||
+              a.createdAt
+          ).getTime()
+      )
+      .slice(0, 8);
 
-  const handleDownload = async (format: "csv" | "pdf") => {
-    const headers = ["Date", "Member", "Type", "Description", "Amount"];
-    const rows = filtered.map((t: any) => [
-      fmtDate(t.date),
-      getMember(t.memberId)?.fullName ?? "—",
-      EARNING_TYPE_LABEL[t.type] ?? t.type,
-      t.description ?? "",
-      fmtCurrency(earningAmount(t)),
-    ]);
-    if (format === "csv") await exportCsv(`Earnings_Report`, headers, rows);
-    else await exportPdf(`Earnings_Report`, "Earnings Report", earningsHtmlTable(headers, rows));
-  };
+  const sortedContributions =
+    [...contributions].sort(
+      (
+        a: any,
+        b: any
+      ) =>
+        new Date(
+          b.date
+        ).getTime() -
+        new Date(
+          a.date
+        ).getTime()
+    );
 
   return (
-    <View style={[styles.content, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
-      <View style={styles.chartCard}>
-        <Text style={styles.chartTitle}>{canSeeAll ? "Net Group Earnings" : "My Earnings Share"}</Text>
-        <Text style={{
-          fontSize: isWide ? 34 : 28, fontWeight: "800", letterSpacing: -0.5, marginTop: 4,
-          color: totalEarnings >= 0 ? C.success : C.error,
-        }}>
-          {fmtCurrency(canSeeAll ? totalEarnings : earningsPerMember)}
-        </Text>
-        <Text style={[T.small, { marginTop: 2 }]}>
-          Interest, penalties &amp; other income — minus fees and debits. Contributions and loan
-          principal (disbursed or repaid) are not counted; they're capital, not earnings.
-        </Text>
-        {canSeeAll && (
-          <View style={{
-            flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-            marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: C.borderLight, gap: 8,
-          }}>
-            <Text style={[T.label, { flex: 1, minWidth: 0 }]} numberOfLines={2}>Split equally across {activeMemberCount} active member{activeMemberCount !== 1 ? "s" : ""}</Text>
-            <Text style={{ fontSize: 15, fontWeight: "800", color: C.accent, flexShrink: 0 }} numberOfLines={1}>{fmtCurrency(earningsPerMember)} each</Text>
-          </View>
-        )}
-      </View>
+    <View>
+      {canGoBack && (
+        <TouchableOpacity
+          onPress={onBack}
+          style={
+            styles.backButton
+          }
+        >
+          <Text
+            style={
+              styles.backButtonText
+            }
+          >
+            ← Back to Directory
+          </Text>
+        </TouchableOpacity>
+      )}
 
-      {breakdown.length > 0 && (
-        <View style={styles.chartCard}>
-          <Text style={styles.chartTitle}>Breakdown</Text>
-          <View style={{ marginTop: 8 }}>
-            {breakdown.map(([type, amt], i) => (
-              <View key={type} style={{
-                flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-                paddingVertical: 9, borderBottomWidth: i < breakdown.length - 1 ? 1 : 0, borderBottomColor: C.borderLight,
-              }}>
-                <Text style={{ fontSize: 13, color: C.text, fontWeight: "500" }}>{EARNING_TYPE_LABEL[type] ?? type}</Text>
-                <Text style={{ fontSize: 13, fontWeight: "700", color: amt >= 0 ? C.success : C.error }}>
-                  {fmtCurrency(amt)}
-                </Text>
-              </View>
-            ))}
+      {/* Member header */}
+
+      <View
+        style={
+          styles.memberDetailCard
+        }
+      >
+        <View
+          style={
+            styles.memberDetailHeader
+          }
+        >
+          <View
+            style={[
+              styles.memberAvatar,
+              {
+                marginRight: 14,
+              },
+            ]}
+          >
+            <Text
+              style={
+                styles.memberAvatarText
+              }
+            >
+              {member.fullName
+                .split(" ")
+                .map(
+                  (
+                    w: string
+                  ) => w[0]
+                )
+                .join("")
+                .slice(
+                  0,
+                  2
+                )
+                .toUpperCase()}
+            </Text>
+          </View>
+
+          <View
+            style={{
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            <Text
+              style={
+                styles.memberDetailName
+              }
+              numberOfLines={
+                2
+              }
+            >
+              {member.fullName}
+            </Text>
+
+            <Text
+              style={
+                styles.memberDetailRole
+              }
+              numberOfLines={
+                1
+              }
+            >
+              {member.role.replace(
+                /_/g,
+                " "
+              )}{" "}
+              · {member.status}
+            </Text>
           </View>
         </View>
-      )}
 
-      <View style={{ flexDirection: isWide ? "row" : "row", gap: 10, marginTop: 4, marginBottom: 16 }}>
-        <TouchableOpacity style={[styles.exportBtn, { flex: 1 }]} onPress={() => handleDownload("csv")}>
-          <Text style={styles.exportBtnText}>⬇ Download CSV</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.exportBtn, { flex: 1 }]} onPress={() => handleDownload("pdf")}>
-          <Text style={styles.exportBtnText}>⬇ Download PDF</Text>
-        </TouchableOpacity>
+        <View
+          style={
+            styles.memberContactBlock
+          }
+        >
+          {member.phone ? (
+            <Text
+              style={
+                styles.memberDetailText
+              }
+            >
+              📞 {member.phone}
+            </Text>
+          ) : null}
+
+          {member.email ? (
+            <Text
+              style={
+                styles.memberDetailText
+              }
+            >
+              ✉️ {member.email}
+            </Text>
+          ) : null}
+
+          <Text
+            style={
+              styles.memberDetailText
+            }
+          >
+            📅 Joined{" "}
+            {fmtDate(
+              member.dateJoined
+            )}
+          </Text>
+        </View>
       </View>
 
-      <View style={styles.filterChips}>
-        {["all", ...EARNING_TYPES].map(type => (
-          <TouchableOpacity
-            key={type}
-            style={[styles.filterChip, typeFilter === type && styles.filterChipActive]}
-            onPress={() => setTypeFilter(type)}
+      {/* Member KPIs */}
+
+      <View
+        style={
+          styles.memberKpiGrid
+        }
+      >
+        <View
+          style={
+            styles.memberKpi
+          }
+        >
+          <Text
+            style={
+              styles.memberKpiLabel
+            }
           >
-            <Text style={[styles.filterChipText, typeFilter === type && styles.filterChipTextActive]}>
-              {type === "all" ? "All" : (EARNING_TYPE_LABEL[type] ?? type)}
+            Contributions
+          </Text>
+
+          <Text
+            style={[
+              styles.memberKpiValue,
+              {
+                color:
+                  C.accent,
+              },
+            ]}
+          >
+            {fmtCurrency(
+              totalContributions
+            )}
+          </Text>
+        </View>
+
+        <View
+          style={
+            styles.memberKpi
+          }
+        >
+          <Text
+            style={
+              styles.memberKpiLabel
+            }
+          >
+            Loan Balance
+          </Text>
+
+          <Text
+            style={[
+              styles.memberKpiValue,
+              {
+                color:
+                  C.error,
+              },
+            ]}
+          >
+            {fmtCurrency(
+              loanBalance
+            )}
+          </Text>
+        </View>
+
+        <View
+          style={
+            styles.memberKpi
+          }
+        >
+          <Text
+            style={
+              styles.memberKpiLabel
+            }
+          >
+            Interest Earned
+          </Text>
+
+          <Text
+            style={[
+              styles.memberKpiValue,
+              {
+                color:
+                  C.gold,
+              },
+            ]}
+          >
+            {fmtCurrency(
+              interestEarned
+            )}
+          </Text>
+        </View>
+      </View>
+
+      {/* Contributions */}
+
+      <View
+        style={
+          styles.sectionHeader
+        }
+      >
+        <View
+          style={{
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          <Text
+            style={
+              styles.cardTitle
+            }
+          >
+            Contributions
+          </Text>
+
+          <Text
+            style={
+              styles.sectionSubtext
+            }
+          >
+            {
+              contributions.length
+            }{" "}
+            approved contribution
+            {contributions.length !==
+            1
+              ? "s"
+              : ""}
+          </Text>
+        </View>
+
+        <View
+          style={
+            styles.exportActions
+          }
+        >
+          <TouchableOpacity
+            style={
+              styles.exportBtn
+            }
+            onPress={() =>
+              onExportContributions(
+                "excel"
+              )
+            }
+            disabled={
+              !contributions.length
+            }
+            activeOpacity={0.8}
+          >
+            <Text
+              style={
+                styles.exportBtnText
+              }
+            >
+              📊 Excel
             </Text>
           </TouchableOpacity>
-        ))}
+
+          <TouchableOpacity
+            style={
+              styles.exportBtn
+            }
+            onPress={() =>
+              onExportContributions(
+                "pdf"
+              )
+            }
+            disabled={
+              !contributions.length
+            }
+            activeOpacity={0.8}
+          >
+            <Text
+              style={
+                styles.exportBtnText
+              }
+            >
+              🖨 PDF
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <Text style={styles.resultsCount}>{filtered.length} transaction{filtered.length !== 1 ? "s" : ""}</Text>
-
-      {filtered.length === 0 ? (
-        <Empty message="No earnings recorded yet" icon="💰" />
-      ) : (
-        filtered
-          .slice()
-          .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
-          .map((tx: any) => {
-            const member = getMember(tx.memberId);
-            const amt = earningAmount(tx);
-            const isCredit = amt >= 0;
-            return (
-              <React.Fragment key={tx.id}>
-                <Card style={styles.loanItem}>
-                  <View style={styles.loanItemHeader}>
-                    <View style={styles.loanItemAvatar}>
-                      <Text style={styles.loanItemAvatarText}>
-                        {member ? member.fullName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase() : "€"}
-                      </Text>
-                    </View>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.loanItemMember} numberOfLines={1}>{member?.fullName ?? "Group Earning"}</Text>
-                      <Text style={styles.loanItemDate} numberOfLines={1}>{fmtDate(tx.date)} · {tx.description}</Text>
-                    </View>
-                    <Chip
-                      label={EARNING_TYPE_LABEL[tx.type] ?? tx.type}
-                      bg={isCredit ? C.greenBg : C.redBg}
-                      color={isCredit ? C.greenText : C.redText}
-                    />
-                  </View>
-                  <View style={{ marginTop: 8, alignItems: "flex-end" }}>
-                    <Text style={{ fontSize: 15, fontWeight: "800", color: isCredit ? C.success : C.error }} numberOfLines={1}>
-                      {isCredit ? "+" : ""}{fmtCurrency(amt)}
+      <Card
+        style={[
+          styles.card,
+          {
+            marginBottom: 20,
+          },
+        ]}
+      >
+        {sortedContributions.length ===
+        0 ? (
+          <Text
+            style={
+              styles.emptyInline
+            }
+          >
+            No contributions yet
+          </Text>
+        ) : (
+          sortedContributions.map(
+            (
+              c: any,
+              i: number
+            ) => (
+              <React.Fragment
+                key={`${c.id}_${i}`}
+              >
+                <View
+                  style={
+                    styles.contributionRow
+                  }
+                >
+                  <View
+                    style={
+                      styles.contributionIcon
+                    }
+                  >
+                    <Text>
+                      📈
                     </Text>
                   </View>
-                </Card>
+
+                  <View
+                    style={
+                      styles.contributionInfo
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.contributionType
+                      }
+                      numberOfLines={
+                        1
+                      }
+                    >
+                      {c.contributionType ||
+                        "Contribution"}
+                    </Text>
+
+                    <Text
+                      style={
+                        styles.contributionDate
+                      }
+                      numberOfLines={
+                        1
+                      }
+                    >
+                      {fmtDate(
+                        c.date
+                      )}
+                    </Text>
+
+                    {c.description ? (
+                      <Text
+                        style={
+                          styles.contributionDescription
+                        }
+                        numberOfLines={
+                          1
+                        }
+                      >
+                        {
+                          c.description
+                        }
+                      </Text>
+                    ) : null}
+                  </View>
+
+                  <Text
+                    style={
+                      styles.contributionAmount
+                    }
+                    numberOfLines={
+                      1
+                    }
+                  >
+                    {fmtCurrency(
+                      c.amount
+                    )}
+                  </Text>
+                </View>
+
+                {i <
+                  sortedContributions.length -
+                    1 && (
+                  <Divider />
+                )}
               </React.Fragment>
-            );
-          })
-      )}
+            )
+          )
+        )}
+      </Card>
+
+      {/* Recent transactions */}
+
+      <Text
+        style={
+          styles.cardTitle
+        }
+      >
+        Recent Transactions
+      </Text>
+
+      <Card
+        style={[
+          styles.card,
+          {
+            marginTop: 10,
+          },
+        ]}
+      >
+        {recentWallet.length ===
+        0 ? (
+          <Text
+            style={
+              styles.emptyInline
+            }
+          >
+            No transactions yet
+          </Text>
+        ) : (
+          recentWallet.map(
+            (
+              w: any,
+              i: number
+            ) => (
+              <React.Fragment
+                key={`${w.id}_${i}`}
+              >
+                <View
+                  style={
+                    styles.transactionRow
+                  }
+                >
+                  <View
+                    style={[
+                      styles.txDot,
+                      {
+                        backgroundColor:
+                          w.amount >
+                          0
+                            ? C.greenBg
+                            : C.redBg,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 13,
+                        color:
+                          w.amount >
+                          0
+                            ? C.success
+                            : C.error,
+                      }}
+                    >
+                      {w.amount >
+                      0
+                        ? "↓"
+                        : "↑"}
+                    </Text>
+                  </View>
+
+                  <View
+                    style={
+                      styles.transactionInfo
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.transactionType
+                      }
+                      numberOfLines={
+                        1
+                      }
+                    >
+                      {w.type.replace(
+                        /_/g,
+                        " "
+                      )}
+                    </Text>
+
+                    <Text
+                      style={
+                        styles.transactionDate
+                      }
+                      numberOfLines={
+                        1
+                      }
+                    >
+                      {fmtDate(
+                        w.date ||
+                          w.createdAt
+                      )}
+                    </Text>
+                  </View>
+
+                  <Text
+                    style={[
+                      styles.transactionAmount,
+                      {
+                        color:
+                          w.amount >
+                          0
+                            ? C.success
+                            : C.error,
+                      },
+                    ]}
+                    numberOfLines={
+                      1
+                    }
+                  >
+                    {w.amount >
+                    0
+                      ? "+"
+                      : ""}
+                    {fmtCurrency(
+                      w.amount
+                    )}
+                  </Text>
+                </View>
+
+                {i <
+                  recentWallet.length -
+                    1 && (
+                  <Divider />
+                )}
+              </React.Fragment>
+            )
+          )
+        )}
+      </Card>
     </View>
   );
 }
 
-// Helper Components
-const Divider = () => <View style={{ height: 1, backgroundColor: C.borderLight, marginHorizontal: 16 }} />;
+// ─────────────────────────────────────────────────────────────────────────
+// Divider
+// ─────────────────────────────────────────────────────────────────────────
 
-// Group Financial Position stat grid
-const gfp = StyleSheet.create({
-  stat: { flex: 1, minWidth: 0, padding: 14, gap: 3 },
-  statValue: { fontSize: 16, fontWeight: "800", color: C.text, letterSpacing: -0.3 },
-});
+const Divider = () => (
+  <View
+    style={{
+      height: 1,
+      backgroundColor:
+        C.borderLight,
+      marginHorizontal: 16,
+    }}
+  />
+);
 
-const styles = StyleSheet.create({
-  // ── Controls Section ──
-  controlsSection: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: C.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-    marginBottom: 16,
-  },
-  controlsLeft: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  controlsRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  
-  // ── Tabs ──
-  tab: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    backgroundColor: C.surface,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  tabActive: {
-    backgroundColor: C.primary,
-    borderColor: C.primary,
-  },
-  tabText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: C.text2,
-  },
-  tabTextActive: {
-    color: "#fff",
-  },
-  
-  // ── Filter Button ──
-  filterBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: C.elevated,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: C.border,
-    gap: 6,
-  },
-  filterBtnText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: C.text2,
-  },
-  exportBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: C.primary,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: C.primary,
-    gap: 6,
-  },
-  exportBtnText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#fff",
-  },
-  filterDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: C.accent,
-  },
-  
-  // ── Active Filters Bar ──
-  activeFiltersBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: C.primary + '18',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderRadius: 10,
-  },
-  activeFiltersText: {
-    fontSize: 12,
-    color: C.primary,
-    fontWeight: "500",
-    flex: 1,
-  },
-  clearFiltersText: {
-    fontSize: 12,
-    color: C.error,
-    fontWeight: "700",
-  },
-  
-  content: {
-    paddingHorizontal: 16,
-  },
-  
-  // ── KPI Grid ──
-  kpiGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginBottom: 16,
-  },
-  kpiCard: {
-    // flexBasis (not a fixed minWidth) sets the 2-up target width, and
-    // minWidth: 0 overrides the default content-based minimum so a long
-    // kpiValue can't force this card wider than its share of the row —
-    // that combination is what actually keeps the 2-column grid intact
-    // on narrow phones.
-    flexBasis: "47%" as any,
-    flexGrow: 1,
-    minWidth: 0,
-    backgroundColor: C.surface,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-    borderTopWidth: 3,
-    padding: 14,
-  },
-  kpiLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: C.text3,
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
-    marginBottom: 6,
-  },
-  kpiValue: {
-    fontSize: 18,
-    fontWeight: "800",
-    letterSpacing: -0.3,
-    marginBottom: 2,
-  },
-  kpiSubtext: {
-    fontSize: 10,
-    color: C.text3,
-  },
-  
-  // ── Chart Cards ──
-  chartCard: {
-    backgroundColor: C.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: C.border,
-    padding: 16,
-    marginBottom: 16,
-  },
-  chartTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: C.text,
-    marginBottom: 12,
-  },
-  
-  // ── Export Section ──
-  exportSection: {
-    marginTop: 8,
-    marginBottom: 20,
-  },
-  exportTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: C.text,
-    marginBottom: 4,
-  },
-  exportSubtitle: {
-    fontSize: 11,
-    color: C.text3,
-    marginBottom: 12,
-  },
-  exportGrid: {
-    gap: 10,
-  },
-  exportCard: {
-    backgroundColor: C.surface,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-    padding: 14,
-  },
-  exportCardTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: C.text3,
-    textTransform: "uppercase",
-    marginBottom: 8,
-  },
-  exportCardValue: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: C.text,
-    marginBottom: 2,
-  },
-  exportCardMeta: {
-    fontSize: 11,
-    color: C.text3,
-    marginBottom: 10,
-  },
-  exportButtons: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  exportBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  exportBtnText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  
-  // ── Section Header ──
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 10,
-    marginTop: 8,
-  },
-  
-  // ── Card ──
-  card: {
-    backgroundColor: C.surface,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-    overflow: "hidden",
-  },
-  
-  // ── Transaction Row ──
-  txRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 14,
-    gap: 12,
-  },
-  txDot: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  txMid: { flex: 1, minWidth: 0 },
-  txDesc: { fontSize: 13, fontWeight: "600", color: C.text, marginBottom: 2 },
-  txAmount: { fontSize: 13, fontWeight: "700" },
-  
-  // ── Chip ──
-  chip: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 20,
-    flexShrink: 0,
-  },
-  chipText: {
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  
-  // ── Member Detail ──
-  backButton: {
-    marginBottom: 16,
-  },
-  backButtonText: {
-    color: C.primary,
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  memberDetailCard: {
-    backgroundColor: C.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: C.border,
-    padding: 16,
-    marginBottom: 16,
-    alignItems: "center",
-  },
-  memberDetailName: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: C.text,
-    marginBottom: 4,
-  },
-  memberDetailRole: {
-    fontSize: 13,
-    color: C.text3,
-    marginBottom: 12,
-  },
-  memberDetailInfo: {
-    alignItems: "center",
-    gap: 4,
-  },
-  memberDetailText: {
-    fontSize: 12,
-    color: C.text2,
-  },
-  
-  // ── Member Row ──
-  memberRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 14,
-    gap: 12,
-  },
-  memberAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: C.pill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  memberAvatarText: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: C.primary,
-  },
-  memberInfo: { flex: 1, minWidth: 0 },
-  memberName: { fontSize: 14, fontWeight: "700", color: C.text },
-  memberContact: { fontSize: 11, color: C.text3, marginTop: 2 },
-  memberStats: { alignItems: "flex-end", flexShrink: 0 },
-  memberAmount: { fontSize: 13, fontWeight: "700", color: C.primary },
-  memberRole: { fontSize: 10, color: C.text3, textTransform: "capitalize", marginTop: 2 },
-  chevron: { fontSize: 16, color: C.text3, flexShrink: 0 },
-  resultsCount: {
-    fontSize: 12,
-    color: C.text3,
-    marginBottom: 10,
-  },
-  
-  // ── Filter Chips ──
-  filterChips: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 16,
-  },
-  filterChip: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    backgroundColor: C.surface,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  filterChipActive: {
-    backgroundColor: C.primary,
-    borderColor: C.primary,
-  },
-  filterChipText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: C.text2,
-  },
-  filterChipTextActive: {
-    color: "#fff",
-  },
-  
-  // ── Loan Item ──
-  loanItem: {
-    padding: 16,
-    marginBottom: 12,
-  },
-  loanItemHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 12,
-  },
-  loanItemAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: C.pill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  loanItemAvatarText: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: C.primary,
-  },
-  loanItemMember: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: C.text,
-  },
-  loanItemDate: {
-    fontSize: 11,
-    color: C.text3,
-    marginTop: 2,
-  },
-  
-  // ── Modal ──
-  modalSectionLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: C.text,
-    marginTop: 12,
-    marginBottom: 8,
-  },
-  modalRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 10,
-  },
-  modalHalf: {
-    flex: 1,
-  },
-  modalClearBtn: {
-    flex: 1,
-    backgroundColor: C.surface,
-    borderWidth: 1,
-    borderColor: C.border,
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  modalClearBtnText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: C.text2,
-  },
-  modalApplyBtn: {
-    flex: 2,
-    backgroundColor: C.primary,
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  modalApplyBtnText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#fff",
-  },
-  emptyText: {
-    textAlign: "center",
-    paddingVertical: 20,
-    color: C.text3,
-  },
-});
+// ─────────────────────────────────────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────────────────────────────────────
+
+const styles =
+  StyleSheet.create({
+    page: {
+      padding: 20,
+    },
+
+    contentContainer: {
+      width: "100%",
+    },
+
+    contentContainerWide: {
+      maxWidth: 1100,
+      alignSelf: "center",
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    // KPI
+    // ────────────────────────────────────────────────────────────────
+
+    kpiGrid: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 10,
+      marginTop: 20,
+      marginBottom: 16,
+    },
+
+    kpiCard: {
+      flexBasis: "31%" as any,
+      flexGrow: 1,
+      minWidth: 0,
+      backgroundColor:
+        C.surface,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor:
+        C.border,
+      borderTopWidth: 3,
+      padding: 14,
+    },
+
+    kpiLabel: {
+      fontSize: 10,
+      fontWeight: "700",
+      color: C.text3,
+      letterSpacing: 0.8,
+      textTransform:
+        "uppercase",
+      marginBottom: 6,
+    },
+
+    kpiValue: {
+      fontSize: 18,
+      fontWeight: "800",
+      letterSpacing: -0.3,
+      marginBottom: 2,
+    },
+
+    kpiSubtext: {
+      fontSize: 10,
+      color: C.text3,
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    // Cards
+    // ────────────────────────────────────────────────────────────────
+
+    chartCard: {
+      backgroundColor:
+        C.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor:
+        C.border,
+      padding: 16,
+      marginBottom: 16,
+    },
+
+    chartTitle: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: C.text,
+      marginBottom: 12,
+    },
+
+    card: {
+      backgroundColor:
+        C.surface,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor:
+        C.border,
+      padding: 20,
+    },
+
+    cardTitle: {
+      fontSize: 15,
+      fontWeight: "800",
+      color: C.text,
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    // Financial position
+    // ────────────────────────────────────────────────────────────────
+
+    gfpRow: {
+      flexDirection: "row",
+    },
+
+    gfpStat: {
+      flex: 1,
+      minWidth: 0,
+      padding: 14,
+      gap: 3,
+    },
+
+    gfpStatBorderRight: {
+      borderRightWidth: 1,
+      borderRightColor:
+        C.border,
+    },
+
+    gfpStatBorderBottom: {
+      borderBottomWidth: 1,
+      borderBottomColor:
+        C.border,
+    },
+
+    gfpStatValue: {
+      fontSize: 16,
+      fontWeight: "800",
+      color: C.text,
+      letterSpacing: -0.3,
+    },
+
+    gfpStatLabel: {
+      fontSize: 11,
+      fontWeight: "700",
+      color: C.text3,
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    // Scope
+    // ────────────────────────────────────────────────────────────────
+
+    scopeSection: {
+      marginTop: 4,
+      marginBottom: 12,
+    },
+
+    scopeLabel: {
+      fontSize: 10,
+      fontWeight: "800",
+      color: C.text3,
+      letterSpacing: 0.8,
+      marginBottom: 6,
+    },
+
+    scopeToggle: {
+      flexDirection: "row",
+      alignSelf:
+        "flex-start",
+      backgroundColor:
+        C.elevated,
+      borderWidth: 1,
+      borderColor:
+        C.border,
+      borderRadius: 12,
+      padding: 3,
+    },
+
+    scopeOption: {
+      minWidth: 110,
+      paddingHorizontal: 16,
+      paddingVertical: 9,
+      borderRadius: 9,
+      alignItems: "center",
+      justifyContent:
+        "center",
+    },
+
+    scopeOptionActive: {
+      backgroundColor:
+        C.primary,
+    },
+
+    scopeOptionText: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: C.text2,
+    },
+
+    scopeOptionTextActive: {
+      color: "#fff",
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    // Categories
+    // ────────────────────────────────────────────────────────────────
+
+    categoryScroller: {
+      marginTop: 4,
+      marginBottom: 14,
+    },
+
+    categoryContent: {
+      flexDirection: "row",
+      gap: 10,
+      paddingRight: 10,
+    },
+
+    pill: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingHorizontal: 18,
+      paddingVertical: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor:
+        C.border,
+      backgroundColor:
+        C.surface,
+    },
+
+    pillActive: {
+      backgroundColor:
+        "#2E7D6C",
+      borderColor:
+        "#2E7D6C",
+    },
+
+    pillIcon: {
+      fontSize: 15,
+    },
+
+    pillLabel: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: C.text2,
+    },
+
+    pillLabelActive: {
+      color: "#fff",
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    // Filters
+    // ────────────────────────────────────────────────────────────────
+
+    filterArea: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      flexWrap: "wrap",
+      marginBottom: 12,
+    },
+
+    filterAreaMobile: {
+      flexDirection: "column",
+      alignItems: "stretch",
+    },
+
+    filterDropdown: {
+      width: 190,
+    },
+
+    filterDropdownMobile: {
+      width: "100%",
+    },
+
+    filterBtn: {
+      minHeight: 46,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent:
+        "center",
+      backgroundColor:
+        C.elevated,
+      paddingHorizontal: 14,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor:
+        C.border,
+      gap: 6,
+    },
+
+    filterBtnText: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: C.text2,
+    },
+
+    filterDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor:
+        C.accent,
+    },
+
+    clearBtn: {
+      minHeight: 46,
+      justifyContent:
+        "center",
+      paddingHorizontal: 6,
+    },
+
+    clearBtnText: {
+      fontSize: 12,
+      fontWeight: "700",
+      color: C.error,
+    },
+
+    searchIndicator: {
+      fontSize: 12,
+      color: C.primary,
+      marginBottom: 16,
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    // Dropdown
+    // ────────────────────────────────────────────────────────────────
+
+    dropdownTrigger: {
+      minHeight: 46,
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor:
+        C.surface,
+      borderWidth: 1,
+      borderColor:
+        C.border,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+    },
+
+    dropdownLabel: {
+      fontSize: 9,
+      fontWeight: "700",
+      color: C.text3,
+      textTransform:
+        "uppercase",
+      letterSpacing: 0.5,
+      marginBottom: 1,
+    },
+
+    dropdownValue: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: C.text,
+    },
+
+    dropdownChevron: {
+      fontSize: 9,
+      color: C.text3,
+      marginLeft: 8,
+    },
+
+    dropdownOverlay: {
+      flex: 1,
+      backgroundColor:
+        "rgba(0,0,0,0.35)",
+      justifyContent:
+        "center",
+      alignItems: "center",
+      padding: 20,
+    },
+
+    dropdownModal: {
+      width: "100%",
+      maxWidth: 440,
+      backgroundColor:
+        C.surface,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor:
+        C.border,
+      overflow: "hidden",
+
+      shadowColor: "#000",
+      shadowOffset: {
+        width: 0,
+        height: 8,
+      },
+      shadowOpacity: 0.18,
+      shadowRadius: 20,
+      elevation: 20,
+    },
+
+    dropdownModalHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: 18,
+      paddingVertical: 16,
+      borderBottomWidth: 1,
+      borderBottomColor:
+        C.borderLight,
+    },
+
+    dropdownModalTitle: {
+      fontSize: 16,
+      fontWeight: "800",
+      color: C.text,
+    },
+
+    dropdownModalSubtitle: {
+      fontSize: 11,
+      color: C.text3,
+      marginTop: 2,
+    },
+
+    dropdownClose: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: "center",
+      justifyContent:
+        "center",
+      backgroundColor:
+        C.elevated,
+    },
+
+    dropdownCloseText: {
+      fontSize: 13,
+      color: C.text3,
+    },
+
+    dropdownItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      minHeight: 52,
+      paddingHorizontal: 18,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor:
+        C.borderLight,
+    },
+
+    dropdownItemActive: {
+      backgroundColor:
+        C.pill,
+    },
+
+    dropdownRadio: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      borderWidth: 2,
+      borderColor:
+        C.border,
+      alignItems: "center",
+      justifyContent:
+        "center",
+      marginRight: 12,
+    },
+
+    dropdownRadioActive: {
+      borderColor:
+        C.primary,
+    },
+
+    dropdownRadioDot: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      backgroundColor:
+        C.primary,
+    },
+
+    dropdownItemText: {
+      flex: 1,
+      fontSize: 14,
+      color: C.text2,
+    },
+
+    dropdownItemTextActive: {
+      color: C.primary,
+      fontWeight: "700",
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    // Reports
+    // ────────────────────────────────────────────────────────────────
+
+    reportColumns: {
+      flexDirection: "column",
+      gap: 16,
+    },
+
+    reportColumnsWide: {
+      flexDirection: "row",
+    },
+
+    reportColumn: {
+      flex: 1,
+      minWidth: 0,
+    },
+
+    kpiMiniRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 20,
+      marginTop: 10,
+      marginBottom: 16,
+    },
+
+    kpiMini: {
+      minWidth: 100,
+      maxWidth: 180,
+    },
+
+    kpiMiniLabel: {
+      fontSize: 10,
+      color: C.text3,
+      fontWeight: "700",
+      textTransform:
+        "uppercase",
+      marginBottom: 3,
+    },
+
+    kpiMiniValue: {
+      fontSize: 18,
+      fontWeight: "800",
+      color: C.text,
+    },
+
+    noData: {
+      color: C.text3,
+      fontSize: 13,
+      paddingVertical: 30,
+      textAlign: "center",
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    // Preview
+    // ────────────────────────────────────────────────────────────────
+
+    previewHeader: {
+      flexDirection: "row",
+      justifyContent:
+        "space-between",
+      alignItems: "center",
+      gap: 12,
+      marginBottom: 14,
+    },
+
+    exportActions: {
+      flexDirection: "row",
+      gap: 8,
+      flexWrap: "wrap",
+      justifyContent:
+        "flex-end",
+    },
+
+    exportBtn: {
+      minHeight: 38,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent:
+        "center",
+      borderWidth: 1,
+      borderColor:
+        C.border,
+      backgroundColor:
+        C.elevated,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 10,
+    },
+
+    exportBtnText: {
+      fontSize: 12,
+      fontWeight: "700",
+      color: C.text2,
+    },
+
+    previewRow: {
+      flexDirection: "row",
+      borderBottomWidth: 1,
+      borderBottomColor:
+        C.borderLight,
+    },
+
+    previewHeadCell: {
+      fontSize: 10,
+      fontWeight: "800",
+      color: C.text3,
+      textTransform:
+        "uppercase",
+      letterSpacing: 0.5,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      minWidth: 120,
+    },
+
+    previewCell: {
+      fontSize: 12,
+      color: C.text2,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      minWidth: 120,
+    },
+
+    previewCount: {
+      fontSize: 11,
+      color: C.text3,
+      marginTop: 10,
+    },
+
+    resultsCount: {
+      fontSize: 12,
+      color: C.text3,
+    },
+
+    resultsSubtext: {
+      fontSize: 11,
+      color: C.text3,
+      marginTop: 3,
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    // Members
+    // ────────────────────────────────────────────────────────────────
+
+    memberRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      padding: 14,
+      gap: 12,
+    },
+
+    memberAvatar: {
+      width: 44,
+      height: 44,
+      borderRadius: 12,
+      backgroundColor:
+        C.pill,
+      alignItems: "center",
+      justifyContent:
+        "center",
+    },
+
+    memberAvatarText: {
+      fontSize: 14,
+      fontWeight: "800",
+      color: C.primary,
+    },
+
+    memberInfo: {
+      flex: 1,
+      minWidth: 0,
+    },
+
+    memberName: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: C.text,
+    },
+
+    memberContact: {
+      fontSize: 11,
+      color: C.text3,
+      marginTop: 2,
+    },
+
+    memberStats: {
+      alignItems:
+        "flex-end",
+      flexShrink: 0,
+      maxWidth: 130,
+    },
+
+    memberAmount: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: C.primary,
+    },
+
+    memberRole: {
+      fontSize: 10,
+      color: C.text3,
+      textTransform:
+        "capitalize",
+      marginTop: 2,
+    },
+
+    chevron: {
+      fontSize: 20,
+      color: C.text3,
+      flexShrink: 0,
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    // Member detail
+    // ────────────────────────────────────────────────────────────────
+
+    backButton: {
+      marginBottom: 16,
+      alignSelf:
+        "flex-start",
+    },
+
+    backButtonText: {
+      color: C.primary,
+      fontSize: 14,
+      fontWeight: "600",
+    },
+
+    memberDetailCard: {
+      backgroundColor:
+        C.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor:
+        C.border,
+      padding: 16,
+      marginBottom: 16,
+    },
+
+    memberDetailHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 12,
+    },
+
+    memberDetailName: {
+      fontSize: 20,
+      fontWeight: "800",
+      color: C.text,
+      marginBottom: 4,
+    },
+
+    memberDetailRole: {
+      fontSize: 13,
+      color: C.text3,
+    },
+
+    memberContactBlock: {
+      alignItems: "center",
+      gap: 4,
+    },
+
+    memberDetailText: {
+      fontSize: 12,
+      color: C.text2,
+    },
+
+    memberKpiGrid: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 20,
+      marginBottom: 18,
+    },
+
+    memberKpi: {
+      flex: 1,
+      minWidth: 120,
+    },
+
+    memberKpiLabel: {
+      fontSize: 10,
+      color: C.text3,
+      fontWeight: "700",
+      textTransform:
+        "uppercase",
+      marginBottom: 3,
+    },
+
+    memberKpiValue: {
+      fontSize: 18,
+      fontWeight: "800",
+    },
+
+    sectionHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent:
+        "space-between",
+      gap: 12,
+      marginBottom: 10,
+    },
+
+    sectionSubtext: {
+      fontSize: 11,
+      color: C.text3,
+      marginTop: 3,
+    },
+
+    emptyInline: {
+      textAlign: "center",
+      paddingVertical: 20,
+      color: C.text3,
+      fontSize: 13,
+    },
+
+    contributionRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      padding: 14,
+      gap: 12,
+    },
+
+    contributionIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      backgroundColor:
+        C.pill,
+      alignItems: "center",
+      justifyContent:
+        "center",
+    },
+
+    contributionInfo: {
+      flex: 1,
+      minWidth: 0,
+    },
+
+    contributionType: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: C.text,
+    },
+
+    contributionDate: {
+      fontSize: 11,
+      color: C.text3,
+      marginTop: 3,
+    },
+
+    contributionDescription: {
+      fontSize: 11,
+      color: C.text3,
+      marginTop: 2,
+    },
+
+    contributionAmount: {
+      fontSize: 13,
+      fontWeight: "800",
+      color: C.success,
+      flexShrink: 0,
+    },
+
+    transactionRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      padding: 14,
+      gap: 12,
+    },
+
+    txDot: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      alignItems: "center",
+      justifyContent:
+        "center",
+    },
+
+    transactionInfo: {
+      flex: 1,
+      minWidth: 0,
+    },
+
+    transactionType: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: C.text,
+    },
+
+    transactionDate: {
+      fontSize: 11,
+      color: C.text3,
+      marginTop: 2,
+    },
+
+    transactionAmount: {
+      fontSize: 13,
+      fontWeight: "700",
+      marginLeft: 8,
+      flexShrink: 0,
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    // Advanced modal
+    // ────────────────────────────────────────────────────────────────
+
+    modalSectionLabel: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: C.text,
+      marginTop: 12,
+      marginBottom: 8,
+    },
+
+    modalRow: {
+      flexDirection: "row",
+      gap: 10,
+      marginBottom: 10,
+    },
+
+    modalHalf: {
+      flex: 1,
+      minWidth: 0,
+    },
+
+    modalButtonRow: {
+      flexDirection: "row",
+      gap: 10,
+      marginTop: 20,
+    },
+
+    modalClearBtn: {
+      flex: 1,
+      backgroundColor:
+        C.surface,
+      borderWidth: 1,
+      borderColor:
+        C.border,
+      borderRadius: 10,
+      paddingVertical: 12,
+      alignItems: "center",
+    },
+
+    modalClearBtnText: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: C.text2,
+    },
+
+    modalApplyBtn: {
+      flex: 2,
+      backgroundColor:
+        C.primary,
+      borderRadius: 10,
+      paddingVertical: 12,
+      alignItems: "center",
+    },
+
+    modalApplyBtnText: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: "#fff",
+    },
+  });

@@ -63,12 +63,6 @@ function nextPeriod(
       next.setDate(next.getDate() + 7);
       break;
 
-    case "biweekly":
-    case "bi-weekly":
-    case "fortnightly":
-      next.setDate(next.getDate() + 14);
-      break;
-
     case "monthly":
       next.setMonth(next.getMonth() + 1);
       break;
@@ -109,15 +103,6 @@ function periodLabel(
 
     case "weekly":
       return `Week of ${periodStart.toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })}`;
-
-    case "biweekly":
-    case "bi-weekly":
-    case "fortnightly":
-      return `Period of ${periodStart.toLocaleDateString(undefined, {
         month: "short",
         day: "numeric",
         year: "numeric",
@@ -882,8 +867,8 @@ export function findOverdueInstallments(
          * charge anything for the pre-activation days.
          *
          * If the installment remains overdue when the
-         * policy activates, calculation begins from the
-         * activation date.
+         * policy activates, calculation begins from
+         * the activation date.
          */
         const graceDate =
           new Date(dueDate);

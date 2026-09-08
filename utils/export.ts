@@ -1,149 +1,131 @@
-import { Share, Platform } from "react-native";
-import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
-import { fmtCurrency } from "./theme";
+// utils/export.ts
+import { Platform } from "react-native";
+import * as XLSX from "xlsx";
 
-export function csvEscape(value: any): string {
-  const text = value == null ? "" : String(value);
-  if (/[",\n]/.test(text)) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-  return text;
-}
-
-export async function exportCsv(
-  filename: string,
+export async function exportXlsx(
+  fileName: string,
   headers: string[],
-  rows: Array<Array<string | number | null | undefined>>
-) {
-  const csv = [
-    headers.map(csvEscape).join(","),
-    ...rows.map((row) => row.map((v) => csvEscape(v ?? "")).join(",")),
-  ].join("\n");
+  rows: (string | number)[][]
+): Promise<void> {
+  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
+
+  const safeName = fileName.replace(/[^a-zA-Z0-9_\-]/g, "_");
 
   if (Platform.OS === "web") {
-    // Browser download
-    const blob = new Blob([csv], { type: "text/csv" });
+    // Browser path: write binary array, wrap in a Blob, trigger a download.
+    const wbout = XLSX.write(workbook, {
+      type: "array",
+      bookType: "xlsx",
+    });
+
+    const blob = new Blob([wbout], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${filename}.csv`;
+    link.download = `${safeName}.xlsx`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+    return;
+  }
+
+  // Native path (iOS/Android)
+  const { File, Paths } = await import("expo-file-system");
+  const Sharing = await import("expo-sharing");
+
+  const base64 = XLSX.write(workbook, {
+    type: "base64",
+    bookType: "xlsx",
+  });
+
+  const file = new File(Paths.cache, `${safeName}.xlsx`);
+  file.write(base64ToBytes(base64));
+
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(file.uri, {
+      mimeType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      dialogTitle: "Export contributions",
+      UTI: "com.microsoft.excel.xlsx",
+    });
   } else {
-    // Native share
-    try {
-      await Share.share({
-        title: filename,
-        message: csv,
-        url: `data:text/csv;base64,${btoa(csv)}`, // For iOS
-      });
-    } catch (e) {
-      console.warn("Export failed:", e);
-    }
+    throw new Error("Sharing is not available on this device");
   }
 }
 
-export async function exportPdf(
-  filename: string,
-  title: string,
-  content: string
-) {
-  const html = `
-    <html>
-      <head>
-        <title>${filename}</title>
-        <style>
-          body { font-family: Arial, sans-serif; padding: 20px; color: #111827; }
-          h1 { color: #1A3C5E; margin-bottom: 16px; }
-          table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 12px; }
-          th { background-color: #0F766E; color: white; }
-        </style>
-      </head>
-      <body>
-        <h1>${title}</h1>
-        ${content}
-      </body>
-    </html>
-  `;
-
+export async function importXlsx(): Promise<any[][]> {
   if (Platform.OS === "web") {
-    // Open print dialog for PDF export
-    const win = window.open("");
-    if (win) {
-      win.document.write(html.replace("</body>", "<script>window.print(); window.close();</script></body>"));
-      win.document.close();
-    }
-  } else {
-    try {
-      const { uri } = await Print.printToFileAsync({ html, base64: false });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "application/pdf",
-          dialogTitle: filename,
-          UTI: "com.adobe.pdf",
+    return new Promise((resolve, reject) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".xlsx,.xls";
+
+      input.onchange = async () => {
+        const f = input.files?.[0];
+        if (!f) {
+          reject(new Error("Cancelled"));
+          return;
+        }
+
+        const arrayBuffer = await f.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: "array" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+
+        const rows: any[][] = XLSX.utils.sheet_to_json(sheet, {
+          header: 1,
+          defval: "",
         });
-      } else {
-        await Share.share({ title: filename, url: uri });
-      }
-    } catch (e) {
-      console.warn("Export failed:", e);
-    }
+
+        resolve(rows.slice(1).filter((r) => r.some((cell) => cell !== "")));
+      };
+
+      // If the user cancels the native file picker, no 'change' fires and
+      // we never resolve/reject — acceptable for this flow, but note it.
+      input.click();
+    });
   }
+
+  const DocumentPicker = await import("expo-document-picker");
+  const { File } = await import("expo-file-system");
+
+  const result = await DocumentPicker.getDocumentAsync({
+    type: [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+    ],
+    copyToCacheDirectory: true,
+  });
+
+  if (result.canceled) {
+    throw new Error("Cancelled");
+  }
+
+  const asset = result.assets[0];
+  const file = new File(asset.uri);
+  const bytes = file.bytes();
+
+  const workbook = XLSX.read(bytes, { type: "array" });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+
+  const rows: any[][] = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    defval: "",
+  });
+
+  return rows.slice(1).filter((r) => r.some((cell) => cell !== ""));
 }
 
-export function generatePaymentScheduleHtml(
-  memberName: string,
-  amount: number,
-  interestRate: number,
-  monthlyPayment: number,
-  totalRepayable: number,
-  schedule: Array<{
-    index: number;
-    dueDate: string;
-    principal: number;
-    interest: number;
-    total: number;
-  }>
-): string {
-  const rows = schedule
-    .map(
-      (item) =>
-        `<tr>
-          <td>${item.index + 1}</td>
-          <td>${new Date(item.dueDate).toLocaleDateString()}</td>
-          <td>${fmtCurrency(item.principal)}</td>
-          <td>${fmtCurrency(item.interest)}</td>
-          <td>${fmtCurrency(item.total)}</td>
-        </tr>`
-    )
-    .join("");
-
-  return `
-    <table>
-      <tr><th>Member</th><td>${memberName}</td></tr>
-      <tr><th>Principal</th><td>${fmtCurrency(amount)}</td></tr>
-      <tr><th>Interest Rate</th><td>${interestRate}%</td></tr>
-      <tr><th>Monthly Payment</th><td>${fmtCurrency(monthlyPayment)}</td></tr>
-      <tr><th>Total Repayable</th><td>${fmtCurrency(totalRepayable)}</td></tr>
-    </table>
-    <h3>Repayment Schedule</h3>
-    <table>
-      <thead>
-        <tr>
-          <th>Month</th>
-          <th>Due Date</th>
-          <th>Principal</th>
-          <th>Interest</th>
-          <th>Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
-  `;
+function base64ToBytes(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
 }

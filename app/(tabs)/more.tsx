@@ -231,17 +231,24 @@ export default function MoreScreen() {
                 <Text style={st.sectionLabel}>Administration</Text>
 
                 {/* Group Settings */}
-                <TouchableOpacity
-                  style={st.settingsRow}
-                  onPress={() => router.push("/group-settings")}
-                  activeOpacity={0.7}
-                >
-                  <View style={st.settingsRowIcon}>
-                    <Text style={{ fontSize: 16 }}>⚙</Text>
-                  </View>
-                  <Text style={st.settingsRowText}>Group Settings</Text>
-                  <Text style={{ color: Colors.text3, fontSize: 18 }}>›</Text>
-                </TouchableOpacity>
+                {[
+                  { label: "Loan Rules", icon: "🏦", activeSection: "settings" },
+                  { label: "Permissions", icon: "🔐", activeSection: "permissions" },
+                  { label: "Audit Log", icon: "📋", activeSection: "audit" },
+                ].map((item) => (
+                  <TouchableOpacity
+                    key={item.activeSection + item.label}
+                    style={st.settingsRow}
+                    onPress={() => router.push({ pathname: "/group-settings", params: { activeSection: item.activeSection } })}
+                    activeOpacity={0.7}
+                  >
+                    <View style={st.settingsRowIcon}>
+                      <Text style={{ fontSize: 16 }}>{item.icon}</Text>
+                    </View>
+                    <Text style={st.settingsRowText}>{item.label}</Text>
+                    <Text style={{ color: Colors.text3, fontSize: 18 }}>›</Text>
+                  </TouchableOpacity>
+                ))}
 
                 <Text style={[st.sectionLabel, { marginTop: S.lg }]}>System Status</Text>
                 <TouchableOpacity
@@ -449,18 +456,24 @@ export default function MoreScreen() {
         {isAdmin && (
           <>
             <Text style={st.sectionLabel}>Administration</Text>
-
-            <TouchableOpacity
-              style={st.settingsRow}
-              onPress={() => router.push("/group-settings")}
-              activeOpacity={0.7}
-            >
-              <View style={st.settingsRowIcon}>
-                <Text style={{ fontSize: 16 }}>⚙</Text>
-              </View>
-              <Text style={st.settingsRowText}>Group Settings</Text>
-              <Text style={{ color: Colors.text3, fontSize: 18 }}>›</Text>
-            </TouchableOpacity>
+            {[
+                  { label: "Loan Rules", icon: "🏦", activeSection: "settings" },
+                  { label: "Permissions", icon: "🔐", activeSection: "permissions" },
+                  { label: "Audit Log", icon: "📋", activeSection: "audit" },
+            ].map((item) => (
+              <TouchableOpacity
+                key={item.activeSection + item.label}
+                style={st.settingsRow}
+                onPress={() => router.push({ pathname: "/group-settings", params: { activeSection: item.activeSection } })}
+                activeOpacity={0.7}
+              >
+                <View style={st.settingsRowIcon}>
+                  <Text style={{ fontSize: 16 }}>{item.icon}</Text>
+                </View>
+                <Text style={st.settingsRowText}>{item.label}</Text>
+                <Text style={{ color: Colors.text3, fontSize: 18 }}>›</Text>
+              </TouchableOpacity>
+            ))}
 
             <Text style={[st.sectionLabel, { marginTop: S.lg }]}>System Status</Text>
             <TouchableOpacity

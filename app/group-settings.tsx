@@ -31,7 +31,7 @@ const CURRENCIES = [
 const FREQ = [
   { label: "Monthly",   value: "monthly"  },
   { label: "Weekly",    value: "weekly"   },
-  { label: "Bi-weekly", value: "biweekly" },
+  { label: "Yearly",    value: "yearly" },
 ];
 
 const INTEREST_METHODS = [
@@ -1026,7 +1026,7 @@ export default function GroupSettingsScreen() {
                   </View>
                 </View>
                 <Text style={styles.fieldHint}>
-                  Each member contributes {fmtCurrency(contribAmountNum)} {freq === "monthly" ? "per month" : freq === "weekly" ? "per week" : freq === "biweekly" ? "every two weeks" : "per year"}
+                  Each member contributes {fmtCurrency(contribAmountNum)} {freq === "monthly" ? "per month" : freq === "weekly" ? "per week" : freq === "yearly" ? "per year" : "per year"}
                 </Text>
               </SettingCard>
 

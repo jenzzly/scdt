@@ -3,7 +3,7 @@ import React, { useEffect } from "react";
 import { Tabs, useRouter, usePathname } from "expo-router";
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
-  useWindowDimensions, ScrollView, Alert,
+  useWindowDimensions, ScrollView, Alert, Animated,
 } from "react-native";
 // Dynamic import to avoid web hydration error with lucide-react-native
 let Icons: any;
@@ -94,10 +94,7 @@ const PAGE_TITLES: Record<string, string> = {
 // ─────────────────────────────────────────────
 // Nav config
 // ─────────────────────────────────────────────
-const NAV_ICONS: Record<
-  string,
-  React.ComponentType<{ color?: string; size?: number }> | null
-> = {
+const NAV_ICONS: Record<string, React.ComponentType<{ color?: string; size?: number }> | null> = {
   Dashboard: Home || null,
   Members: Users || null,
   Loans: CreditCard || null,
@@ -108,7 +105,6 @@ const NAV_ICONS: Record<
   Meetings: Calendar || null,
   Settings: Settings || null,
 };
-
 // Desktop sidebar - will be populated dynamically based on role
 const DESKTOP_NAV_ITEMS: Array<{ label: string; route: string }> = [];
 
@@ -175,6 +171,57 @@ function SidebarItem({
 
       {isActive && !collapsed && <View style={sb.activePip} />}
     </TouchableOpacity>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Spinning refresh icon wrapper
+// ─────────────────────────────────────────────
+function SpinningRefreshIcon({
+  spinning,
+  size,
+  color,
+}: {
+  spinning: boolean;
+  size: number;
+  color: string;
+}) {
+  const spin = React.useRef(new Animated.Value(0)).current;
+
+  React.useEffect(() => {
+    let loop: Animated.CompositeAnimation | undefined;
+
+    if (spinning) {
+      spin.setValue(0);
+      loop = Animated.loop(
+        Animated.timing(spin, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        })
+      );
+      loop.start();
+    } else {
+      spin.stopAnimation();
+      spin.setValue(0);
+    }
+
+    return () => loop?.stop();
+  }, [spinning]);
+
+  const rotate = spin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+
+  return (
+    <Animated.View style={{ transform: [{ rotate }] }}>
+      {Icons?.RefreshCw ? (
+        <Icons.RefreshCw size={size} color={color} />
+      ) : (
+        <Text style={{ fontSize: size }}>↻</Text>
+      )}
+    </Animated.View>
   );
 }
 
@@ -368,15 +415,23 @@ function DesktopTopHeader({
   onBellPress,
   groupName,
   onRefresh,
+  isSyncing,
+  onEditProfile,
+  onSignOut,
 }: {
   title: string;
   authName: string;
   role: string;
   unreadCount: number;
+  isSyncing: boolean;
   onBellPress: () => void;
   groupName?: string;
   onRefresh: () => void;
+  onEditProfile: () => void;
+  onSignOut: () => void;
 }) {
+  const [userMenuOpen, setUserMenuOpen] = React.useState(false);
+
   const initials = (authName ?? "U")
     .split(" ")
     .map((w: string) => w[0])
@@ -410,17 +465,11 @@ function DesktopTopHeader({
           style={dh.refreshBtn}
           onPress={onRefresh}
           activeOpacity={0.7}
+          disabled={isSyncing}
           accessibilityRole="button"
           accessibilityLabel="Refresh sync"
         >
-          {Icons?.RefreshCw ? (
-            <Icons.RefreshCw
-              size={17}
-              color={Colors.text2}
-            />
-          ) : (
-            <Text style={{ fontSize: 17 }}>↻</Text>
-          )}
+          <SpinningRefreshIcon spinning={isSyncing} size={17} color={Colors.text2} />
         </TouchableOpacity>
 
         {/* Notifications */}
@@ -445,23 +494,63 @@ function DesktopTopHeader({
           )}
         </TouchableOpacity>
 
-        <View style={dh.userBlock}>
-          <View style={dh.avatar}>
-            <Text style={dh.avatarText}>{initials}</Text>
-          </View>
+        {/* Account menu — icon only, dropdown reveals name/edit/signout */}
+        <View style={dh.avatarWrap}>
+          <TouchableOpacity
+            style={dh.avatarBtn}
+            onPress={() => setUserMenuOpen((v) => !v)}
+            activeOpacity={0.7}
+            accessibilityLabel="Account menu"
+          >
+            <View style={dh.avatar}>
+              <Text style={dh.avatarText}>{initials}</Text>
+            </View>
+          </TouchableOpacity>
 
-          <View>
-            <Text
-              style={dh.userName}
-              numberOfLines={1}
-            >
-              {authName ?? "User"}
-            </Text>
-
-            <Text style={dh.userRole}>
-              {role?.replace("_", " ")}
-            </Text>
-          </View>
+          {userMenuOpen && (
+            <>
+              {/* Backdrop to close on outside click — must sit above
+                  page content but below the dropdown itself */}
+              <TouchableOpacity
+                style={dh.menuBackdrop}
+                activeOpacity={1}
+                onPress={() => setUserMenuOpen(false)}
+              />
+              <View style={dh.dropdown}>
+                <View style={dh.dropdownHeader}>
+                  <Text style={dh.dropdownName} numberOfLines={1}>
+                    {authName ?? "User"}
+                  </Text>
+                  <Text style={dh.dropdownRole}>
+                    {role?.replace("_", " ")}
+                  </Text>
+                </View>
+                <View style={dh.dropdownDivider} />
+                <TouchableOpacity
+                  style={dh.dropdownItem}
+                  onPress={() => {
+                    setUserMenuOpen(false);
+                    onEditProfile();
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={dh.dropdownItemText}>Edit Profile</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={dh.dropdownItem}
+                  onPress={() => {
+                    setUserMenuOpen(false);
+                    onSignOut();
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[dh.dropdownItemText, { color: Colors.error }]}>
+                    Sign Out
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
         </View>
       </View>
     </View>
@@ -477,9 +566,11 @@ function MobileTopHeader({
   onBellPress,
   groupName,
   onRefresh,
+  isSyncing,
 }: {
   title: string;
   unreadCount: number;
+  isSyncing: boolean;
   onBellPress: () => void;
   groupName?: string;
   onRefresh: () => void;
@@ -523,17 +614,11 @@ function MobileTopHeader({
           style={mh.refreshBtn}
           onPress={onRefresh}
           activeOpacity={0.7}
+          disabled={isSyncing}
           accessibilityRole="button"
           accessibilityLabel="Refresh sync"
         >
-          {Icons?.RefreshCw ? (
-            <Icons.RefreshCw
-              size={15}
-              color={Colors.text2}
-            />
-          ) : (
-            <Text style={{ fontSize: 15 }}>↻</Text>
-          )}
+          <SpinningRefreshIcon spinning={isSyncing} size={15} color={Colors.text2} />
         </TouchableOpacity>
 
         {/* Notifications */}
@@ -575,6 +660,8 @@ const dh = StyleSheet.create({
     backgroundColor: Colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
+    zIndex: 100,
+    elevation: 10,
   },
 
   left: {
@@ -609,6 +696,7 @@ const dh = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 14,
+    zIndex: 100,
   },
 
   refreshBtn: {
@@ -652,10 +740,13 @@ const dh = StyleSheet.create({
     color: "#fff",
   },
 
-  userBlock: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
+  avatarWrap: {
+    position: "relative",
+    zIndex: 1000,
+  },
+
+  avatarBtn: {
+    borderRadius: 10,
   },
 
   avatar: {
@@ -673,17 +764,65 @@ const dh = StyleSheet.create({
     color: "#fff",
   },
 
-  userName: {
+  menuBackdrop: {
+    position: "absolute",
+    top: -1000,
+    left: -1000,
+    right: -1000,
+    bottom: -1000,
+    zIndex: 999,
+    elevation: 999,
+  },
+
+  dropdown: {
+    position: "absolute",
+    top: 44,
+    right: 0,
+    width: 200,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 1000,
+    zIndex: 1000,
+    overflow: "hidden",
+  },
+
+  dropdownHeader: {
+    padding: 12,
+  },
+
+  dropdownName: {
     fontSize: 13,
     fontWeight: "700",
     color: Colors.text,
   },
 
-  userRole: {
+  dropdownRole: {
     fontSize: 11,
     color: Colors.text3,
     textTransform: "capitalize",
-    marginTop: 1,
+    marginTop: 2,
+  },
+
+  dropdownDivider: {
+    height: 1,
+    backgroundColor: Colors.border,
+  },
+
+  dropdownItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+
+  dropdownItemText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: Colors.text2,
   },
 });
 
@@ -899,8 +1038,9 @@ export default function TabsLayout() {
   useFirebaseSync(activeGroupId, isOnline);
   useNotificationSync(authUid);
 
-
   const triggerForceSync = useStore((s) => s.triggerForceSync);
+  const syncStatus = useStore((s) => s.syncStatus);
+  const isSyncing = syncStatus === "pending" || syncStatus === "syncing";
 
   // ── Manual sync refresh ────────────────────
   const triggerRefresh = () => {
@@ -1110,16 +1250,15 @@ export default function TabsLayout() {
         <View style={shared.desktopContent}>
           <DesktopTopHeader
             title={currentTitle}
+            isSyncing={isSyncing}
             authName={authName ?? "User"}
             role={currentUserRole}
             unreadCount={unreadCount}
-            onBellPress={() =>
-              router.push(
-                "/notifications"
-              )
-            }
+            onBellPress={() => router.push("/notifications")}
             groupName={group?.name}
             onRefresh={triggerForceSync}
+            onEditProfile={() => router.push("/more")}
+            onSignOut={handleSignOut}
           />
 
           {offlineBanner}
@@ -1167,6 +1306,7 @@ export default function TabsLayout() {
         {offlineBanner}
 
         <MobileTopHeader
+          isSyncing={isSyncing}
           title={currentTitle}
           unreadCount={unreadCount}
           onBellPress={() =>
