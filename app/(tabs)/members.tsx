@@ -12,7 +12,7 @@ import {
 } from "../../stores/useStore";
 import {
   SearchBar, Card, Badge, Empty, Button, Avatar, BottomModal,
-  TabRow, Input, Select, useToast, InfoRow,
+  TabRow, Input, Select, useToast, Toast, InfoRow,
 } from "../../components/ui";
 import { KpiCard } from "../../components/ui/KpiCard";
 import { Colors, C, T, S, R, fmtCurrency, fmtDate, showConfirm, round2 } from "../../utils/theme";
@@ -65,7 +65,8 @@ export default function MembersScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = Platform.OS === "web" && width >= 768;
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   const activeGroupId = useStore(s => s.activeGroupId);
   const role = useCurrentUserRole();
@@ -389,7 +390,7 @@ export default function MembersScreen() {
   if (isWide) {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg }}>
-        {Toast}
+        <Toast visible={visible} msg={msg} type={type}/>
 
         <ScrollView
           contentContainerStyle={st.container}
@@ -689,7 +690,7 @@ export default function MembersScreen() {
   // ── Mobile layout ──────────────────────────────────────────────────
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      {Toast}
+      <Toast visible={visible} msg={msg} type={type}/>
 
       {/* ── KPI Cards (Mobile) ── */}
       <ScrollView 

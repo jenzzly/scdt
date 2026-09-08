@@ -5,7 +5,7 @@ import { useRouter } from "expo-router";
 import { useStore, useCurrentUserRole, useCurrentMember, useIsGroupView } from "../../stores/useStore";
 import { useGroupInvestments, useCurrentMemberPermissions } from "../../stores/selectors";
 import {
-  TabRow, SearchBar, Card, Empty, useToast, Button, BottomModal, Input,
+  TabRow, SearchBar, Card, Empty, useToast, Toast, Button, BottomModal, Input,
 } from "../../components/ui";
 import { S, R, Colors, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
 import type { Investment } from "../../types";
@@ -60,7 +60,8 @@ export default function InvestmentsScreen() {
   const permissions = useCurrentMemberPermissions();
   const isGroupView = useIsGroupView();
   const isAdmin = role === "admin";
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   const [tab, setTab] = useState("All");
   const [search, setSearch] = useState("");
@@ -79,18 +80,18 @@ export default function InvestmentsScreen() {
     investmentId: string; step: "committee" | "accountant"; approve: boolean;
   } | null>(null);
 
-  const visible = useMemo(() => {
+  const visibleInvestments = useMemo(() => {
     if (isGroupView) return investments;
     return investments.filter((i: Investment) => i.createdBy === currentMember?.id);
   }, [investments, isGroupView, currentMember]);
 
   const byTab = useMemo(() => {
-    if (tab === "Active")  return visible.filter((i: Investment) => i.status === "open");
-    if (tab === "Closed")  return visible.filter((i: Investment) => i.status === "closed");
-    if (tab === "Matured") return visible.filter((i: Investment) => (i.status as string) === "matured");
-    if (tab === "Pending") return visible.filter((i: Investment) => INVESTMENT_PENDING_STATUSES.includes(i.status));
-    return visible;
-  }, [visible, tab]);
+    if (tab === "Active")  return visibleInvestments.filter((i: Investment) => i.status === "open");
+    if (tab === "Closed")  return visibleInvestments.filter((i: Investment) => i.status === "closed");
+    if (tab === "Matured") return visibleInvestments.filter((i: Investment) => (i.status as string) === "matured");
+    if (tab === "Pending") return visibleInvestments.filter((i: Investment) => INVESTMENT_PENDING_STATUSES.includes(i.status));
+    return visibleInvestments;
+  }, [visibleInvestments, tab]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -119,8 +120,8 @@ export default function InvestmentsScreen() {
   const handleSearch = (v: string) => { setSearch(v); setPage(1); };
   const handleSort = (v: string) => { setSort(v); setPage(1); };
 
-  const totalInvested = useMemo(() => visible.reduce((s: number, i: Investment) => s + i.investmentAmount, 0), [visible]);
-  const totalReturns  = useMemo(() => visible.reduce((s: number, i: Investment) => s + (i.actualReturn || 0), 0), [visible]);
+  const totalInvested = useMemo(() => visibleInvestments.reduce((s: number, i: Investment) => s + i.investmentAmount, 0), [visibleInvestments]);
+  const totalReturns  = useMemo(() => visibleInvestments.reduce((s: number, i: Investment) => s + (i.actualReturn || 0), 0), [visibleInvestments]);
 
   const openDetail = (inv: Investment) => { setSelected(inv); setShowDetail(true); };
 
@@ -226,7 +227,7 @@ export default function InvestmentsScreen() {
               label="Total Invested"
               value={fmtCurrency(totalInvested)}
               icon="📊"
-              subtext={`${visible.length} investments`}
+              subtext={`${visibleInvestments.length} investments`}
               accentColor={C.primary}
               onPress={() => {}} 
             />
@@ -240,7 +241,7 @@ export default function InvestmentsScreen() {
             />
             <KpiCard
               label="Active"
-              value={String(visible.filter(i => i.status === "open").length)}
+              value={String(visibleInvestments.filter(i => i.status === "open").length)}
               icon="🟢"
               subtext="Active investments"
               accentColor={C.success}
@@ -248,7 +249,7 @@ export default function InvestmentsScreen() {
             />
             <KpiCard
               label="Pending"
-              value={String(visible.filter(i => i.status === "pending" || i.status === "pending_committee").length)}
+              value={String(visibleInvestments.filter(i => i.status === "pending" || i.status === "pending_committee").length)}
               icon="⏳"
               subtext="Awaiting approval"
               accentColor={C.gold}
@@ -553,8 +554,7 @@ export default function InvestmentsScreen() {
           );
         })()}
       </BottomModal>
-
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
     </View>
   );
 }

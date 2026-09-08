@@ -2,14 +2,15 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup } from "../../stores/useStore";
-import { Input, Button, useToast, DatePicker } from "../../components/ui";
+import { Input, Button, useToast, Toast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S } from "../../utils/theme";
 
 export default function AddMeetingModal() {
   const router = useRouter();
   const { scheduleMeeting, activeGroupId } = useStore();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -47,7 +48,7 @@ export default function AddMeetingModal() {
         <Input label="Agenda" value={agenda} onChangeText={setAgenda} placeholder="Topics to be discussed…" multiline />
         <Button label="Schedule Meeting" onPress={handleSave} fullWidth loading={loading} size="lg" />
       </ScrollView>
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
     </ModalShell>
   );
 }

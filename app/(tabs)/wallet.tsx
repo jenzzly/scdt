@@ -10,7 +10,7 @@ import {
   useCurrentUserRole, useCurrentMember,
   useIsGroupView,
 } from "../../stores/useStore";
-import { TabRow, SearchBar, useToast } from "../../components/ui";
+import { TabRow, SearchBar, useToast, Toast } from "../../components/ui";
 import { Colors, S, R, C, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
 import type { WalletTransaction } from "../../types";
 import { useStore } from "../../stores/useStore";
@@ -67,7 +67,8 @@ export default function WalletScreen() {
   const currentMember = useCurrentMember();
   const { deleteWalletTransaction, recalcTotals } = useStore();
   const permissions   = useCurrentMemberPermissions();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   const isAdmin   = role === "admin";
   const isGroupView = useIsGroupView();
@@ -127,9 +128,18 @@ export default function WalletScreen() {
 
   const handleDelete = (tx: WalletTransaction) => {
     let msg = `Delete "${tx.description}"? This cannot be undone.`;
-    if (tx.contributionId) msg = `⚠️ This also deletes the linked contribution.\n\n${msg}`;
-    if (tx.loanId && ["loan_repayment","loan_interest_income","interest"].includes(tx.type))
-      msg = `⚠️ This is part of a loan repayment and will update the loan balance.\n\n${msg}`;
+    if (tx.loanId || tx.sourceType === "loan" || ["loan_disbursement", "loan_repayment", "loan_interest_income", "loan_principal_recovery", "interest"].includes(tx.type)) {
+      msg = `⚠️ This will cascade delete the linked loan and ALL associated loan transactions.\n\n${msg}`;
+    } else if (tx.contributionId || tx.sourceType === "contribution") {
+      msg = `⚠️ This will cascade delete the linked contribution and update member savings.\n\n${msg}`;
+    } else if (tx.investmentId || tx.sourceType === "investment" || ["investment_disbursement", "investment_return"].includes(tx.type)) {
+      msg = `⚠️ This will cascade delete the linked investment and its associated transactions.\n\n${msg}`;
+    } else if (tx.id.startsWith("meeting-penalty-") || (tx.type === "late_fee" && tx.description.toLowerCase().includes("meeting"))) {
+      msg = `⚠️ This will delete this meeting fee and clear the penalty from the meeting attendance.\n\n${msg}`;
+    } else if (tx.sourceType === "manual" && tx.sourceId) {
+      msg = `⚠️ This will delete this transaction and any linked record.\n\n${msg}`;
+    }
+
     showConfirm("Delete Transaction", msg, async () => {
       try {
         await deleteWalletTransaction(tx.id, "Deleted by admin");
@@ -330,7 +340,7 @@ export default function WalletScreen() {
           <Pagination />
         </View>
       </ScrollView>
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
     </View>
   );
 }

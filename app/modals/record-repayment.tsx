@@ -10,7 +10,7 @@ import {
   Platform, TouchableOpacity, ScrollView, TextInput} from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useStore, useGroupLoans, useGroupMembers, useActiveGroup, useGroupWallet } from "../../stores/useStore";
-import { Button, useToast, DatePicker } from "../../components/ui";
+import { Button, useToast, Toast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R, fmtCurrency, round2, showConfirm, fmtFull } from "../../utils/theme";
 
@@ -118,7 +118,8 @@ export default function RecordRepaymentModal() {
   const members  = useGroupMembers();
   const group    = useActiveGroup();
   const allWallet= useGroupWallet();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   const loan   = loans.find((l) => l.id === loanId);
   const member = loan ? members.find((m) => m.id === loan.memberId) : null;
@@ -533,7 +534,7 @@ export default function RecordRepaymentModal() {
           </View>
         )}
       </ScrollView>
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
     </ModalShell>
   );
 }

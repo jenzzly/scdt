@@ -12,7 +12,7 @@ import {
   useGroupContributions, useGroupInvestments, useGroupWallet,
   useCurrentMember, useCurrentMemberPermissions, useIsAdminView,
 } from "../../stores/useStore";
-import { Card, Badge, Empty, useToast, Input, BottomModal, Select, DatePicker } from "../../components/ui";
+import { Card, Badge, Empty, useToast, Toast, Input, BottomModal, Select, DatePicker } from "../../components/ui";
 import { Colors, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
 import { exportCsv, exportPdf } from "../../utils/export";
 
@@ -196,7 +196,8 @@ export default function ReportsScreen() {
   const allWallet = useGroupWallet();
   const permissions = useCurrentMemberPermissions();
   const currentMember = useCurrentMember();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   // Officers/admins always see all reports. A regular "member" role only
   // sees group-wide data when explicitly granted the viewAllReports
@@ -673,7 +674,7 @@ export default function ReportsScreen() {
         onSearchChange={setTempSearch}
       />
 
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
     </View>
   );
 }

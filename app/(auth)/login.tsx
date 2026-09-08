@@ -9,7 +9,7 @@ import {
 import { useRouter } from "expo-router";
 import { useAuth } from "../../hooks/useAuth";
 import { useStore } from "../../stores/useStore";
-import { Input, Button, useToast } from "../../components/ui";
+import { Input, Button, Toast, useToast } from "../../components/ui";
 import { Colors, S, R, fmtCurrency } from "../../utils/theme";
 import { BRAND } from "../../lib/brand";
 import { FIXED_GROUP_ID } from "../../stores/fixedGroup";
@@ -34,7 +34,8 @@ export default function LoginScreen() {
   const router  = useRouter();
   const { width } = useWindowDimensions();
   const { signIn, resetPassword } = useAuth();
-  const { show, Toast }           = useToast();
+  const { show, visible, msg, type } = useToast();
+  // const { show, Toast }           = useToast();
   const { setActiveGroup, recalcTotals } = useStore();
 
   const isWide  = width >= 768;
@@ -216,8 +217,12 @@ export default function LoginScreen() {
             {registerLinkJsx}
           </View>
         </View>
-
-        <Toast />
+        <Toast
+            visible={visible}
+            msg={msg}
+            type={type}
+          />
+        {/* <Toast /> */}
       </View>
     );
   }

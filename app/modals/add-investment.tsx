@@ -4,7 +4,7 @@ import React, { useState, useMemo } from "react";
 import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup, useGroupInvestments } from "../../stores/useStore";
-import { Input, Select, Button, useToast, BottomModal, DatePicker } from "../../components/ui";
+import { Input, Select, Button, useToast, Toast, BottomModal, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R, fmtCurrency, round2, showConfirm } from "../../utils/theme";
 
@@ -22,10 +22,11 @@ export default function AddInvestmentModal() {
   const { createInvestment, closeInvestment } = useStore();
   const group = useActiveGroup();
   const investments = useGroupInvestments();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   const [name, setName] = useState("");
-  const [type, setType] = useState("real_estate");
+  const [ContributionType, setContributionType] = useState("real_estate");
   const [desc, setDesc] = useState("");
   const [amount, setAmount] = useState("");
   const [expected, setExpected] = useState("");
@@ -58,7 +59,7 @@ export default function AddInvestmentModal() {
       await createInvestment({
         groupId: group?.id!,
         investmentName: name.trim(),
-        investmentType: type,
+        investmentType: ContributionType,
         description: desc.trim() || undefined,
         investmentAmount: amtNum,
         expectedReturn: parseFloat(expected) || amtNum,
@@ -116,7 +117,7 @@ export default function AddInvestmentModal() {
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         <Text style={styles.sectionLbl}>Basic Info</Text>
         <Input label="Investment Name *" value={name} onChangeText={setName} placeholder="Real Estate Plot, Agricultural Co-op…" />
-        <Select label="Type" value={type} options={INV_TYPES} onChange={setType} />
+        <Select label="Type" value={ContributionType} options={INV_TYPES} onChange={setContributionType} />
         <Input label="Description" value={desc} onChangeText={setDesc} placeholder="Brief description" multiline />
 
         <Text style={styles.sectionLbl}>Financials</Text>
@@ -250,7 +251,7 @@ export default function AddInvestmentModal() {
         </View>
       </BottomModal>
 
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
     </ModalShell>
   );
 }

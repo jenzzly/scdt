@@ -8,7 +8,7 @@ import {
   useIsAdminView,
 } from "../../stores/useStore";
 import {
-  Card, Button, BottomModal, Input, Select, useToast, InfoRow,
+  Card, Button, BottomModal, Input, Select, useToast, Toast, InfoRow,
 } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import { Colors, S, R, fmtCurrency, fmtDate, showConfirm, round2 } from "../../utils/theme";
@@ -34,7 +34,7 @@ export default function MoreScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
   const { signOut } = useAuth();
-  const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
   
   const group = useStore((s) => s.groups.find(g => g.id === s.activeGroupId));
   const activeGroupId = useStore((s) => s.activeGroupId);
@@ -138,7 +138,7 @@ export default function MoreScreen() {
   if (isWide) {
     return (
       <View style={{ flex: 1, backgroundColor: Colors.bg }}>
-        <Toast />
+        <Toast visible={visible} msg={msg} type={type}/>
         
         <ScrollView
           contentContainerStyle={st.container}
@@ -341,7 +341,7 @@ export default function MoreScreen() {
           </ScrollView>
         </BottomModal>
 
-        <Toast />
+        <Toast visible={visible} msg={msg} type={type}/>
       </View>
     );
   }
@@ -349,7 +349,7 @@ export default function MoreScreen() {
   // ── Mobile layout ──────────────────────────────────────────────────
   return (
     <View style={{ flex: 1, backgroundColor: Colors.bg }}>
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
       
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
@@ -548,7 +548,7 @@ export default function MoreScreen() {
         </ScrollView>
       </BottomModal>
 
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
     </View>
   );
 }

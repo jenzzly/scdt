@@ -8,7 +8,7 @@ import { useRouter } from "expo-router";
 import { useStore, useActiveGroup, useGroupAuditLogs } from "../stores/useStore";
 import { useGroupMembers } from "../stores/selectors";
 import { useAuth } from "../hooks/useAuth";
-import { Input, Select, Button, useToast, Card, DatePicker, SearchBar, TabRow, BottomModal, Badge, Avatar, InfoRow, CardRow, Empty } from "../components/ui";
+import { Input, Select, Button, useToast, Toast, Card, DatePicker, SearchBar, TabRow, BottomModal, Badge, Avatar, InfoRow, CardRow, Empty } from "../components/ui";
 import { Colors, C, T, fmtCurrency, fmtDate, showConfirm, round2 } from "../utils/theme";
 import { exportFullData, importFullData } from "../utils/importExport";
 import * as FS from "../lib/firestore";
@@ -313,9 +313,10 @@ export default function GroupSettingsScreen() {
   const router = useRouter();
   const group = useActiveGroup();
   const allAuditLogs = useGroupAuditLogs();
-  const { updateGroup, activeGroupId, reset, deleteMember } = useStore();
+  const { updateGroup, activeGroupId, reset, deleteMember, updateMember } = useStore();
   const { signOut } = useAuth();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   // Define SETTINGS_TABS here
   const SETTINGS_TABS = [
@@ -336,6 +337,7 @@ export default function GroupSettingsScreen() {
   const [memberSearch, setMemberSearch] = useState("");
   const [memberTab, setMemberTab] = useState("All");
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
+  const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [showMemberDetail, setShowMemberDetail] = useState(false);
   const [showCreateMember, setShowCreateMember] = useState(false);
   const [showEditMember, setShowEditMember] = useState(false);
@@ -543,18 +545,20 @@ export default function GroupSettingsScreen() {
   };
 
   const openEditMember = (member: Member) => {
+    setShowMemberDetail(false);
+    setSelectedMember(null);
+    setEditingMember(member);
     setEditForm({
       fullName: member.fullName,
       email: member.email || "",
       phone: member.phone || "",
       role: member.role,
     });
-    setSelectedMember(member);
     setShowEditMember(true);
   };
 
   const handleSaveEditMember = async () => {
-    if (!selectedMember) return;
+    if (!editingMember) return;
     if (!editForm.fullName.trim()) {
       show("Name required", "error");
       return;
@@ -562,15 +566,16 @@ export default function GroupSettingsScreen() {
 
     setSavingMember(true);
     try {
-      await FS.updateMember(activeGroupId!, selectedMember.id, {
+      await updateMember(editingMember.id, {
         fullName: editForm.fullName.trim(),
         email: editForm.email.trim() || undefined,
         phone: editForm.phone.trim() || undefined,
         role: editForm.role as any,
+        userId: editingMember.userId,
       });
-      show("Member updated");
+      show("Member updated successfully");
       setShowEditMember(false);
-      setSelectedMember(null);
+      setEditingMember(null);
     } catch (e: any) {
       show(e.message || "Failed to update member", "error");
     } finally {
@@ -879,7 +884,6 @@ export default function GroupSettingsScreen() {
                   fullWidth 
                   variant="secondary"
                   style={{ backgroundColor: C.gold, borderColor: C.gold }}
-                  textStyle={{ color: "#fff" }}
                 />
               )}
               {member.status === "inactive" && (
@@ -890,7 +894,7 @@ export default function GroupSettingsScreen() {
                   variant="success" 
                 />
               )}
-              <Button label="✏️ Edit Member" onPress={() => { onClose(); openEditMember(member); }} fullWidth variant="secondary" />
+              <Button label="✏️ Edit Member" onPress={() => openEditMember(member)} fullWidth variant="secondary" />
               {!stats.totalContributions && !contributions.some(c => c.memberId === member.id) && (
                 <Button label="🗑 Delete Member" onPress={() => handleDeleteMember(member)} fullWidth variant="danger" />
               )}
@@ -1651,12 +1655,42 @@ export default function GroupSettingsScreen() {
             onChangeText={(t) => setCreateForm(p => ({ ...p, phone: t }))}
             placeholder="+250-7XX-XXX-XXX"
           />
-          <Select
-            items={ROLES}
-            value={createForm.role}
-            onChange={(r) => setCreateForm(p => ({ ...p, role: r }))}
-            label="Role"
-          />
+          <View>
+            <Text style={{ fontSize: 12, fontWeight: "600", color: C.text2, marginBottom: 6 }}>Role</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {ROLES.map((r) => {
+                const isSelected = createForm.role === r.value;
+                return (
+                  <TouchableOpacity
+                    key={r.value}
+                    onPress={() => setCreateForm(p => ({ ...p, role: r.value }))}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 8,
+                      borderWidth: 1.5,
+                      borderColor: isSelected ? C.primary : C.border,
+                      backgroundColor: isSelected ? (C.primary + "18") : C.surface,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <Text style={{
+                      fontSize: 13,
+                      fontWeight: isSelected ? "700" : "500",
+                      color: isSelected ? C.primary : C.text,
+                    }}>
+                      {r.label}
+                    </Text>
+                    {isSelected && (
+                      <Text style={{ fontSize: 12, color: C.primary, fontWeight: "700" }}>✓</Text>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
           <Button
             label="Create User"
             onPress={handleCreateMember}
@@ -1667,7 +1701,7 @@ export default function GroupSettingsScreen() {
       </BottomModal>
 
       {/* Edit Member Modal */}
-      <BottomModal visible={showEditMember} onClose={() => { setShowEditMember(false); setSelectedMember(null); }} title="Edit Member">
+      <BottomModal visible={showEditMember} onClose={() => { setShowEditMember(false); setEditingMember(null); }} title="Edit Member">
         <View style={{ padding: 16, gap: 12 }}>
           <Input
             label="Full Name *"
@@ -1688,12 +1722,42 @@ export default function GroupSettingsScreen() {
             onChangeText={(t) => setEditForm(p => ({ ...p, phone: t }))}
             placeholder="Phone number"
           />
-          <Select
-            items={ROLES}
-            value={editForm.role}
-            onChange={(r) => setEditForm(p => ({ ...p, role: r }))}
-            label="Role"
-          />
+          <View>
+            <Text style={{ fontSize: 12, fontWeight: "600", color: C.text2, marginBottom: 6 }}>Role</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {ROLES.map((r) => {
+                const isSelected = editForm.role === r.value;
+                return (
+                  <TouchableOpacity
+                    key={r.value}
+                    onPress={() => setEditForm(p => ({ ...p, role: r.value }))}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 8,
+                      borderWidth: 1.5,
+                      borderColor: isSelected ? C.primary : C.border,
+                      backgroundColor: isSelected ? (C.primary + "18") : C.surface,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <Text style={{
+                      fontSize: 13,
+                      fontWeight: isSelected ? "700" : "500",
+                      color: isSelected ? C.primary : C.text,
+                    }}>
+                      {r.label}
+                    </Text>
+                    {isSelected && (
+                      <Text style={{ fontSize: 12, color: C.primary, fontWeight: "700" }}>✓</Text>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
           <Button
             label="Save Changes"
             onPress={handleSaveEditMember}
@@ -1704,14 +1768,15 @@ export default function GroupSettingsScreen() {
       </BottomModal>
 
       {/* Member Detail Modal */}
-      {selectedMember && (
+      {showMemberDetail && selectedMember && (
         <MemberDetailModal
           member={selectedMember}
           onClose={() => { setShowMemberDetail(false); setSelectedMember(null); }}
         />
       )}
 
-      <Toast />
+      {/* <Toast /> */}
+      <Toast visible={visible} msg={msg} type={type}/>
     </View>
   );
 }
@@ -1815,7 +1880,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
     color: C.text3,
-    whiteSpace: "nowrap",
   },
   tabTextActive: {
     color: C.primary,

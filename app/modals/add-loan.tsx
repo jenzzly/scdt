@@ -3,7 +3,7 @@ import React, { useState, useMemo } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView, Alert} from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useStore, useActiveGroup, useGroupMembers, useCurrentUserRole, useCurrentMember, useGroupMeetings } from "../../stores/useStore";
-import { Input, Select, Button, useToast } from "../../components/ui";
+import { Input, Select, Button, useToast, Toast } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R, fmtCurrency, round2, loanSchedule, showConfirm } from "../../utils/theme";
 import { useUnpaidPenalties } from "../../hooks/useUnpaidPenalties";
@@ -17,7 +17,8 @@ export default function AddLoanModal() {
   const { submitLoan, activeGroupId, authUid, clearAllMemberPenalties, clearStandaloneLateFee } = useStore();
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   // Read pre-fill params for rejected loan resubmission
   const params = useLocalSearchParams<{
@@ -441,7 +442,7 @@ export default function AddLoanModal() {
       {/* Penalty Details Modal */}
       {showPenaltyDetails && <PenaltyDetailsModal />}
       
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
     </ModalShell>
   );
 }

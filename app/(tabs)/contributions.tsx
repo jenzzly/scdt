@@ -10,7 +10,7 @@ import {
   useCurrentUserRole, useCurrentMember, useCanSeeAllFinancial, useIsAdminView,useIsGroupView,
   useCurrentMemberPermissions, useActiveGroup, useGroupWallet, useDataViewMode,
 } from "../../stores/useStore";
-import { SearchBar, Card, Badge, Empty, BottomModal, useToast, Select, DatePicker, TabRow } from "../../components/ui";
+import { SearchBar, Card, Badge, Empty, BottomModal, useToast, Toast, Select, DatePicker, TabRow } from "../../components/ui";
 import { Colors, C, T, S, R, fmtCurrency, fmtDate } from "../../utils/theme";
 import { exportCsv, exportPdf } from "../../utils/export";
 import { findOverdueContributions } from "../../utils/lateFees";
@@ -70,7 +70,8 @@ export default function ContributionsScreen() {
   const isGroupView = useIsGroupView();
   const dataViewMode = useDataViewMode();
   const permissions = useCurrentMemberPermissions();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   const isAdmin = role === "admin";
   const canApprove = ["admin", "loan_officer", "accountant"].includes(role) ||
@@ -79,10 +80,22 @@ export default function ContributionsScreen() {
   const canExport = permissions.downloadReports || isAdmin;
   const canManageFees = ["admin", "accountant", "loan_officer"].includes(role);
 
-  // Scope: group view shows all, personal view shows only their own
-  const contributions = isGroupView
-    ? allContributions
-    : allContributions.filter(c => c.memberId === currentMember?.id);
+  // Scope: group view shows all, personal view shows only their own.
+  // This was a plain `const ... .filter(...)`, producing a brand-new
+  // array reference on every render. Since `filtered` below depends on
+  // `contributions`, React's useMemo dependency check saw a "changed"
+  // value on every render regardless of whether the underlying data
+  // actually changed — which broke that memoization entirely and made
+  // the whole filter/sort/search/pagination pipeline recompute on every
+  // render (every keystroke in search, every toast, every unrelated
+  // state update). Memoizing this to only recompute when the real
+  // inputs change fixes the cascade.
+  const contributions = useMemo(
+    () => isGroupView
+      ? allContributions
+      : allContributions.filter(c => c.memberId === currentMember?.id),
+    [isGroupView, allContributions, currentMember?.id],
+  );
 
   // Filters
   const [search, setSearch] = useState("");
@@ -293,8 +306,16 @@ export default function ContributionsScreen() {
     return list;
   }, [contributions, statusFilter, typeFilter, search, sort, allMembers]);
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // totalPages and paginated were plain `const` — .slice() re-ran on
+  // every render even when neither `filtered` nor `page` had changed
+  // (e.g. while a toast was showing, or during any unrelated re-render).
+  // Memoizing them ties recomputation to the two things that actually
+  // determine the current page's contents.
+  const totalPages = useMemo(() => Math.ceil(filtered.length / PAGE_SIZE), [filtered]);
+  const paginated = useMemo(
+    () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filtered, page],
+  );
 
   const totalAmount = useMemo(
     () => statusFilter === "late_fee"
@@ -591,7 +612,11 @@ export default function ContributionsScreen() {
           <Pagination page={page} totalPages={totalPages} setPage={setPage} filtered={filtered} />
         </View>
       </ScrollView>
-      <Toast />
+                      <Toast
+                          visible={visible}
+                          msg={msg}
+                          type={type}
+                        />
     </View>
   );
 }

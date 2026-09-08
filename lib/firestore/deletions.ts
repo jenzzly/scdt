@@ -207,7 +207,9 @@ export async function deleteInvestmentWithRelations(gId: string, investmentId: s
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Wallet transaction — cascades to the contribution it spawned (if any), or
-// recomputes the loan it was applied to (if it was a repayment/interest tx)
+// ─────────────────────────────────────────────────────────────────────────────
+// Wallet transaction — cascades to linked parent entities (loans, contributions,
+// investments, meetings, expenses) and all sibling transactions for that entity
 // ─────────────────────────────────────────────────────────────────────────────
 export async function deleteWalletTransactionWithRelations(gId: string, transactionId: string, reason: string): Promise<void> {
   try {
@@ -224,21 +226,54 @@ export async function deleteWalletTransactionWithRelations(gId: string, transact
     batch.delete(walletRef);
     batchRecordDeletion(batch, gId, "wallet_transaction", transactionId, walletTx as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
 
-    // ── Cascade: if this tx funded a contribution, delete it too and recompute totals ──
-    if (walletTx.contributionId) {
-      const contributionRef = doc(contribsCol(gId), walletTx.contributionId);
+    // Track deleted tx IDs to avoid duplicate deletion calls in batch
+    const deletedTxIds = new Set<string>([transactionId]);
+
+    const loanId = walletTx.loanId || (walletTx.sourceType === "loan" ? walletTx.sourceId : undefined);
+    const contributionId = walletTx.contributionId || (walletTx.sourceType === "contribution" ? walletTx.sourceId : undefined);
+    const investmentId = walletTx.investmentId || (walletTx.sourceType === "investment" ? walletTx.sourceId : undefined);
+
+    // ── Cascade: if this tx is tied to a loan, cascade delete the loan and ALL loan transactions ──
+    if (loanId) {
+      const loanRef = doc(loansCol(gId), loanId);
+      const loanSnap = await getDoc(loanRef);
+      if (loanSnap.exists()) {
+        const loan = fromSnap<Loan>(loanSnap);
+        batch.delete(loanRef);
+        batchRecordDeletion(batch, gId, "loan", loanId, loan as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+      }
+
+      // Find and delete all wallet transactions tied to this loan
+      const [byLoanIdSnap, bySourceSnap] = await Promise.all([
+        getDocs(query(walletCol(gId), where("loanId", "==", loanId))),
+        getDocs(query(walletCol(gId), where("sourceId", "==", loanId))),
+      ]);
+
+      const allLoanTxDocs = [...byLoanIdSnap.docs, ...bySourceSnap.docs];
+      for (const d of allLoanTxDocs) {
+        if (!deletedTxIds.has(d.id)) {
+          deletedTxIds.add(d.id);
+          batch.delete(d.ref);
+          batchRecordDeletion(batch, gId, "wallet_transaction", d.id, d.data() as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+        }
+      }
+    }
+
+    // ── Cascade: if this tx is tied to a contribution, delete it, sibling txs, and recompute savings ──
+    if (contributionId) {
+      const contributionRef = doc(contribsCol(gId), contributionId);
       const contributionSnap = await getDoc(contributionRef);
       if (contributionSnap.exists()) {
         const contribution = fromSnap<Contribution>(contributionSnap);
         batch.delete(contributionRef);
-        batchRecordDeletion(batch, gId, "contribution", walletTx.contributionId, contribution as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+        batchRecordDeletion(batch, gId, "contribution", contributionId, contribution as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
 
         const remainingContributions = await getDocs(
           query(contribsCol(gId), where("memberId", "==", contribution.memberId), where("status", "==", "approved"))
         );
         const totalAmount = round2(
           remainingContributions.docs.reduce((sum, d) => {
-            if (d.id === walletTx.contributionId) return sum;
+            if (d.id === contributionId) return sum;
             return sum + (d.data().amount || 0);
           }, 0)
         );
@@ -248,66 +283,93 @@ export async function deleteWalletTransactionWithRelations(gId: string, transact
           updatedAt: new Date().toISOString(),
         });
       }
+
+      // Delete any sibling transactions linked to this contribution
+      const [byContribIdSnap, bySourceSnap] = await Promise.all([
+        getDocs(query(walletCol(gId), where("contributionId", "==", contributionId))),
+        getDocs(query(walletCol(gId), where("sourceId", "==", contributionId))),
+      ]);
+
+      const allContribTxDocs = [...byContribIdSnap.docs, ...bySourceSnap.docs];
+      for (const d of allContribTxDocs) {
+        if (!deletedTxIds.has(d.id)) {
+          deletedTxIds.add(d.id);
+          batch.delete(d.ref);
+          batchRecordDeletion(batch, gId, "wallet_transaction", d.id, d.data() as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+        }
+      }
     }
 
-    // ── Cascade: if this tx funded an investment, delete it too ──
-    if (walletTx.investmentId) {
-      const investRef = doc(investCol(gId), walletTx.investmentId);
+    // ── Cascade: if this tx is tied to an investment, delete the investment and all its transactions ──
+    if (investmentId) {
+      const investRef = doc(investCol(gId), investmentId);
       const investSnap = await getDoc(investRef);
       if (investSnap.exists()) {
         const investment = fromSnap<Investment>(investSnap);
         batch.delete(investRef);
-        batchRecordDeletion(batch, gId, "investment", walletTx.investmentId, investment as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+        batchRecordDeletion(batch, gId, "investment", investmentId, investment as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+      }
+
+      const [byInvestIdSnap, bySourceSnap] = await Promise.all([
+        getDocs(query(walletCol(gId), where("investmentId", "==", investmentId))),
+        getDocs(query(walletCol(gId), where("sourceId", "==", investmentId))),
+      ]);
+
+      const allInvestTxDocs = [...byInvestIdSnap.docs, ...bySourceSnap.docs];
+      for (const d of allInvestTxDocs) {
+        if (!deletedTxIds.has(d.id)) {
+          deletedTxIds.add(d.id);
+          batch.delete(d.ref);
+          batchRecordDeletion(batch, gId, "wallet_transaction", d.id, d.data() as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+        }
       }
     }
 
-    // ── If this tx was applied to a loan, recompute the loan's repayment state ──
-    const loanRepaymentTypes = ["loan_repayment", "loan_interest_income", "loan_principal_recovery", "interest"];
-    if (walletTx.loanId && loanRepaymentTypes.includes(walletTx.type)) {
-      const loanRef = doc(loansCol(gId), walletTx.loanId);
-      const loanSnap = await getDoc(loanRef);
-      if (loanSnap.exists()) {
-        const loan = fromSnap<Loan>(loanSnap);
+    // ── Cascade: if this tx is a meeting fee/penalty, clear the attendee penalty on the meeting ──
+    let meetingId: string | undefined;
+    let meetingMemberId = walletTx.memberId;
+    if (walletTx.id.startsWith("meeting-penalty-")) {
+      const parts = walletTx.id.split("-");
+      meetingId = parts[2];
+      if (parts[3]) meetingMemberId = parts[3];
+    } else if (walletTx.sourceId && walletTx.type === "late_fee") {
+      meetingId = walletTx.sourceId;
+    }
 
-        if (walletTx.type === "loan_principal_recovery") {
-          // Principal-only tx: reverse directly against balance
-          const newBalance = round2(loan.balance + walletTx.amount);
-          const newAmountRepaid = Math.max(0, round2(loan.amountRepaid - walletTx.amount));
-          batch.update(loanRef, {
-            balance: newBalance,
-            amountRepaid: newAmountRepaid,
-            status: "disbursed",
-            completionDate: null,
-            updatedAt: new Date().toISOString(),
-          });
-        } else if (walletTx.type === "loan_interest_income") {
-          // Interest-only tx: reverse against amountRepaid and totalInterestPaid;
-          // re-add the reversed amount back into accruedInterest so it's not lost
-          const newAmountRepaid = Math.max(0, round2(loan.amountRepaid - walletTx.amount));
-          const newTotalInterestPaid = Math.max(0, round2(((loan as any).totalInterestPaid || 0) - walletTx.amount));
-          const newAccrued = round2(((loan as any).accruedInterest || 0) + walletTx.amount);
-          batch.update(loanRef, {
-            amountRepaid: newAmountRepaid,
-            totalInterestPaid: newTotalInterestPaid,
-            accruedInterest: newAccrued,
-            status: "disbursed",
-            completionDate: null,
-            updatedAt: new Date().toISOString(),
-          });
-        } else {
-          // Legacy combined loan_repayment / interest tx — reverse proportionally
-          const newAmountRepaid = Math.max(0, round2(loan.amountRepaid - walletTx.amount));
-          const ratio = loan.totalRepayable > 0 ? (loan.totalInterest / loan.totalRepayable) : 0;
-          const newInterestRepaid = round2(newAmountRepaid * ratio);
-          const newPrincipalRepaid = round2(newAmountRepaid - newInterestRepaid);
-          const newBalance = Math.max(0, round2(loan.amount - newPrincipalRepaid));
-          batch.update(loanRef, {
-            amountRepaid: newAmountRepaid,
-            balance: newBalance,
-            status: "disbursed",
-            completionDate: null,
-            updatedAt: new Date().toISOString(),
-          });
+    if (meetingId) {
+      const meetingRef = doc(meetingsCol(gId), meetingId);
+      const meetingSnap = await getDoc(meetingRef);
+      if (meetingSnap.exists()) {
+        const meeting = fromSnap<Meeting>(meetingSnap);
+        const updatedAttendees = (meeting.attendees || []).map((att) => {
+          if (att.memberId === meetingMemberId) {
+            return { ...att, penaltyAmount: 0, penaltyPaid: false };
+          }
+          return att;
+        });
+        batch.update(meetingRef, {
+          attendees: updatedAttendees,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    // ── Cascade: if this tx is linked to an expense, delete the expense ──
+    if (walletTx.sourceId && !loanId && !contributionId && !investmentId && !meetingId) {
+      const expenseRef = doc(expensesCol(gId), walletTx.sourceId);
+      const expenseSnap = await getDoc(expenseRef);
+      if (expenseSnap.exists()) {
+        const expense = fromSnap<Expense>(expenseSnap);
+        batch.delete(expenseRef);
+        batchRecordDeletion(batch, gId, "expense", walletTx.sourceId, expense as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+
+        const otherSnap = await getDocs(query(walletCol(gId), where("sourceId", "==", walletTx.sourceId)));
+        for (const d of otherSnap.docs) {
+          if (!deletedTxIds.has(d.id)) {
+            deletedTxIds.add(d.id);
+            batch.delete(d.ref);
+            batchRecordDeletion(batch, gId, "wallet_transaction", d.id, d.data() as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+          }
         }
       }
     }

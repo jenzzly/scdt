@@ -4,7 +4,7 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, useWind
 import { useRouter } from "expo-router";
 import { useStore, useGroupMeetings, useGroupMembers, useCurrentUserRole, useCurrentMember, useIsAdminView } from "../../stores/useStore";
 import { useCurrentMemberPermissions } from "../../stores/selectors";
-import { useToast, Button, BottomModal, Input } from "../../components/ui";
+import { useToast, Toast, Button, BottomModal, Input } from "../../components/ui";
 import { KpiCard } from "../../components/ui/KpiCard";
 import { Colors, S, R, C, fmtDate, fmtCurrency, showConfirm } from "../../utils/theme";
 import type { Meeting } from "../../types";
@@ -35,7 +35,8 @@ export default function MeetingsScreen() {
   const isAdminView = useIsAdminView();
   const currentUserRole = useCurrentUserRole();
   const { cancelMeeting, clearMeetingPenalty, deleteMeeting, updateMeeting, activeGroupId } = useStore();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   const [showPenaltyModal, setShowPenaltyModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -135,7 +136,7 @@ export default function MeetingsScreen() {
   if (isWide) {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg }}>
-        {Toast}
+        <Toast/>
 
         <ScrollView
           contentContainerStyle={st.container}
@@ -362,8 +363,12 @@ export default function MeetingsScreen() {
             </View>
           </View>
         </BottomModal>
-
-        <Toast />
+                <Toast
+                    visible={visible}
+                    msg={msg}
+                    type={type}
+                  />
+        {/* <Toast /> */}
       </View>
     );
   }
@@ -371,7 +376,11 @@ export default function MeetingsScreen() {
   // ── Mobile layout ──────────────────────────────────────────────────
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      {Toast}
+                <Toast
+                    visible={visible}
+                    msg={msg}
+                    type={type}
+                  />
 
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
@@ -605,7 +614,12 @@ export default function MeetingsScreen() {
         </View>
       </BottomModal>
 
-      <Toast />
+      {/* <Toast /> */}
+                      <Toast
+                    visible={visible}
+                    msg={msg}
+                    type={type}
+                  />
     </View>
   );
 }

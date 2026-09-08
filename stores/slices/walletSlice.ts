@@ -1,6 +1,6 @@
 // stores/slices/walletSlice.ts
 import type { SetFn, GetFn, StoreState } from "../storeTypes";
-import type {ID, WalletTransaction} from "../../types";
+import type { ID, WalletTransaction, Contribution, Loan, Investment, Meeting, Expense, Member } from "../../types";
 import * as FS from "../../lib/firestore";
 import { recalcGroupTotals } from "../recalcGroupTotals";
 import { round2 } from "../../utils/theme";
@@ -38,21 +38,94 @@ export const createWalletSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
       }),
 
       deleteWalletTransaction: async (transactionId: ID, reason: string) => {
-        const { activeGroupId, walletTransactions, contributions, loans } = get();
+        const {
+          activeGroupId,
+          walletTransactions,
+          contributions,
+          loans,
+          investments,
+          meetings,
+          expenses,
+          members,
+        } = get();
         if (!activeGroupId) throw new Error("No active group");
         
-        const tx = walletTransactions.find((t) => t.id === transactionId);
+        const tx = walletTransactions.find((t: WalletTransaction) => t.id === transactionId);
         if (!tx) throw new Error("Transaction not found");
         
         const previousTxs = [...walletTransactions];
         const previousContributions = [...contributions];
         const previousLoans = [...loans];
-        
-        get().deleteWalletTxLocal(transactionId);
-        
-        if (tx.contributionId) {
-          get().deleteContributionLocal(tx.contributionId);
+        const previousInvestments = [...(investments || [])];
+        const previousMeetings = [...(meetings || [])];
+        const previousExpenses = [...(expenses || [])];
+        const previousMembers = [...(members || [])];
+
+        const loanId = tx.loanId || (tx.sourceType === "loan" ? tx.sourceId : undefined);
+        const contributionId = tx.contributionId || (tx.sourceType === "contribution" ? tx.sourceId : undefined);
+        const investmentId = tx.investmentId || (tx.sourceType === "investment" ? tx.sourceId : undefined);
+
+        let meetingId: string | undefined;
+        let meetingMemberId = tx.memberId;
+        if (tx.id.startsWith("meeting-penalty-")) {
+          const parts = tx.id.split("-");
+          meetingId = parts[2];
+          if (parts[3]) meetingMemberId = parts[3];
+        } else if (tx.sourceId && tx.type === "late_fee") {
+          meetingId = tx.sourceId;
         }
+
+        let expenseId: string | undefined;
+        if (tx.sourceId && !loanId && !contributionId && !investmentId && !meetingId) {
+          expenseId = tx.sourceId;
+        }
+
+        // Apply optimistic local cascade deletes:
+        let remainingTxs = walletTransactions.filter((t: WalletTransaction) => t.id !== transactionId);
+
+        if (loanId) {
+          remainingTxs = remainingTxs.filter((t: WalletTransaction) => t.loanId !== loanId && t.sourceId !== loanId);
+          get().deleteLoanLocal(loanId);
+        }
+
+        if (contributionId) {
+          remainingTxs = remainingTxs.filter((t: WalletTransaction) => t.contributionId !== contributionId && t.sourceId !== contributionId);
+          get().deleteContributionLocal(contributionId);
+          if (tx.memberId) {
+            const memberRemaining = (contributions || [])
+              .filter((c: Contribution) => c.memberId === tx.memberId && c.id !== contributionId && c.status === "approved")
+              .reduce((sum: number, c: Contribution) => sum + (c.amount || 0), 0);
+            get().updateMemberLocal(tx.memberId, {
+              totalContributions: memberRemaining,
+              totalSavings: memberRemaining,
+            });
+          }
+        }
+
+        if (investmentId) {
+          remainingTxs = remainingTxs.filter((t: WalletTransaction) => t.investmentId !== investmentId && t.sourceId !== investmentId);
+          get().deleteInvestmentLocal(investmentId);
+        }
+
+        if (meetingId && meetingMemberId) {
+          const meeting = (meetings || []).find((m: Meeting) => m.id === meetingId);
+          if (meeting) {
+            const updatedAttendees = (meeting.attendees || []).map((att) =>
+              att.memberId === meetingMemberId ? { ...att, penaltyAmount: 0, penaltyPaid: false } : att
+            );
+            get().updateMeetingLocal(meetingId, { attendees: updatedAttendees });
+          }
+        }
+
+        if (expenseId) {
+          remainingTxs = remainingTxs.filter((t: WalletTransaction) => t.sourceId !== expenseId);
+          get().deleteExpenseLocal(expenseId);
+        }
+
+        set((s: StoreState) => ({
+          walletTransactions: remainingTxs,
+          ...recalcGroupTotals({ ...s, walletTransactions: remainingTxs }),
+        }));
         
         try {
           get().setSyncStatus("pending");
@@ -60,11 +133,22 @@ export const createWalletSlice = (set: SetFn, get: GetFn): Pick<StoreState, "add
           get().recalcTotals();
           get().setSyncStatus("synced");
         } catch (e) {
-          set((s) => ({ 
+          set((s: StoreState) => ({ 
             walletTransactions: previousTxs,
             contributions: previousContributions,
             loans: previousLoans,
-            ...recalcGroupTotals({ ...s, walletTransactions: previousTxs, contributions: previousContributions, loans: previousLoans })
+            investments: previousInvestments,
+            meetings: previousMeetings,
+            expenses: previousExpenses,
+            members: previousMembers,
+            ...recalcGroupTotals({
+              ...s,
+              walletTransactions: previousTxs,
+              contributions: previousContributions,
+              loans: previousLoans,
+              investments: previousInvestments,
+              expenses: previousExpenses,
+            }),
           }));
           get().setSyncStatus("failed", e instanceof Error ? e.message : "Failed to delete transaction");
           throw e;

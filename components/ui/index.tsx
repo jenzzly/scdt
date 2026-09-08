@@ -521,28 +521,88 @@ export function InfoRow({ label, value, accent }: { label: string; value: string
 }
 
 // ── Toast / Snackbar ──────────────────────────────────────────────────────────
+
+type ToastType = "success" | "error";
+
+export function Toast({
+  visible,
+  msg,
+  type,
+}: {
+  visible: boolean;
+  msg: string;
+  type: ToastType;
+}) {
+  if (!visible) return null;
+
+  return (
+    <View
+      style={[
+        styles.toast,
+        type === "error"
+          ? styles.toastError
+          : styles.toastSuccess,
+      ]}
+    >
+      <View
+        style={[
+          styles.toastDot,
+          {
+            backgroundColor:
+              type === "error"
+                ? Colors.error
+                : Colors.success,
+          },
+        ]}
+      />
+
+      <Text
+        style={[
+          styles.toastText,
+          {
+            color:
+              type === "error"
+                ? Colors.error
+                : Colors.success,
+          },
+        ]}
+      >
+        {msg}
+      </Text>
+    </View>
+  );
+}
+
 export function useToast() {
   const [visible, setVisible] = useState(false);
   const [msg, setMsg] = useState("");
-  const [type, setType] = useState<"success" | "error">("success");
+  const [type, setType] = useState<ToastType>("success");
+
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const show = (message: string, kind: "success" | "error" = "success") => {
-    if (timer.current) clearTimeout(timer.current);
+  const show = (
+    message: string,
+    kind: ToastType = "success"
+  ) => {
+    if (timer.current) {
+      clearTimeout(timer.current);
+    }
+
     setMsg(message);
     setType(kind);
     setVisible(true);
-    timer.current = setTimeout(() => setVisible(false), 3000);
+
+    timer.current = setTimeout(() => {
+      setVisible(false);
+    }, 3000);
   };
 
-  const Toast = () => visible ? (
-    <View style={[styles.toast, type === "error" ? styles.toastError : styles.toastSuccess]}>
-      <View style={[styles.toastDot, { backgroundColor: type === "error" ? Colors.error : Colors.success }]} />
-      <Text style={[styles.toastText, { color: type === "error" ? Colors.error : Colors.success }]}>{msg}</Text>
-    </View>
-  ) : null;
-
-  return { show, Toast };
+  return {
+    show,
+    visible,
+    msg,
+    type,
+  };
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────

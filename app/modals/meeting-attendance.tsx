@@ -6,7 +6,7 @@ import {
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useStore, useGroupMembers, useActiveGroup, useGroupMeetings } from "../../stores/useStore";
 import { Colors, S, R, fmtCurrency, showConfirm } from "../../utils/theme";
-import { Button, useToast } from "../../components/ui";
+import { Button, useToast, Toast } from "../../components/ui";
 
 interface AttendeeWithStatus {
   memberId: string;
@@ -24,7 +24,8 @@ export default function MeetingAttendanceModal() {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
   const { meetingId } = useLocalSearchParams<{ meetingId: string }>();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
   
   const members = useGroupMembers();
   const meetings = useGroupMeetings();
@@ -406,7 +407,7 @@ export default function MeetingAttendanceModal() {
         />
       </View>
 
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
     </View>
   );
 }

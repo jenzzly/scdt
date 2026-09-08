@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup } from "../../stores/useStore";
-import { Input, Select, Button, useToast, DatePicker } from "../../components/ui";
+import { Input, Select, Button, useToast, Toast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R } from "../../utils/theme";
 
@@ -20,7 +20,8 @@ export default function AddExpenseModal() {
   const router = useRouter();
   const { addExpense, activeGroupId } = useStore();
   const group = useActiveGroup();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   const [category, setCategory] = useState("administrative");
   const [amount, setAmount] = useState("");
@@ -57,7 +58,7 @@ export default function AddExpenseModal() {
         <Input label="Description *" value={description} onChangeText={setDescription} placeholder="What was this expense for?" multiline />
         <Button label="Record Expense" onPress={handleSave} fullWidth loading={loading} size="lg" />
       </ScrollView>
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
     </ModalShell>
   );
 }

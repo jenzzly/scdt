@@ -8,7 +8,7 @@ import {
 import { useRouter } from "expo-router";
 import { useAuth } from "../../hooks/useAuth";
 import { useStore } from "../../stores/useStore";
-import { Input, Button, useToast } from "../../components/ui";
+import { Input, Button, useToast, Toast } from "../../components/ui";
 import { Colors, S, R, fmtCurrency } from "../../utils/theme";
 import { BRAND } from "../../lib/brand";
 import * as FS from "../../lib/firestore";
@@ -16,7 +16,8 @@ import * as FS from "../../lib/firestore";
 export default function RegisterScreen() {
   const router = useRouter();
   const { signUp } = useAuth();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
   const { setActiveGroup, recalcTotals } = useStore();
   
   const [fullName, setFullName] = useState("");
@@ -219,7 +220,7 @@ export default function RegisterScreen() {
         </View>
         </View>
       </ScrollView>
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
     </KeyboardAvoidingView>
   );
 }

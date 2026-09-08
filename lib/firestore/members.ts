@@ -73,8 +73,16 @@ export async function updateMember(
 ): Promise<void> {
   await updateDoc(doc(membersCol(gId), mId), stripUndefined(data as any));
 
-  if (data.userId && (data.role || data.status)) {
-    const membershipId = getMembershipId(gId, data.userId);
+  let userId = data.userId;
+  if (!userId && (data.role || data.status)) {
+    const memberSnap = await getDoc(doc(membersCol(gId), mId));
+    if (memberSnap.exists()) {
+      userId = memberSnap.data()?.userId;
+    }
+  }
+
+  if (userId && (data.role || data.status)) {
+    const membershipId = getMembershipId(gId, userId);
     const membershipRef = doc(membershipsCol, membershipId);
     const membershipSnap = await getDoc(membershipRef);
 
@@ -87,7 +95,7 @@ export async function updateMember(
     } else {
       await setDoc(membershipRef, {
         id: membershipId,
-        userId: data.userId,
+        userId: userId,
         groupId: gId,
         memberId: mId,
         role: data.role ?? "member",

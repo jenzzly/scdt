@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup, useGroupMembers, useCurrentUserRole, useCurrentMember } from "../../stores/useStore";
-import { Input, Select, Button, useToast, DatePicker } from "../../components/ui";
+import { Input, Select, Button, useToast, Toast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, R, fmtCurrency } from "../../utils/theme";
 
@@ -20,13 +20,14 @@ export default function AddContributionModal() {
   const { recordContribution, activeGroupId } = useStore();
   const role     = useCurrentUserRole();
   const currentMember = useCurrentMember();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   const isAdmin = role === "admin";
 
   const [memberId, setMemberId] = useState(currentMember?.id ?? "");
   const [amount,   setAmount]   = useState(String(group?.contributionAmount ?? ""));
-  const [type,     setType]     = useState("regular");
+  const [ContributionType,     setContributionType]     = useState("regular");
   const [date,     setDate]     = useState(new Date().toISOString().slice(0, 10));
   const [desc,     setDesc]     = useState("");
   const [loading,  setLoading]  = useState(false);
@@ -43,13 +44,13 @@ export default function AddContributionModal() {
     if (!activeGroupId) return;
     setLoading(true);
     try {
-      const fallbackDesc = CONTRIB_TYPES.find((t) => t.value === type)?.label ?? "Contribution";
+      const fallbackDesc = CONTRIB_TYPES.find((t) => t.value === ContributionType)?.label ?? "Contribution";
       await recordContribution(
         {
           groupId: activeGroupId,
           memberId: contributionMemberId,
           amount: amt,
-          contributionType: type as any,
+          contributionType: ContributionType as any,
           status: "approved",
           description: desc.trim() || fallbackDesc,
           date: date ? new Date(date + "T12:00:00").toISOString() : new Date().toISOString(),
@@ -77,9 +78,9 @@ export default function AddContributionModal() {
         )}
         <Select
           label="Type *"
-          value={type}
+          value={ContributionType}
           options={CONTRIB_TYPES}
-          onChange={setType}
+          onChange={setContributionType}
         />
         <Input
           label={`Amount (${group?.currency ?? "RWF"}) *`}
@@ -104,7 +105,7 @@ export default function AddContributionModal() {
         <View style={{ height: 8 }} />
         <Button label="Record Contribution" onPress={handleSave} fullWidth loading={loading} size="lg" />
       </ScrollView>
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type}/>
     </ModalShell>
   );
 }

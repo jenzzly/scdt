@@ -10,7 +10,7 @@ import {
 import { useGroupWallet, useCurrentMemberPermissions } from "../../stores/selectors";
 import {
   TabRow, SearchBar, Card, Badge, Empty, LoanProgress,
-  useToast, Button, BottomModal, Input,
+  useToast, Toast, Button, BottomModal, Input,
 } from "../../components/ui";
 import { S, R, Colors, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
 import { exportPdf, generatePaymentScheduleHtml } from "../../utils/export";
@@ -482,7 +482,8 @@ export default function LoansScreen() {
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
   const permissions = useCurrentMemberPermissions();
-  const { show, Toast } = useToast();
+  // const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   const [tab, setTab] = useState("All");
   const [search, setSearch] = useState("");
@@ -1040,8 +1041,11 @@ export default function LoansScreen() {
         isPending={selectedLoan ? PENDING_STATUSES.includes(selectedLoan.status) : false}
         canDisburse={canDisburseRole(role)}
       />
-
-      <Toast />
+                      <Toast
+                          visible={visible}
+                          msg={msg}
+                          type={type}
+                        />
     </View>
   );
 }

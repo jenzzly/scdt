@@ -204,7 +204,32 @@ export const useStore = create<StoreState>()(
             }
           }
           
-          // Delay recalculation to ensure AsyncStorage is fully initialized
+          // Recalculate totals as soon as rehydration completes.
+          //
+          // IMPORTANT: onRehydrateStorage's callback can run *during*
+          // the create(...) call below that assigns `useStore` itself —
+          // persist middleware doesn't wait for that assignment to
+          // finish before invoking this callback. Referencing `useStore`
+          // synchronously in here throws "Cannot access 'useStore'
+          // before initialization" (a temporal-dead-zone error), because
+          // the module-level `const useStore = create(...)` hasn't
+          // finished executing yet at that point. Every attempt — not
+          // just retries — therefore has to go through some async
+          // boundary (setTimeout) before touching `useStore`, even
+          // though `state` itself is already the real, fully-rehydrated
+          // data by this point and needs no further delay on its own
+          // merits.
+          //
+          // What actually changed from the original: the *first*
+          // attempt no longer waits a flat, arbitrary 200ms — it only
+          // waits long enough to escape the current synchronous
+          // execution (setTimeout(..., 0), which still defers to the
+          // next macrotask, by which point `useStore`'s assignment has
+          // completed). That was the real source of user-visible delay
+          // on every app launch: totals sat stale for 200ms+ before the
+          // real numbers appeared on screens like the dashboard that
+          // read them immediately on mount. Retries after a genuine
+          // failure still back off by `attempt * 200`ms, same as before.
           const attemptRecalc = (attempt: number) => {
             setTimeout(() => {
               try {
@@ -216,7 +241,7 @@ export const useStore = create<StoreState>()(
                   attemptRecalc(attempt + 1);
                 }
               }
-            }, attempt * 200);
+            }, attempt === 1 ? 0 : attempt * 200);
           };
           attemptRecalc(1);
         }
