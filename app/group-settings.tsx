@@ -1,4 +1,4 @@
-// app/group-settings.tsx - Complete file with scrollable tabs
+// app/group-settings.tsx - Complete file with role-based permissions
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform,
@@ -9,10 +9,10 @@ import { useStore, useActiveGroup, useGroupAuditLogs } from "../stores/useStore"
 import { useGroupMembers } from "../stores/selectors";
 import { useAuth } from "../hooks/useAuth";
 import { Input, Select, Button, useToast, Toast, Card, DatePicker, SearchBar, TabRow, BottomModal, Badge, Avatar, InfoRow, CardRow, Empty } from "../components/ui";
-import { Colors, C, T, fmtCurrency, fmtDate, showConfirm, round2 } from "../utils/theme";
+import { Colors, C, T, fmtCurrency, fmtDate, showConfirm, round2, uid } from "../utils/theme";
 import { exportFullData, importFullData } from "../utils/importExport";
 import * as FS from "../lib/firestore";
-import type { AuditLog, MemberPermissions, Member } from "../types";
+import type { AuditLog, MemberPermissions, Member, GroupRole, MemberRole } from "../types";
 import { DEFAULT_MEMBER_PERMISSIONS } from "../types";
 import { USER_ROLES, ROLE_LABELS } from "../types/roles";
 import { createUserAsAdmin, resetUserPasswordAsAdmin } from "../lib/auth/adminUsers";
@@ -58,6 +58,68 @@ const ROLE_BADGE: Record<string, "teal"|"gold"|"blue"|"green"|"red"> = {
 const STATUS_BADGE: Record<string, "teal"|"gold"|"green"|"red"|"muted"> = {
   active: "green", pending: "gold", inactive: "muted", suspended: "red", exited: "muted",
 };
+
+// ─────────────────────────────────────────────
+// Role permission model — system defaults + helpers
+// ─────────────────────────────────────────────
+
+const SYSTEM_ROLE_KEYS: MemberRole[] = ["admin", "accountant", "loan_officer", "committee", "member"];
+
+// Starting-point permission templates for the 5 built-in roles.
+// Admins are always full-access and can't be edited below. The other four
+// are just sensible starting defaults — adjust freely in the Permissions tab.
+const SYSTEM_ROLE_DEFAULT_PERMISSIONS: Record<MemberRole, MemberPermissions> = {
+  admin: {
+    addContribution: true, addLoan: true, addInvestment: true,
+    approveContributions: true, approveLoans: true, approveInvestments: true,
+    viewAllReports: true, downloadReports: true,
+    manageMeetings: true, editMembers: true, deleteRecords: true, manageSettings: true,
+  },
+  accountant: {
+    ...DEFAULT_MEMBER_PERMISSIONS,
+    approveContributions: true, viewAllReports: true, downloadReports: true,
+  },
+  loan_officer: {
+    ...DEFAULT_MEMBER_PERMISSIONS,
+    addLoan: true, approveLoans: true, viewAllReports: true,
+  },
+  committee: {
+    ...DEFAULT_MEMBER_PERMISSIONS,
+    approveContributions: true, approveLoans: true, approveInvestments: true, viewAllReports: true,
+  },
+  member: {
+    ...DEFAULT_MEMBER_PERMISSIONS,
+    addContribution: true,
+  },
+};
+
+const PERM_KEYS: (keyof MemberPermissions)[] = [
+  "addContribution", "addLoan", "addInvestment",
+  "approveContributions", "approveLoans", "approveInvestments",
+  "viewAllReports", "downloadReports",
+  "manageMeetings", "editMembers", "deleteRecords", "manageSettings",
+];
+const PERM_LABELS: Record<keyof MemberPermissions, string> = {
+  addContribution: "Add Contributions",
+  addLoan: "Apply for Loans",
+  addInvestment: "Add Investments",
+  approveContributions: "Approve Contributions",
+  approveLoans: "Approve Loans",
+  approveInvestments: "Approve Investments",
+  viewAllReports: "View All Reports",
+  downloadReports: "Export Reports",
+  manageMeetings: "Manage Meetings",
+  editMembers: "Edit Members",
+  deleteRecords: "Delete Records",
+  manageSettings: "Manage Settings",
+  updateMeetings: "Update Meetings",
+};
+const PERM_GROUPS = [
+  { label: "Create & Apply", keys: ["addContribution", "addLoan", "addInvestment"] as (keyof MemberPermissions)[] },
+  { label: "Approvals", keys: ["approveContributions", "approveLoans", "approveInvestments"] as (keyof MemberPermissions)[] },
+  { label: "Reports & Visibility", keys: ["viewAllReports", "downloadReports"] as (keyof MemberPermissions)[] },
+  { label: "Management", keys: ["manageMeetings", "editMembers", "deleteRecords", "manageSettings"] as (keyof MemberPermissions)[] },
+];
 
 type AuditTab = "all" | "contributions" | "loans" | "members" | "investments" | "deletions" | "failed";
 
@@ -128,24 +190,21 @@ function getMemberStats(
   const totalContributions = memberWallet
     .filter(t => t.type === "contribution" && t.amount > 0)
     .reduce((s, t) => s + t.amount, 0);
-  
+
   const memberContribs = contributions.filter(c => c.memberId === member.id);
   const pendingAmount = memberContribs
     .filter(c => c.status === "pending")
     .reduce((s, c) => s + c.amount, 0);
-  
+
   const arrears = pendingAmount;
   const activeLoanCount = 0;
-  
+
   return { totalContributions, arrears, activeLoanCount };
 }
 
 // ─────────────────────────────────────────────
-// Filter Modal
+// Filter Modal (Audit)
 // ─────────────────────────────────────────────
-// In the FilterModal component, replace the Modal with the BottomModal component
-// since that's what you're using elsewhere in the app:
-
 function FilterModal({
   visible, onClose,
   year, month, day,
@@ -192,8 +251,8 @@ function FilterModal({
         </View>
 
         <View style={{ flexDirection: "row", gap: 10, marginTop: 20 }}>
-          <TouchableOpacity 
-            style={fm.modalClearBtn} 
+          <TouchableOpacity
+            style={fm.modalClearBtn}
             onPress={() => {
               onYearChange(null);
               onMonthChange(null);
@@ -212,16 +271,15 @@ function FilterModal({
   );
 }
 
-// Update the fm styles:
 const fm = StyleSheet.create({
-  sectionLabel: { 
-    fontSize: 12, 
-    fontWeight: "700", 
-    color: C.text2, 
-    marginTop: 16, 
-    marginBottom: 8, 
-    textTransform: "uppercase", 
-    letterSpacing: 0.6 
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text2,
+    marginTop: 16,
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 0.6
   },
   row: { flexDirection: "row", gap: 10 },
   modalClearBtn: {
@@ -316,10 +374,8 @@ export default function GroupSettingsScreen() {
   const allAuditLogs = useGroupAuditLogs();
   const { updateGroup, activeGroupId, reset, deleteMember, updateMember } = useStore();
   const { signOut } = useAuth();
-  // const { show, Toast } = useToast();
   const { show, visible, msg, type } = useToast();
 
-  // Define SETTINGS_TABS here
   const SETTINGS_TABS = [
     { key: "settings", label: "⚙️ Settings" },
     { key: "members", label: "👥 Members" },
@@ -350,14 +406,14 @@ export default function GroupSettingsScreen() {
     fullName: "",
     email: "",
     phone: "",
-    role: "member",
+    role: "member", // may be a system role value OR "custom:<roleId>"
   });
 
   const [editForm, setEditForm] = useState({
     fullName: "",
     email: "",
     phone: "",
-    role: "member",
+    role: "member", // may be a system role value OR "custom:<roleId>"
   });
 
   // ─── Settings Form State ────────────────────────────────────────────────
@@ -367,22 +423,22 @@ export default function GroupSettingsScreen() {
   const [loanRate, setLoanRate] = useState(String(group?.loanInterestRate ?? 2));
   const [loanMethod, setLoanMethod] = useState(group?.loanInterestMethod ?? "flat");
   const [ratePeriod, setRatePeriod] = useState<"monthly" | "annual">(group?.loanInterestRatePeriod ?? "monthly");
-  
+
   const [lateRatePct, setLateRatePct] = useState(String(group?.latePenaltyRatePct ?? 5));
   const [absenceMemberPct, setAbsenceMemberPct] = useState(String(group?.absencePenaltyMemberRatePct ?? 10));
   const [absenceOfficerPct, setAbsenceOfficerPct] = useState(String(group?.absencePenaltyOfficerRatePct ?? 25));
-  
+
   const [contribLateFeePct, setContribLateFeePct] = useState(String(group?.contributionLateFeeRatePct ?? 5));
   const [contribLateFeeGrace, setContribLateFeeGrace] = useState(String(group?.contributionLateFeeGraceDays ?? 3));
   const [contribLateFeeStart, setContribLateFeeStart] = useState(group?.contributionLateFeeStartDate ?? "");
   const [loanLateFeePct, setLoanLateFeePct] = useState(String(group?.loanLateFeeRatePct ?? 5));
   const [loanLateFeeGrace, setLoanLateFeeGrace] = useState(String(group?.loanLateFeeGraceDays ?? 3));
-  
+
   const [goalEnabled, setGoalEnabled] = useState(!!(group?.contributionGoalPeriodMonths && group?.contributionGoalTargetAmount && group?.contributionGoalAnchorDate));
   const [goalPeriodMonths, setGoalPeriodMonths] = useState(String(group?.contributionGoalPeriodMonths ?? 6));
   const [goalTarget, setGoalTarget] = useState(String(group?.contributionGoalTargetAmount ?? 600000));
   const [goalAnchorDate, setGoalAnchorDate] = useState(group?.contributionGoalAnchorDate ?? "");
-  
+
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -400,14 +456,169 @@ export default function GroupSettingsScreen() {
   const [tempMonth, setTempMonth] = useState<number | null>(null);
   const [tempDay, setTempDay] = useState<number | null>(null);
 
-  // ─── Permissions State ──────────────────────────────────────────────────
+  // ─── Permissions (role-based) State ─────────────────────────────────────
   const allMembers = useGroupMembers();
-  const activeMembers = useMemo(() => allMembers.filter(m => m.status === "active" && m.role !== "admin"), [allMembers]);
-  const [permSaving, setPermSaving] = useState<string | null>(null);
-  const [pendingPerms, setPendingPerms] = useState<Record<string, MemberPermissions>>({});
-  const [permSearch, setPermSearch] = useState("");
-  const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
+  const [roleSearch, setRoleSearch] = useState("");
+  const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
+  const [pendingRolePerms, setPendingRolePerms] = useState<Record<string, MemberPermissions>>({});
+  const [roleSaving, setRoleSaving] = useState<string | null>(null);
+  const [showCreateRole, setShowCreateRole] = useState(false);
+  const [newRoleName, setNewRoleName] = useState("");
+  const [creatingRole, setCreatingRole] = useState(false);
   const [tokenGenerating, setTokenGenerating] = useState<string | null>(null);
+
+  // Combined list of roles: the 5 built-in system roles + any custom roles
+  // stored on the group doc. This is the single source of truth the
+  // Permissions tab now edits — permission grants live on roles, not members.
+  const roles: GroupRole[] = useMemo(() => {
+    const systemRoles: GroupRole[] = SYSTEM_ROLE_KEYS.map((key) => ({
+      id: key,
+      name: ROLE_LABELS[key] || key,
+      permissions: group?.rolePermissions?.[key] ?? SYSTEM_ROLE_DEFAULT_PERMISSIONS[key],
+      isSystem: true,
+      createdAt: "",
+    }));
+    const customRoles: GroupRole[] = (group?.customRoles ?? []).map((r) => ({ ...r, isSystem: false }));
+    return [...systemRoles, ...customRoles];
+  }, [group?.rolePermissions, group?.customRoles]);
+
+  const filteredRoles = useMemo(
+    () => roles.filter((r) => r.name.toLowerCase().includes(roleSearch.toLowerCase())),
+    [roles, roleSearch]
+  );
+
+  const memberCountForRole = useCallback((role: GroupRole) => {
+    if (role.isSystem) {
+      return allMembers.filter((m) => m.role === role.id && !m.customRoleId).length;
+    }
+    return allMembers.filter((m) => m.customRoleId === role.id).length;
+  }, [allMembers]);
+
+  const getRolePerms = useCallback((role: GroupRole): MemberPermissions => {
+    return pendingRolePerms[role.id] ?? role.permissions;
+  }, [pendingRolePerms]);
+
+  const toggleRolePerm = useCallback((role: GroupRole, key: keyof MemberPermissions) => {
+    if (role.id === "admin") return; // admin is always full-access, never editable
+    const base = getRolePerms(role);
+    setPendingRolePerms((prev) => ({ ...prev, [role.id]: { ...base, [key]: !base[key] } }));
+  }, [getRolePerms]);
+
+  const saveRolePermissions = useCallback(async (role: GroupRole) => {
+    if (role.id === "admin" || !activeGroupId) return;
+    const perms = getRolePerms(role);
+    setRoleSaving(role.id);
+    try {
+      if (role.isSystem) {
+        await updateGroup(activeGroupId, {
+          rolePermissions: { ...(group?.rolePermissions ?? {}), [role.id]: perms },
+        });
+      } else {
+        const updatedCustomRoles = (group?.customRoles ?? []).map((r) =>
+          r.id === role.id ? { ...r, permissions: perms } : r
+        );
+        await updateGroup(activeGroupId, { customRoles: updatedCustomRoles });
+      }
+
+      // Cascade: keep every member currently holding this role in sync, since
+      // the rest of the app reads permissions off Member.permissions directly.
+      const affectedMembers = role.isSystem
+        ? allMembers.filter((m) => m.role === role.id && !m.customRoleId)
+        : allMembers.filter((m) => m.customRoleId === role.id);
+
+      await Promise.all(affectedMembers.map((m) => updateMember(m.id, { permissions: perms })));
+
+      setPendingRolePerms((prev) => { const n = { ...prev }; delete n[role.id]; return n; });
+      show(`Permissions saved for ${role.name}`);
+    } catch (e: any) {
+      show(e.message || "Failed to save role permissions", "error");
+    } finally {
+      setRoleSaving(null);
+    }
+  }, [activeGroupId, group?.rolePermissions, group?.customRoles, allMembers, getRolePerms, updateGroup, updateMember, show]);
+
+  const handleCreateRole = useCallback(async () => {
+    if (!newRoleName.trim()) { show("Role name is required", "error"); return; }
+    if (!activeGroupId) { show("No active group", "error"); return; }
+
+    const nameTaken = roles.some((r) => r.name.toLowerCase() === newRoleName.trim().toLowerCase());
+    if (nameTaken) { show("A role with that name already exists", "error"); return; }
+
+    setCreatingRole(true);
+    try {
+      const newRole: GroupRole = {
+        id: uid(),
+        name: newRoleName.trim(),
+        permissions: { ...DEFAULT_MEMBER_PERMISSIONS },
+        isSystem: false,
+        createdAt: new Date().toISOString(),
+      };
+      await updateGroup(activeGroupId, { customRoles: [...(group?.customRoles ?? []), newRole] });
+      show(`Role "${newRole.name}" created — set its permissions below`);
+      setShowCreateRole(false);
+      setNewRoleName("");
+      setExpandedRoleId(newRole.id);
+    } catch (e: any) {
+      show(e.message || "Failed to create role", "error");
+    } finally {
+      setCreatingRole(false);
+    }
+  }, [newRoleName, activeGroupId, roles, group?.customRoles, updateGroup, show]);
+
+  const handleDeleteRole = useCallback((role: GroupRole) => {
+    if (role.isSystem || !activeGroupId) return;
+    const count = memberCountForRole(role);
+    if (count > 0) {
+      show(`Reassign ${count} member${count === 1 ? "" : "s"} to another role before deleting this one`, "error");
+      return;
+    }
+    showConfirm(
+      "Delete Role",
+      `Delete the "${role.name}" role? This cannot be undone.`,
+      async () => {
+        try {
+          await updateGroup(activeGroupId, {
+            customRoles: (group?.customRoles ?? []).filter((r) => r.id !== role.id),
+          });
+          show("Role deleted");
+        } catch (e: any) {
+          show(e.message || "Failed to delete role", "error");
+        }
+      },
+      undefined,
+      true
+    );
+  }, [activeGroupId, group?.customRoles, memberCountForRole, updateGroup, show]);
+
+  // Role options offered when assigning a member — system roles plus any
+  // custom roles, using a "custom:<id>" value to disambiguate on submit.
+  const roleAssignmentOptions = useMemo(() => [
+    ...ROLES,
+    ...(group?.customRoles ?? []).map((r) => ({ label: r.name, value: `custom:${r.id}` })),
+  ], [group?.customRoles]);
+
+  const getRoleLabel = useCallback((member: Member): string => {
+    if (member.customRoleId) {
+      return (group?.customRoles ?? []).find((r) => r.id === member.customRoleId)?.name ?? "Custom Role";
+    }
+    return ROLE_LABELS[member.role] || member.role;
+  }, [group?.customRoles]);
+
+  const generateMemberToken = useCallback(async (member: Member) => {
+    setTokenGenerating(member.id);
+    try {
+      const tokenData = generateLoginToken();
+      await useStore.getState().updateMember(member.id, {
+        loginToken: tokenData.token,
+        loginTokenExpiry: tokenData.expiry,
+      });
+      show(`Login token generated for ${member.fullName}: ${tokenData.token}`, "success");
+    } catch (e: any) {
+      show(e.message || "Failed to generate login token", "error");
+    } finally {
+      setTokenGenerating(null);
+    }
+  }, [show]);
 
   // ─── Member Management Stats ────────────────────────────────────────────
   const memberStats = useMemo(() => {
@@ -423,7 +634,7 @@ export default function GroupSettingsScreen() {
     if (memberTab === "Active") list = list.filter(m => m.status === "active");
     else if (memberTab === "Pending") list = list.filter(m => m.status === "pending");
     else if (memberTab === "Inactive") list = list.filter(m => !["active", "pending"].includes(m.status));
-    
+
     if (memberSearch) {
       const term = memberSearch.toLowerCase();
       list = list.filter(m =>
@@ -446,6 +657,10 @@ export default function GroupSettingsScreen() {
       return;
     }
 
+    const isCustom = createForm.role.startsWith("custom:");
+    const customId = isCustom ? createForm.role.slice(7) : undefined;
+    const baseRole = isCustom ? "member" : (createForm.role as any);
+
     setCreatingMember(true);
     try {
       const result = await createUserAsAdmin(
@@ -453,7 +668,7 @@ export default function GroupSettingsScreen() {
           fullName: createForm.fullName.trim(),
           email: createForm.email.trim(),
           phone: createForm.phone.trim(),
-          role: createForm.role as any,
+          role: baseRole,
           groupId: activeGroupId,
         },
         currentMember.userId,
@@ -463,6 +678,20 @@ export default function GroupSettingsScreen() {
       if (!result.success) {
         show(result.error || "Failed to create user", "error");
         return;
+      }
+
+      // NOTE: createUserAsAdmin's return shape isn't something I can verify
+      // here — if it exposes the new member's id (e.g. result.memberId),
+      // this finishes wiring up the custom role immediately. If it doesn't,
+      // the member is created with the base "member" role and you'll need
+      // to open Edit Member afterward to assign the custom role — that path
+      // is fully wired below.
+      if (isCustom && (result as any).memberId) {
+        const customRole = (group?.customRoles ?? []).find((r) => r.id === customId);
+        await updateMember((result as any).memberId, {
+          customRoleId: customId,
+          permissions: customRole?.permissions ?? DEFAULT_MEMBER_PERMISSIONS,
+        });
       }
 
       show(`User ${createForm.fullName} created! Password reset email sent.`);
@@ -554,7 +783,7 @@ export default function GroupSettingsScreen() {
       fullName: member.fullName,
       email: member.email || "",
       phone: member.phone || "",
-      role: member.role,
+      role: member.customRoleId ? `custom:${member.customRoleId}` : member.role,
     });
     setShowEditMember(true);
   };
@@ -566,13 +795,24 @@ export default function GroupSettingsScreen() {
       return;
     }
 
+    const isCustom = editForm.role.startsWith("custom:");
+    const customId = isCustom ? editForm.role.slice(7) : undefined;
+    const baseRole = isCustom ? "member" : (editForm.role as any);
+    const customRole = isCustom ? (group?.customRoles ?? []).find((r) => r.id === customId) : undefined;
+
     setSavingMember(true);
     try {
       await updateMember(editingMember.id, {
         fullName: editForm.fullName.trim(),
         email: editForm.email.trim() || undefined,
         phone: editForm.phone.trim() || undefined,
-        role: editForm.role as any,
+        role: baseRole,
+        customRoleId: customId,
+        // Snapshot the role's current permissions onto the member immediately,
+        // matching what saveRolePermissions cascades on future edits.
+        permissions: isCustom
+          ? (customRole?.permissions ?? DEFAULT_MEMBER_PERMISSIONS)
+          : (group?.rolePermissions?.[baseRole] ?? SYSTEM_ROLE_DEFAULT_PERMISSIONS[baseRole as MemberRole] ?? DEFAULT_MEMBER_PERMISSIONS),
         userId: editingMember.userId,
       });
       show("Member updated successfully");
@@ -584,47 +824,6 @@ export default function GroupSettingsScreen() {
       setSavingMember(false);
     }
   };
-
-  const getMemberPerms = useCallback((m: Member): MemberPermissions => {
-    return pendingPerms[m.id] ?? m.permissions ?? { ...DEFAULT_MEMBER_PERMISSIONS };
-  }, [pendingPerms]);
-
-  const togglePerm = useCallback((memberId: string, key: keyof MemberPermissions, base: MemberPermissions) => {
-    setPendingPerms(prev => ({
-      ...prev,
-      [memberId]: { ...base, [key]: !base[key] },
-    }));
-  }, []);
-
-  const savePermissions = useCallback(async (member: Member) => {
-    const perms = getMemberPerms(member);
-    setPermSaving(member.id);
-    try {
-      await useStore.getState().updateMember(member.id, { permissions: perms });
-      setPendingPerms(prev => { const n = { ...prev }; delete n[member.id]; return n; });
-      show("Permissions saved for " + member.fullName);
-    } catch (e: any) {
-      show(e.message || "Failed to save permissions", "error");
-    } finally {
-      setPermSaving(null);
-    }
-  }, [getMemberPerms, show]);
-
-  const generateMemberToken = useCallback(async (member: Member) => {
-    setTokenGenerating(member.id);
-    try {
-      const tokenData = generateLoginToken();
-      await useStore.getState().updateMember(member.id, {
-        loginToken: tokenData.token,
-        loginTokenExpiry: tokenData.expiry,
-      });
-      show(`Login token generated for ${member.fullName}: ${tokenData.token}`, "success");
-    } catch (e: any) {
-      show(e.message || "Failed to generate login token", "error");
-    } finally {
-      setTokenGenerating(null);
-    }
-  }, [show]);
 
   // ─── Audit Filters ──────────────────────────────────────────────────────
   useEffect(() => { setCurrentPage(1); }, [activeTab, searchTerm, selectedYear, selectedMonth, selectedDay]);
@@ -673,7 +872,6 @@ export default function GroupSettingsScreen() {
   const hasFilters = !!(searchTerm || selectedYear || selectedMonth || selectedDay);
 
   const openFilter = () => {
-    console.log("[GroupSettings] Opening filter modal"); // Debug log
     setTempSearch(searchTerm);
     setTempYear(selectedYear);
     setTempMonth(selectedMonth);
@@ -866,6 +1064,7 @@ export default function GroupSettingsScreen() {
   const MemberDetailModal = ({ member, onClose }: { member: Member; onClose: () => void }) => {
     const stats = getMemberStats(member, wallet, contributions);
     const isMe = member.userId === currentMember?.userId;
+    const roleLabel = getRoleLabel(member);
 
     return (
       <BottomModal visible={!!member} onClose={onClose} title={member.fullName}>
@@ -879,7 +1078,7 @@ export default function GroupSettingsScreen() {
             <View style={{ flex: 1 }}>
               <Text style={detailStyles.name}>{member.fullName}</Text>
               <View style={{ flexDirection: "row", gap: 6, marginTop: 4 }}>
-                <Badge label={ROLE_LABELS[member.role] || member.role} color={ROLE_BADGE[member.role] || "teal"} />
+                <Badge label={roleLabel} color={member.customRoleId ? "blue" : (ROLE_BADGE[member.role] || "teal")} />
                 <Badge label={member.status} color={STATUS_BADGE[member.status] || "muted"} />
               </View>
             </View>
@@ -896,20 +1095,20 @@ export default function GroupSettingsScreen() {
                 <Button label="✓ Approve Member" onPress={() => handleApproveMember(member)} fullWidth variant="success" />
               )}
               {member.status === "active" && (
-                <Button 
-                  label="⛔ Deactivate" 
-                  onPress={() => handleDeactivateMember(member)} 
-                  fullWidth 
+                <Button
+                  label="⛔ Deactivate"
+                  onPress={() => handleDeactivateMember(member)}
+                  fullWidth
                   variant="secondary"
                   style={{ backgroundColor: C.gold, borderColor: C.gold }}
                 />
               )}
               {member.status === "inactive" && (
-                <Button 
-                  label="🔄 Reactivate" 
-                  onPress={() => handleReactivateMember(member)} 
-                  fullWidth 
-                  variant="success" 
+                <Button
+                  label="🔄 Reactivate"
+                  onPress={() => handleReactivateMember(member)}
+                  fullWidth
+                  variant="success"
                 />
               )}
               <Button label="✏️ Edit Member" onPress={() => openEditMember(member)} fullWidth variant="secondary" />
@@ -922,6 +1121,45 @@ export default function GroupSettingsScreen() {
       </BottomModal>
     );
   };
+
+  const RolePicker = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+    <View>
+      <Text style={{ fontSize: 12, fontWeight: "600", color: C.text2, marginBottom: 6 }}>Role</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        {roleAssignmentOptions.map((r) => {
+          const isSelected = value === r.value;
+          return (
+            <TouchableOpacity
+              key={r.value}
+              onPress={() => onChange(r.value)}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 8,
+                borderWidth: 1.5,
+                borderColor: isSelected ? C.primary : C.border,
+                backgroundColor: isSelected ? (C.primary + "18") : C.surface,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Text style={{
+                fontSize: 13,
+                fontWeight: isSelected ? "700" : "500",
+                color: isSelected ? C.primary : C.text,
+              }}>
+                {r.label}
+              </Text>
+              {isSelected && (
+                <Text style={{ fontSize: 12, color: C.primary, fontWeight: "700" }}>✓</Text>
+              )}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
 
   return (
     <View style={styles.root}>
@@ -945,13 +1183,18 @@ export default function GroupSettingsScreen() {
                 : <Text style={styles.headerBtnPrimaryText}>Save</Text>}
             </TouchableOpacity>
           )}
+          {activeSection === "permissions" && (
+            <TouchableOpacity onPress={() => setShowCreateRole(true)} style={[styles.headerBtn, styles.headerBtnPrimary]}>
+              <Text style={styles.headerBtnPrimaryText}>+ New Role</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
       {/* ─── Tab Bar - Scrollable ─── */}
       <View style={styles.tabWrapper}>
-        <ScrollView 
-          horizontal 
+        <ScrollView
+          horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={[styles.tabBar, isWide && styles.tabBarWide]}
         >
@@ -970,6 +1213,11 @@ export default function GroupSettingsScreen() {
                     <Text style={styles.tabBadgeText}>
                       {allAuditLogs.length > 99 ? "99+" : allAuditLogs.length}
                     </Text>
+                  </View>
+                )}
+                {tab.key === "permissions" && roles.length > 0 && (
+                  <View style={styles.tabBadge}>
+                    <Text style={styles.tabBadgeText}>{roles.length}</Text>
                   </View>
                 )}
               </View>
@@ -1004,21 +1252,21 @@ export default function GroupSettingsScreen() {
             {/* ── LEFT COLUMN ── */}
             <View style={isWide ? styles.wideCol : undefined}>
               {/* Currency & Contributions */}
-              <SectionHeading 
-                label="Currency & Contributions" 
-                description="Set the group's currency and the standard contribution amount per member." 
+              <SectionHeading
+                label="Currency & Contributions"
+                description="Set the group's currency and the standard contribution amount per member."
               />
               <SettingCard>
                 <Select label="Currency" value={currency} options={CURRENCIES} onChange={setCurrency} />
                 <Divider />
                 <View style={styles.row}>
                   <View style={{ flex: 1 }}>
-                    <Input 
-                      label="Contribution amount" 
-                      value={contribAmount} 
-                      onChangeText={setContribAmount} 
-                      keyboardType="numeric" 
-                      prefix={currency} 
+                    <Input
+                      label="Contribution amount"
+                      value={contribAmount}
+                      onChangeText={setContribAmount}
+                      keyboardType="numeric"
+                      prefix={currency}
                     />
                   </View>
                   <View style={{ flex: 1 }}>
@@ -1031,9 +1279,9 @@ export default function GroupSettingsScreen() {
               </SettingCard>
 
               {/* Contribution Goal */}
-              <SectionHeading 
-                label="Contribution Goal" 
-                description="A savings target each member should reach every N months. Optional." 
+              <SectionHeading
+                label="Contribution Goal"
+                description="A savings target each member should reach every N months. Optional."
               />
               <SettingCard>
                 <View style={styles.toggleRow}>
@@ -1087,9 +1335,9 @@ export default function GroupSettingsScreen() {
               </SettingCard>
 
               {/* Loan Rules */}
-              <SectionHeading 
-                label="Loan Rules" 
-                description="Configure how loans are calculated and managed in this group." 
+              <SectionHeading
+                label="Loan Rules"
+                description="Configure how loans are calculated and managed in this group."
               />
               <SettingCard>
                 <Select
@@ -1130,9 +1378,9 @@ export default function GroupSettingsScreen() {
             {/* ── RIGHT COLUMN ── */}
             <View style={isWide ? styles.wideCol : undefined}>
               {/* Meeting Penalties */}
-              <SectionHeading 
-                label="Meeting Penalties" 
-                description="Penalties applied for meeting lateness or absence." 
+              <SectionHeading
+                label="Meeting Penalties"
+                description="Penalties applied for meeting lateness or absence."
               />
               <SettingCard>
                 <Text style={styles.penaltyNote}>
@@ -1173,9 +1421,9 @@ export default function GroupSettingsScreen() {
               </SettingCard>
 
               {/* Late Payment Fees */}
-              <SectionHeading 
-                label="Late Payment Fees" 
-                description="Fees applied to overdue contributions or loan repayments." 
+              <SectionHeading
+                label="Late Payment Fees"
+                description="Fees applied to overdue contributions or loan repayments."
               />
               <SettingCard>
                 <Text style={styles.penaltyNote}>
@@ -1233,9 +1481,9 @@ export default function GroupSettingsScreen() {
               </SettingCard>
 
               {/* Data Management */}
-              <SectionHeading 
-                label="Data Management" 
-                description="Export or import your group data as a backup." 
+              <SectionHeading
+                label="Data Management"
+                description="Export or import your group data as a backup."
               />
               <SettingCard>
                 <TouchableOpacity style={styles.actionRow} onPress={handleExport} activeOpacity={0.7}>
@@ -1344,17 +1592,18 @@ export default function GroupSettingsScreen() {
                 {filteredMembers.map((m, i) => {
                   const stats = getMemberStats(m, wallet, contributions);
                   const isMe = m.userId === currentMember?.userId;
+                  const roleLabel = getRoleLabel(m);
                   return (
                     <React.Fragment key={m.id}>
                       <CardRow
                         onPress={() => openMemberDetail(m)}
-                        left={<Avatar name={m.fullName} size={44} color={ROLE_BADGE[m.role] ?? "teal"} />}
+                        left={<Avatar name={m.fullName} size={44} color={m.customRoleId ? "blue" : (ROLE_BADGE[m.role] ?? "teal")} />}
                         title={`${m.fullName}${isMe ? " (You)" : ""}`}
                         subtitle={`${stats.totalContributions > 0 ? fmtCurrency(stats.totalContributions) : "No contributions"}`}
                         right={
                           <View style={{ alignItems: "flex-end", gap: 4 }}>
                             <View style={{ flexDirection: "row", gap: 4 }}>
-                              <Badge label={ROLE_LABELS[m.role] || m.role} color={ROLE_BADGE[m.role] || "teal"} />
+                              <Badge label={roleLabel} color={m.customRoleId ? "blue" : (ROLE_BADGE[m.role] || "teal")} />
                               <Badge label={m.status} color={STATUS_BADGE[m.status] || "muted"} />
                             </View>
                           </View>
@@ -1370,7 +1619,7 @@ export default function GroupSettingsScreen() {
         </View>
       )}
 
-      {/* ─── PERMISSIONS SECTION ─────────────────────────────────────────── */}
+      {/* ─── PERMISSIONS SECTION (role-based) ───────────────────────────── */}
       {activeSection === "permissions" && (
         <View style={styles.contentScroll}>
           <View style={permStyles.searchContainer}>
@@ -1378,14 +1627,16 @@ export default function GroupSettingsScreen() {
               <Text style={permStyles.searchIcon}>🔍</Text>
               <TextInput
                 style={permStyles.searchInput}
-                placeholder="Search members..."
+                placeholder="Search roles..."
                 placeholderTextColor={C.text3}
-                value={permSearch}
-                onChangeText={setPermSearch}
+                value={roleSearch}
+                onChangeText={setRoleSearch}
                 clearButtonMode="while-editing"
               />
             </View>
-            <Text style={permStyles.searchHint}>Tap a member to manage their permissions. Admins always have full access.</Text>
+            <Text style={permStyles.searchHint}>
+              Permissions are granted per role. Tap a role to manage what it can do — every member holding that role updates automatically. Admins always have full access.
+            </Text>
           </View>
 
           <ScrollView
@@ -1393,87 +1644,60 @@ export default function GroupSettingsScreen() {
             showsVerticalScrollIndicator={false}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
           >
-            {(() => {
-              const filtered = activeMembers.filter(m =>
-                m.fullName.toLowerCase().includes(permSearch.toLowerCase()) ||
-                m.role.toLowerCase().includes(permSearch.toLowerCase())
-              );
-              if (filtered.length === 0) return (
-                <View style={{ alignItems: "center", paddingVertical: 40 }}>
-                  <Text style={{ fontSize: 32 }}>👥</Text>
-                  <Text style={{ fontSize: 14, color: C.text3, marginTop: 8 }}>
-                    {permSearch ? "No members match your search" : "No active non-admin members"}
-                  </Text>
-                </View>
-              );
-
-              const PERM_KEYS: (keyof MemberPermissions)[] = [
-                "addContribution", "addLoan", "addInvestment",
-                "approveContributions", "approveLoans", "approveInvestments",
-                "viewAllReports", "downloadReports",
-                "manageMeetings", "editMembers", "deleteRecords", "manageSettings",
-              ];
-              const PERM_LABELS: Record<keyof MemberPermissions, string> = {
-                addContribution: "Add Contributions",
-                addLoan: "Apply for Loans",
-                addInvestment: "Add Investments",
-                approveContributions: "Approve Contributions",
-                approveLoans: "Approve Loans",
-                approveInvestments: "Approve Investments",
-                viewAllReports: "View All Reports",
-                downloadReports: "Export Reports",
-                manageMeetings: "Manage Meetings",
-                editMembers: "Edit Members",
-                deleteRecords: "Delete Records",
-                manageSettings: "Manage Settings",
-                updateMeetings: "Update Meetings",
-              };
-              const PERM_GROUPS = [
-                { label: "Create & Apply", keys: ["addContribution", "addLoan", "addInvestment"] as (keyof MemberPermissions)[] },
-                { label: "Approvals", keys: ["approveContributions", "approveLoans", "approveInvestments"] as (keyof MemberPermissions)[] },
-                { label: "Reports & Visibility", keys: ["viewAllReports", "downloadReports"] as (keyof MemberPermissions)[] },
-                { label: "Management", keys: ["manageMeetings", "editMembers", "deleteRecords", "manageSettings"] as (keyof MemberPermissions)[] },
-              ];
-
-              return filtered.map((member) => {
-                const perms = getMemberPerms(member);
-                const isDirty = !!pendingPerms[member.id];
-                const isSaving = permSaving === member.id;
-                const isExpanded = expandedMemberId === member.id;
-                const enabledCount = PERM_KEYS.filter(k => perms[k]).length;
+            {filteredRoles.length === 0 ? (
+              <View style={{ alignItems: "center", paddingVertical: 40 }}>
+                <Text style={{ fontSize: 32 }}>🔐</Text>
+                <Text style={{ fontSize: 14, color: C.text3, marginTop: 8 }}>No roles match your search</Text>
+              </View>
+            ) : (
+              filteredRoles.map((role) => {
+                const perms = getRolePerms(role);
+                const isDirty = !!pendingRolePerms[role.id];
+                const isSaving = roleSaving === role.id;
+                const isExpanded = expandedRoleId === role.id;
+                const isLocked = role.id === "admin";
+                const enabledCount = PERM_KEYS.filter((k) => perms[k]).length;
+                const memberCount = memberCountForRole(role);
 
                 return (
-                  <View key={member.id} style={permStyles.memberCard}>
+                  <View key={role.id} style={permStyles.memberCard}>
                     <TouchableOpacity
                       style={permStyles.memberHeader}
-                      onPress={() => setExpandedMemberId(isExpanded ? null : member.id)}
+                      onPress={() => setExpandedRoleId(isExpanded ? null : role.id)}
                       activeOpacity={0.7}
                     >
                       <View style={permStyles.memberAvatar}>
                         <Text style={permStyles.memberAvatarText}>
-                          {member.fullName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
+                          {role.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
                         </Text>
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={permStyles.memberName}>{member.fullName}</Text>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                          <Text style={permStyles.memberName}>{role.name}</Text>
+                          {!role.isSystem && (
+                            <View style={{ backgroundColor: C.accent + "20", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
+                              <Text style={{ fontSize: 8, fontWeight: "800", color: C.accent }}>CUSTOM</Text>
+                            </View>
+                          )}
+                        </View>
                         <Text style={permStyles.memberRole}>
-                          {member.role.replace(/_/g, " ")} · {enabledCount}/{PERM_KEYS.length} permissions
+                          {isLocked ? "Full access · " : `${enabledCount}/${PERM_KEYS.length} permissions · `}
+                          {memberCount} member{memberCount === 1 ? "" : "s"}
                         </Text>
                       </View>
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        <TouchableOpacity
-                          style={[permStyles.tokenBtn, tokenGenerating === member.id && permStyles.tokenBtnDisabled]}
-                          onPress={() => generateMemberToken(member)}
-                          disabled={tokenGenerating === member.id}
-                        >
-                          {tokenGenerating === member.id
-                            ? <ActivityIndicator size="small" color="#fff" />
-                            : <Text style={permStyles.tokenBtnText}>🔑 Token</Text>}
-                        </TouchableOpacity>
-                        {isDirty && (
+                        {!role.isSystem && memberCount === 0 && (
+                          <TouchableOpacity
+                            style={permStyles.deleteRoleBtn}
+                            onPress={() => handleDeleteRole(role)}
+                          >
+                            <Text style={permStyles.deleteRoleBtnText}>🗑</Text>
+                          </TouchableOpacity>
+                        )}
+                        {isDirty && !isLocked && (
                           <TouchableOpacity
                             style={[permStyles.saveBtn, isSaving && permStyles.saveBtnDisabled]}
-                            onPress={() => savePermissions(member)}
+                            onPress={() => saveRolePermissions(role)}
                             disabled={isSaving}
                           >
                             {isSaving
@@ -1487,62 +1711,70 @@ export default function GroupSettingsScreen() {
 
                     {isExpanded && (
                       <View style={permStyles.permGrid}>
-                        <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
-                          <TouchableOpacity
-                            style={permStyles.quickBtn}
-                            onPress={() => {
-                              const all: Record<string, boolean> = {};
-                              PERM_KEYS.forEach(k => { all[k] = true; });
-                              setPendingPerms(prev => ({ ...prev, [member.id]: all as any }));
-                            }}
-                          >
-                            <Text style={permStyles.quickBtnText}>✔ Grant All</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[permStyles.quickBtn, permStyles.quickBtnDanger]}
-                            onPress={() => {
-                              const none: Record<string, boolean> = {};
-                              PERM_KEYS.forEach(k => { none[k] = false; });
-                              setPendingPerms(prev => ({ ...prev, [member.id]: none as any }));
-                            }}
-                          >
-                            <Text style={[permStyles.quickBtnText, { color: C.error }]}>✕ Revoke All</Text>
-                          </TouchableOpacity>
-                        </View>
-
-                        {PERM_GROUPS.map((group) => (
-                          <View key={group.label} style={{ marginBottom: 10 }}>
-                            <Text style={permStyles.permGroupLabel}>{group.label}</Text>
-                            <View style={{ gap: 4 }}>
-                              {group.keys.map((key) => {
-                                const isEnabled = !!perms[key];
-                                return (
-                                  <TouchableOpacity
-                                    key={key}
-                                    style={[permStyles.permRow, isEnabled && permStyles.permRowActive]}
-                                    onPress={() => togglePerm(member.id, key, perms)}
-                                    activeOpacity={0.7}
-                                  >
-                                    <Text style={[permStyles.permLabel, isEnabled && { color: C.primary, fontWeight: "700" }]}>
-                                      {PERM_LABELS[key]}
-                                    </Text>
-                                    <View style={[permStyles.togglePill, isEnabled && permStyles.togglePillActive]}>
-                                      <Text style={[permStyles.toggleText, isEnabled && permStyles.toggleTextActive]}>
-                                        {isEnabled ? "ON" : "OFF"}
-                                      </Text>
-                                    </View>
-                                  </TouchableOpacity>
-                                );
-                              })}
+                        {isLocked ? (
+                          <Text style={{ fontSize: 12, color: C.text3, paddingVertical: 8 }}>
+                            Admins always have every permission. This can't be changed.
+                          </Text>
+                        ) : (
+                          <>
+                            <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+                              <TouchableOpacity
+                                style={permStyles.quickBtn}
+                                onPress={() => {
+                                  const all: Record<string, boolean> = {};
+                                  PERM_KEYS.forEach((k) => { all[k] = true; });
+                                  setPendingRolePerms((prev) => ({ ...prev, [role.id]: all as any }));
+                                }}
+                              >
+                                <Text style={permStyles.quickBtnText}>✔ Grant All</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={[permStyles.quickBtn, permStyles.quickBtnDanger]}
+                                onPress={() => {
+                                  const none: Record<string, boolean> = {};
+                                  PERM_KEYS.forEach((k) => { none[k] = false; });
+                                  setPendingRolePerms((prev) => ({ ...prev, [role.id]: none as any }));
+                                }}
+                              >
+                                <Text style={[permStyles.quickBtnText, { color: C.error }]}>✕ Revoke All</Text>
+                              </TouchableOpacity>
                             </View>
-                          </View>
-                        ))}
+
+                            {PERM_GROUPS.map((group) => (
+                              <View key={group.label} style={{ marginBottom: 10 }}>
+                                <Text style={permStyles.permGroupLabel}>{group.label}</Text>
+                                <View style={{ gap: 4 }}>
+                                  {group.keys.map((key) => {
+                                    const isEnabled = !!perms[key];
+                                    return (
+                                      <TouchableOpacity
+                                        key={key}
+                                        style={[permStyles.permRow, isEnabled && permStyles.permRowActive]}
+                                        onPress={() => toggleRolePerm(role, key)}
+                                        activeOpacity={0.7}
+                                      >
+                                        <Text style={[permStyles.permLabel, isEnabled && { color: C.primary, fontWeight: "700" }]}>
+                                          {PERM_LABELS[key]}
+                                        </Text>
+                                        <View style={[permStyles.togglePill, isEnabled && permStyles.togglePillActive]}>
+                                          <Text style={[permStyles.toggleText, isEnabled && permStyles.toggleTextActive]}>
+                                            {isEnabled ? "ON" : "OFF"}
+                                          </Text>
+                                        </View>
+                                      </TouchableOpacity>
+                                    );
+                                  })}
+                                </View>
+                              </View>
+                            ))}
+                          </>
+                        )}
                       </View>
                     )}
                   </View>
                 );
-              });
-            })()}
+              })
+            )}
           </ScrollView>
         </View>
       )}
@@ -1578,7 +1810,7 @@ export default function GroupSettingsScreen() {
                 <View style={auditStyles.tabRow}>
                   {AUDIT_TABS.map((tab) => {
                     const isActive = activeTab === tab.key;
-                    const count = tab.key === "all" ? allAuditLogs.length : 
+                    const count = tab.key === "all" ? allAuditLogs.length :
                                   tab.key === "failed" ? allAuditLogs.filter(l => l.action === "failed" || l.status === "failed").length :
                                   tab.key === "deletions" ? allAuditLogs.filter(l => l.action === "deleted").length :
                                   allAuditLogs.filter(l => l.entityType === (AUDIT_TAB_ENTITY as any)[tab.key]).length;
@@ -1631,7 +1863,6 @@ export default function GroupSettingsScreen() {
             ) : (
               <>
                 {isWide ? (
-                  // Desktop Table View
                   <View style={auditStyles.table}>
                     <View style={auditStyles.tableHead}>
                       <Text style={[auditStyles.th, { width: 170 }]}>Timestamp</Text>
@@ -1646,7 +1877,6 @@ export default function GroupSettingsScreen() {
                     ))}
                   </View>
                 ) : (
-                  // Mobile Card View
                   paginatedLogs.map((log) => (
                     <AuditLogCard key={log.id} log={log} onRevert={() => handleRevertLog(log)} />
                   ))
@@ -1659,6 +1889,22 @@ export default function GroupSettingsScreen() {
       )}
 
       {/* ─── Modals ───────────────────────────────────────────────────────── */}
+
+      {/* Create Role Modal */}
+      <BottomModal visible={showCreateRole} onClose={() => { setShowCreateRole(false); setNewRoleName(""); }} title="Create New Role">
+        <View style={{ padding: 16, gap: 12 }}>
+          <Input
+            label="Role name *"
+            value={newRoleName}
+            onChangeText={setNewRoleName}
+            placeholder="e.g. Treasurer, Secretary"
+          />
+          <Text style={{ fontSize: 12, color: C.text3, lineHeight: 17 }}>
+            The role is created with no permissions granted. After creating it, tap it in the list to turn on the permissions it should have.
+          </Text>
+          <Button label="Create Role" onPress={handleCreateRole} loading={creatingRole} fullWidth />
+        </View>
+      </BottomModal>
 
       {/* Create Member Modal */}
       <BottomModal visible={showCreateMember} onClose={() => setShowCreateMember(false)} title="Add New Member">
@@ -1682,42 +1928,7 @@ export default function GroupSettingsScreen() {
             onChangeText={(t) => setCreateForm(p => ({ ...p, phone: t }))}
             placeholder="+250-7XX-XXX-XXX"
           />
-          <View>
-            <Text style={{ fontSize: 12, fontWeight: "600", color: C.text2, marginBottom: 6 }}>Role</Text>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {ROLES.map((r) => {
-                const isSelected = createForm.role === r.value;
-                return (
-                  <TouchableOpacity
-                    key={r.value}
-                    onPress={() => setCreateForm(p => ({ ...p, role: r.value }))}
-                    style={{
-                      paddingHorizontal: 12,
-                      paddingVertical: 8,
-                      borderRadius: 8,
-                      borderWidth: 1.5,
-                      borderColor: isSelected ? C.primary : C.border,
-                      backgroundColor: isSelected ? (C.primary + "18") : C.surface,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <Text style={{
-                      fontSize: 13,
-                      fontWeight: isSelected ? "700" : "500",
-                      color: isSelected ? C.primary : C.text,
-                    }}>
-                      {r.label}
-                    </Text>
-                    {isSelected && (
-                      <Text style={{ fontSize: 12, color: C.primary, fontWeight: "700" }}>✓</Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
+          <RolePicker value={createForm.role} onChange={(v) => setCreateForm(p => ({ ...p, role: v }))} />
           <Button
             label="Create User"
             onPress={handleCreateMember}
@@ -1749,42 +1960,7 @@ export default function GroupSettingsScreen() {
             onChangeText={(t) => setEditForm(p => ({ ...p, phone: t }))}
             placeholder="Phone number"
           />
-          <View>
-            <Text style={{ fontSize: 12, fontWeight: "600", color: C.text2, marginBottom: 6 }}>Role</Text>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {ROLES.map((r) => {
-                const isSelected = editForm.role === r.value;
-                return (
-                  <TouchableOpacity
-                    key={r.value}
-                    onPress={() => setEditForm(p => ({ ...p, role: r.value }))}
-                    style={{
-                      paddingHorizontal: 12,
-                      paddingVertical: 8,
-                      borderRadius: 8,
-                      borderWidth: 1.5,
-                      borderColor: isSelected ? C.primary : C.border,
-                      backgroundColor: isSelected ? (C.primary + "18") : C.surface,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <Text style={{
-                      fontSize: 13,
-                      fontWeight: isSelected ? "700" : "500",
-                      color: isSelected ? C.primary : C.text,
-                    }}>
-                      {r.label}
-                    </Text>
-                    {isSelected && (
-                      <Text style={{ fontSize: 12, color: C.primary, fontWeight: "700" }}>✓</Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
+          <RolePicker value={editForm.role} onChange={(v) => setEditForm(p => ({ ...p, role: v }))} />
           <Button
             label="Save Changes"
             onPress={handleSaveEditMember}
@@ -1802,7 +1978,6 @@ export default function GroupSettingsScreen() {
         />
       )}
 
-      {/* <Toast /> */}
       <Toast visible={visible} msg={msg} type={type}/>
     </View>
   );
@@ -1831,7 +2006,6 @@ const detailStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
 
-  // Header
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -1870,7 +2044,6 @@ const styles = StyleSheet.create({
   headerBtnPrimary: { backgroundColor: C.primary, borderColor: C.primary },
   headerBtnPrimaryText: { fontSize: 12, fontWeight: "700", color: "#fff" },
 
-  // ─── Tab Bar - Scrollable ───
   tabWrapper: {
     backgroundColor: C.surface,
     borderBottomWidth: 1,
@@ -1926,20 +2099,18 @@ const styles = StyleSheet.create({
     color: C.primary,
   },
 
-  // ─── Content Scroll ───
   contentScroll: { flex: 1 },
-  body: { 
-    padding: 16, 
+  body: {
+    padding: 16,
     paddingTop: 8,
-    paddingBottom: 40 
+    paddingBottom: 40
   },
-  bodyWide: { 
-    paddingHorizontal: 32, 
+  bodyWide: {
+    paddingHorizontal: 32,
     paddingTop: 16,
-    paddingBottom: 40 
+    paddingBottom: 40
   },
 
-  // Group Card
   groupCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -1964,19 +2135,16 @@ const styles = StyleSheet.create({
   groupDesc: { fontSize: 12, color: C.text3, marginTop: 1 },
   groupMeta: { fontSize: 10, color: C.text3, marginTop: 2 },
 
-  // Grid
   wideGrid: { flexDirection: "row", gap: 20, alignItems: "flex-start" },
   wideCol: { flex: 1 },
   wideSaveRow: { marginTop: 16, alignItems: "flex-start" },
 
-  // Form
   row: { flexDirection: "row", gap: 8 },
   fieldHint: { fontSize: 10, color: C.text3, marginTop: 3, paddingHorizontal: 4 },
   penaltyNote: { fontSize: 12, color: C.text3, marginBottom: 10, lineHeight: 17 },
   subLabel: { fontSize: 11, fontWeight: "700", color: C.text2, marginTop: 4, marginBottom: 6 },
   goalPreview: { fontSize: 11, color: C.primary, fontWeight: "600", marginTop: 6 },
 
-  // Toggle
   toggleRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1986,7 +2154,6 @@ const styles = StyleSheet.create({
   toggleLabel: { fontSize: 13, fontWeight: "600", color: C.text },
   toggleHint: { fontSize: 11, color: C.text3, marginTop: 2 },
 
-  // Action Row
   actionRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -2008,7 +2175,6 @@ const styles = StyleSheet.create({
   actionDesc: { fontSize: 11, color: C.text3, marginTop: 1 },
   actionCta: { fontSize: 12, fontWeight: "700" },
 
-  // Add Member
   addMemberBtn: {
     backgroundColor: C.primary,
     borderRadius: 10,
@@ -2061,7 +2227,7 @@ const memberStyles = StyleSheet.create({
 });
 
 // ─────────────────────────────────────────────
-// Permission Styles
+// Permission Styles (now role cards, not member cards)
 // ─────────────────────────────────────────────
 const permStyles = StyleSheet.create({
   searchContainer: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 },
@@ -2077,7 +2243,7 @@ const permStyles = StyleSheet.create({
   },
   searchIcon: { fontSize: 13, marginRight: 6 },
   searchInput: { flex: 1, fontSize: 13, color: C.text, minHeight: 18 },
-  searchHint: { fontSize: 11, color: C.text3, marginTop: 4 },
+  searchHint: { fontSize: 11, color: C.text3, marginTop: 4, lineHeight: 15 },
   memberCard: {
     backgroundColor: C.surface,
     borderRadius: 10,
@@ -2164,6 +2330,13 @@ const permStyles = StyleSheet.create({
   },
   tokenBtnDisabled: { opacity: 0.6 },
   tokenBtnText: { fontSize: 11, fontWeight: "700", color: "#fff" },
+  deleteRoleBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: "rgba(239,68,68,0.08)",
+  },
+  deleteRoleBtnText: { fontSize: 12 },
 });
 
 // ─────────────────────────────────────────────

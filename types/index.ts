@@ -97,6 +97,16 @@ export type LoanInterestMethod = "flat" | "reducing_balance";
 
 export type GroupType = "savings" | "audit" | "investment" | "custom";
 
+
+// Add this new type
+export interface GroupRole {
+  id: ID;
+  name: string;
+  permissions: MemberPermissions;
+  isSystem?: boolean; // true for the 5 built-in roles, false/undefined for custom ones
+  createdAt: string;
+}
+
 export interface Group {
   id: ID;
   name: string;
@@ -137,6 +147,8 @@ export interface Group {
   totalInvestments: number;
   totalInterestEarned: number;
   memberCount: number;
+  rolePermissions?: Partial<Record<MemberRole, MemberPermissions>>; // per-system-role permission sets, editable
+  customRoles?: GroupRole[]; // group-defined roles beyond the 5 built-in ones
 }
 
 export interface ContributionGoalConfig {
@@ -186,6 +198,7 @@ export interface Member {
   permissions?: MemberPermissions;
   loginToken?: string;
   loginTokenExpiry?: string;
+  customRoleId?: ID; 
 }
 
 export interface Beneficiary {
