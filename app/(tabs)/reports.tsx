@@ -86,9 +86,9 @@ const CATEGORIES: {
   { key: "loans", label: "Loans", icon: "🏦" },
   { key: "latefees", label: "Late Fees", icon: "⚠️" },
   { key: "members", label: "Members", icon: "👥" },
-  { key: "expenses", label: "Expenses", icon: "🧾" },
-  { key: "investments", label: "Investments", icon: "📊" },
-  { key: "earnings", label: "Earnings", icon: "💰" },
+  // { key: "expenses", label: "Expenses", icon: "🧾" },
+  // { key: "investments", label: "Investments", icon: "📊" },
+  { key: "earnings", label: "Profits", icon: "💰" },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1787,7 +1787,7 @@ export default function ReportsScreen() {
               ViewSwitch only; there is no in-page toggle here anymore. */}
 
           <View style={styles.chartCard}>
-            <Text style={styles.chartTitle}>Earnings by source</Text>
+            <Text style={styles.chartTitle}>Profits by source</Text>
             <Text style={styles.chartSubtitle}>
               {isPersonalView ? "My earnings this period" : "Group earnings this period"}
             </Text>

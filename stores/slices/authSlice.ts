@@ -10,7 +10,22 @@ export const createAuthSlice = (set: SetFn, get: GetFn): Pick<StoreState, "clear
         activeGroupId: null,
       }),
 
-      clearAuth: () => set({ authUid: null, authName: null, authEmail: null }),
+      clearAuth: () => set({ 
+        authUid: null, 
+        authName: null, 
+        authEmail: null,
+        currentMember: null, // Clear current member on logout
+        activeGroupId: null, // Clear active group on logout
+        members: [], // Clear all cached data on logout
+        contributions: [],
+        loans: [],
+        investments: [],
+        walletTransactions: [],
+        expenses: [],
+        meetings: [],
+        notifications: [],
+        auditLogs: [],
+      }),
 
 
 });

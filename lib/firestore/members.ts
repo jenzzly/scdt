@@ -146,6 +146,30 @@ export async function deleteMember(
   if (g) await updateGroup(gId, { memberCount: Math.max(0, (g.memberCount || 0) - 1) });
 }
 
+export async function findMemberByEmail(
+  groupId: string,
+  email: string,
+): Promise<Member | null> {
+  try {
+    if (!email) return null;
+    
+    // Query for member with matching email (case insensitive)
+    const membersRef = membersCol(groupId);
+    const membersQuery = query(membersRef, where("email", "==", email.toLowerCase()));
+    const memberSnap = await getDocs(membersQuery);
+    
+    if (!memberSnap.empty) {
+      const existingMember = memberSnap.docs[0];
+      return { ...existingMember.data(), id: existingMember.id } as Member;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error("[findMemberByEmail] Error:", error);
+    return null;
+  }
+}
+
 export async function findAndMergeMemberByEmail(
   groupId: string,
   email: string,
@@ -303,9 +327,13 @@ export async function ensureMemberExists(
     const memberSnap = await getDoc(memberRef);
 
     if (memberSnap.exists()) {
-      // Member exists but membership doesn't - just link them
+      // Member exists but membership doesn't - this could be a deleted member trying to rejoin
       console.log(`[ensureMemberExists] Member doc exists, creating membership link`);
       const existingData = memberSnap.data() as Member;
+      
+      // If member was previously deleted/exited/inactive, keep that status to require admin approval
+      // Only allow automatic active status if they were previously active
+      const memberStatus = existingData.status === "active" ? "active" : "pending";
       
       // Create membership document
       await setDoc(membershipRef, {
@@ -314,16 +342,26 @@ export async function ensureMemberExists(
         userId: userId,
         memberId: memberId,
         role: existingData.role || role,
-        status: existingData.status || "active",
+        status: memberStatus,
         email: email.toLowerCase(),
         createdAt: now,
       });
       
-      return { ...existingData, id: memberId } as Member;
+      // Update member status if needed (for rejoining members)
+      if (existingData.status !== "active") {
+        await updateDoc(memberRef, { 
+          status: memberStatus,
+          userId: userId,
+          updatedAt: now 
+        });
+      }
+      
+      return { ...existingData, id: memberId, status: memberStatus } as Member;
     }
 
     // Create new member document
-    console.log(`[ensureMemberExists] Creating new member document with role: ${role}`);
+    console.log(`[ensureMemberExists] Creating new member document with role: ${role}, status: ${role === "admin" ? "active" : "pending"}`);
+    const initialStatus = role === "admin" ? "active" : "pending"; // First member (admin) is auto-approved, others require approval
     await setDoc(memberRef, {
       id: memberId,
       groupId: gId,
@@ -332,7 +370,7 @@ export async function ensureMemberExists(
       email: email.toLowerCase(),
       phone: "",
       role,
-      status: "active",
+      status: initialStatus,
       dateJoined: now,
       totalContributions: 0,
       totalSavings: 0,
@@ -347,15 +385,14 @@ export async function ensureMemberExists(
       userId,
       memberId,
       role,
-      status: "active",
+      status: initialStatus,
       email: email.toLowerCase(),
       createdAt: now,
     });
 
     // Increment memberCount - only for new members (not re-links)
     // We increment after creating both docs to avoid race conditions
-    const currentCount = groupData?.memberCount ?? 0;
-    await updateDoc(groupRef, { memberCount: currentCount + 1 }).catch((e) => {
+    await updateDoc(groupRef, { memberCount: memberCount + 1 }).catch((e) => {
       console.warn("[ensureMemberExists] Failed to increment memberCount:", e);
     });
 
@@ -363,7 +400,7 @@ export async function ensureMemberExists(
     const finalMemberDoc = await getDoc(memberRef);
     if (finalMemberDoc.exists()) {
       const member = { ...finalMemberDoc.data(), id: finalMemberDoc.id } as Member;
-      console.log(`[ensureMemberExists] Member created successfully with role: ${member.role}`);
+      console.log(`[ensureMemberExists] Member created successfully with role: ${member.role}, status: ${member.status}`);
       return member;
     }
     

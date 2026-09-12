@@ -17,6 +17,7 @@ import { DEFAULT_MEMBER_PERMISSIONS } from "../types";
 import { USER_ROLES, ROLE_LABELS } from "../types/roles";
 import { createUserAsAdmin, resetUserPasswordAsAdmin } from "../lib/auth/adminUsers";
 import { generateLoginToken } from "../utils/authTokens";
+import { findMembershipDrift, fixMembershipDrift, type MembershipDrift } from "../lib/firestore/reconcileMemberships";
 
 // ─────────────────────────────────────────────
 // Constants
@@ -380,6 +381,7 @@ export default function GroupSettingsScreen() {
     { key: "settings", label: "⚙️ Settings" },
     { key: "members", label: "👥 Members" },
     { key: "permissions", label: "🔐 Permissions" },
+    { key: "tokenRequests", label: "🔑 Token Requests" },
     { key: "audit", label: "📋 Audit" },
   ] as const;
 
@@ -401,6 +403,12 @@ export default function GroupSettingsScreen() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [creatingMember, setCreatingMember] = useState(false);
   const [savingMember, setSavingMember] = useState(false);
+
+  // ─── Membership Reconciliation State ────────────────────────────────────
+  const [checkingDrift, setCheckingDrift] = useState(false);
+  const [driftResults, setDriftResults] = useState<MembershipDrift[] | null>(null);
+  const [showDriftModal, setShowDriftModal] = useState(false);
+  const [fixingDriftId, setFixingDriftId] = useState<string | null>(null);
 
   const [createForm, setCreateForm] = useState({
     fullName: "",
@@ -443,7 +451,7 @@ export default function GroupSettingsScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   // ─── Audit State ─────────────────────────────────────────────────────────
-  const [activeSection, setActiveSection] = useState<"settings" | "members" | "permissions" | "audit">("settings");
+  const [activeSection, setActiveSection] = useState<"settings" | "members" | "permissions" | "audit" | "tokenRequests">("settings");
   const [activeTab, setActiveTab] = useState<AuditTab>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
@@ -466,6 +474,10 @@ export default function GroupSettingsScreen() {
   const [newRoleName, setNewRoleName] = useState("");
   const [creatingRole, setCreatingRole] = useState(false);
   const [tokenGenerating, setTokenGenerating] = useState<string | null>(null);
+
+  // ─── Token Requests State ─────────────────────────────────────────────────
+  const [pendingTokenRequests, setPendingTokenRequests] = useState<any[]>([]);
+  const [processingTokenRequest, setProcessingTokenRequest] = useState<string | null>(null);
 
   // Combined list of roles: the 5 built-in system roles + any custom roles
   // stored on the group doc. This is the single source of truth the
@@ -514,10 +526,14 @@ export default function GroupSettingsScreen() {
           rolePermissions: { ...(group?.rolePermissions ?? {}), [role.id]: perms },
         });
       } else {
+        // Update both customRoles array AND customRolePermissions map for security rules
         const updatedCustomRoles = (group?.customRoles ?? []).map((r) =>
           r.id === role.id ? { ...r, permissions: perms } : r
         );
-        await updateGroup(activeGroupId, { customRoles: updatedCustomRoles });
+        await updateGroup(activeGroupId, { 
+          customRoles: updatedCustomRoles,
+          customRolePermissions: { ...(group?.customRolePermissions ?? {}), [role.id]: perms }
+        });
       }
 
       // Cascade: keep every member currently holding this role in sync, since
@@ -535,7 +551,7 @@ export default function GroupSettingsScreen() {
     } finally {
       setRoleSaving(null);
     }
-  }, [activeGroupId, group?.rolePermissions, group?.customRoles, allMembers, getRolePerms, updateGroup, updateMember, show]);
+  }, [activeGroupId, group?.rolePermissions, group?.customRoles, group?.customRolePermissions, allMembers, getRolePerms, updateGroup, updateMember, show]);
 
   const handleCreateRole = useCallback(async () => {
     if (!newRoleName.trim()) { show("Role name is required", "error"); return; }
@@ -553,7 +569,10 @@ export default function GroupSettingsScreen() {
         isSystem: false,
         createdAt: new Date().toISOString(),
       };
-      await updateGroup(activeGroupId, { customRoles: [...(group?.customRoles ?? []), newRole] });
+      await updateGroup(activeGroupId, { 
+        customRoles: [...(group?.customRoles ?? []), newRole],
+        customRolePermissions: { ...(group?.customRolePermissions ?? {}), [newRole.id]: newRole.permissions }
+      });
       show(`Role "${newRole.name}" created — set its permissions below`);
       setShowCreateRole(false);
       setNewRoleName("");
@@ -563,7 +582,80 @@ export default function GroupSettingsScreen() {
     } finally {
       setCreatingRole(false);
     }
-  }, [newRoleName, activeGroupId, roles, group?.customRoles, updateGroup, show]);
+  }, [newRoleName, activeGroupId, roles, group?.customRoles, group?.customRolePermissions, updateGroup, show]);
+
+  // ─── Token Request Handlers ───────────────────────────────────────────────
+  useEffect(() => {
+    if (activeSection === "tokenRequests" && activeGroupId) {
+      const unsubscribe = FS.subscribePendingTokenRequests(
+        activeGroupId,
+        (requests) => setPendingTokenRequests(requests),
+        (error) => console.error("Error loading token requests:", error)
+      );
+      return () => unsubscribe();
+    }
+  }, [activeSection, activeGroupId]);
+
+  const handleProcessTokenRequest = useCallback(async (request: any) => {
+    if (!activeGroupId) { show("No active group", "error"); return; }
+    
+    setProcessingTokenRequest(request.id);
+    try {
+      // Find member by email
+      const member = members.find(m => m.email?.toLowerCase() === request.email.toLowerCase());
+      
+      if (!member) {
+        show(`No member found with email ${request.email}`, "error");
+        await FS.updateTokenRequest(request.id, { status: "cancelled", processedAt: new Date().toISOString() });
+        return;
+      }
+      
+      // Generate token
+      const tokenData = generateLoginToken();
+      await useStore.getState().updateMember(member.id, {
+        loginToken: tokenData.token,
+        loginTokenExpiry: tokenData.expiry,
+      });
+      
+      // Send email notification
+      if (member.email) {
+        await FS.addNotification(
+          member.userId || member.id,
+          {
+            title: "Your Login Token",
+            message: `Your login token is: ${tokenData.token}\n\nThis token will expire in 24 hours. Use it on the login screen to access your account.`,
+            type: "info",
+            groupId: activeGroupId,
+          },
+          member.email
+        );
+      }
+      
+      // Mark request as processed
+      await FS.updateTokenRequest(request.id, { 
+        status: "processed", 
+        processedAt: new Date().toISOString() 
+      });
+      
+      show(`Login token sent to ${member.email}`, "success");
+    } catch (e: any) {
+      show(e.message || "Failed to process token request", "error");
+    } finally {
+      setProcessingTokenRequest(null);
+    }
+  }, [activeGroupId, members, show]);
+
+  const handleCancelTokenRequest = useCallback(async (requestId: string) => {
+    try {
+      await FS.updateTokenRequest(requestId, { 
+        status: "cancelled", 
+        processedAt: new Date().toISOString() 
+      });
+      show("Token request cancelled");
+    } catch (e: any) {
+      show(e.message || "Failed to cancel token request", "error");
+    }
+  }, [show]);
 
   const handleDeleteRole = useCallback((role: GroupRole) => {
     if (role.isSystem || !activeGroupId) return;
@@ -825,6 +917,54 @@ export default function GroupSettingsScreen() {
     }
   };
 
+  // ─── Membership Reconciliation Handlers ─────────────────────────────────
+  const handleCheckMembershipDrift = async () => {
+    if (!activeGroupId) { show("No active group", "error"); return; }
+    setCheckingDrift(true);
+    try {
+      const drift = await findMembershipDrift(activeGroupId, members);
+      setDriftResults(drift);
+      setShowDriftModal(true);
+      if (drift.length === 0) {
+        show("All member roles are in sync", "success");
+      }
+    } catch (e: any) {
+      show(e.message || "Failed to check member roles", "error");
+    } finally {
+      setCheckingDrift(false);
+    }
+  };
+
+  const handleFixDrift = async (drift: MembershipDrift) => {
+    if (!activeGroupId) return;
+    setFixingDriftId(drift.memberId);
+    try {
+      await fixMembershipDrift(activeGroupId, drift);
+      setDriftResults((prev) => prev?.filter((d) => d.memberId !== drift.memberId) ?? null);
+      show(`Fixed ${drift.memberFullName}'s access`);
+    } catch (e: any) {
+      show(e.message || "Failed to fix membership", "error");
+    } finally {
+      setFixingDriftId(null);
+    }
+  };
+
+  const handleFixAllDrift = async () => {
+    if (!activeGroupId || !driftResults) return;
+    setFixingDriftId("__all__");
+    try {
+      for (const d of driftResults) {
+        await fixMembershipDrift(activeGroupId, d);
+      }
+      show(`Fixed ${driftResults.length} member${driftResults.length === 1 ? "" : "s"}`);
+      setDriftResults([]);
+    } catch (e: any) {
+      show(e.message || "Failed to fix all memberships", "error");
+    } finally {
+      setFixingDriftId(null);
+    }
+  };
+
   // ─── Audit Filters ──────────────────────────────────────────────────────
   useEffect(() => { setCurrentPage(1); }, [activeTab, searchTerm, selectedYear, selectedMonth, selectedDay]);
 
@@ -1054,8 +1194,26 @@ export default function GroupSettingsScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await new Promise((r) => setTimeout(r, 1000));
-    setRefreshing(false);
+    try {
+      // Trigger a proper sync using the store's sync mechanism
+      const { triggerForceSync, syncStatus, syncError } = useStore.getState();
+      triggerForceSync();
+      
+      // Wait a bit for sync to complete
+      await new Promise((r) => setTimeout(r, 2000));
+      
+      // Check sync status after refresh
+      const state = useStore.getState();
+      if (state.syncStatus === "failed") {
+        show(state.syncError || "Sync failed. Please try again.", "error");
+      } else {
+        show("Data refreshed successfully", "success");
+      }
+    } catch (e: any) {
+      show(e.message || "Refresh failed", "error");
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const contribAmountNum = parseFloat(contribAmount) || 0;
@@ -1208,6 +1366,13 @@ export default function GroupSettingsScreen() {
                 <Text style={[styles.tabText, activeSection === tab.key && styles.tabTextActive]}>
                   {tab.label}
                 </Text>
+                {tab.key === "tokenRequests" && pendingTokenRequests.length > 0 && (
+                  <View style={styles.tabBadge}>
+                    <Text style={styles.tabBadgeText}>
+                      {pendingTokenRequests.length > 99 ? "99+" : pendingTokenRequests.length}
+                    </Text>
+                  </View>
+                )}
                 {tab.key === "audit" && allAuditLogs.length > 0 && (
                   <View style={styles.tabBadge}>
                     <Text style={styles.tabBadgeText}>
@@ -1570,6 +1735,19 @@ export default function GroupSettingsScreen() {
             </TouchableOpacity>
           </View>
 
+          <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+            <TouchableOpacity
+              style={[styles.addMemberBtn, { backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border }]}
+              onPress={handleCheckMembershipDrift}
+              activeOpacity={0.8}
+              disabled={checkingDrift}
+            >
+              {checkingDrift
+                ? <ActivityIndicator size="small" color={C.primary} />
+                : <Text style={[styles.addMemberBtnText, { color: C.text }]}>🔍 Verify Member Access</Text>}
+            </TouchableOpacity>
+          </View>
+
           <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
             <SearchBar value={memberSearch} onChange={setMemberSearch} placeholder="Search members..." />
             <TabRow tabs={["All", "Active", "Pending", "Inactive"]} active={memberTab} onChange={setMemberTab} />
@@ -1779,6 +1957,87 @@ export default function GroupSettingsScreen() {
         </View>
       )}
 
+      {/* ─── TOKEN REQUESTS SECTION ──────────────────────────────────────────── */}
+      {activeSection === "tokenRequests" && isAdmin && (
+        <View style={styles.contentScroll}>
+          <View style={{ padding: 16, gap: 16 }}>
+            <Text style={{ fontSize: 18, fontWeight: "700", color: C.text }}>
+              Pending Token Requests
+            </Text>
+            <Text style={{ fontSize: 13, color: C.text3 }}>
+              Process login token requests from members who need access to their accounts.
+            </Text>
+
+            {pendingTokenRequests.length === 0 ? (
+              <View style={{ padding: 32, alignItems: "center" }}>
+                <Text style={{ fontSize: 14, color: C.text3 }}>
+                  No pending token requests
+                </Text>
+              </View>
+            ) : (
+              <View style={{ gap: 12 }}>
+                {pendingTokenRequests.map((request) => (
+                  <View key={request.id} style={{ 
+                    backgroundColor: C.surface, 
+                    borderRadius: 12, 
+                    borderWidth: 1, 
+                    borderColor: C.border,
+                    padding: 16,
+                    gap: 12 
+                  }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 14, fontWeight: "600", color: C.text }}>
+                          {request.email}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: C.text3, marginTop: 4 }}>
+                          Requested {request.requestedAt ? new Date(request.requestedAt.toDate()).toLocaleString() : "Recently"}
+                        </Text>
+                      </View>
+                      <View style={{ 
+                        paddingHorizontal: 8, 
+                        paddingVertical: 4, 
+                        borderRadius: 6, 
+                        backgroundColor: C.warning + "20" 
+                      }}>
+                        <Text style={{ fontSize: 11, fontWeight: "600", color: C.warning }}>
+                          Pending
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      <Button
+                        label="Send Token"
+                        onPress={() => handleProcessTokenRequest(request)}
+                        loading={processingTokenRequest === request.id}
+                        size="sm"
+                        style={{ flex: 1 }}
+                      />
+                      <TouchableOpacity
+                        onPress={() => handleCancelTokenRequest(request.id)}
+                        style={{ 
+                          paddingHorizontal: 16, 
+                          paddingVertical: 10, 
+                          borderRadius: 8, 
+                          borderWidth: 1, 
+                          borderColor: C.border,
+                          backgroundColor: C.elevated
+                        }}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: "600", color: C.text3 }}>
+                          Cancel
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        </View>
+      )}
+
       {/* ─── AUDIT SECTION ────────────────────────────────────────────────── */}
       {activeSection === "audit" && (
         <View style={styles.contentScroll}>
@@ -1967,6 +2226,49 @@ export default function GroupSettingsScreen() {
             loading={savingMember}
             fullWidth
           />
+        </View>
+      </BottomModal>
+
+      {/* Member Access Check Modal */}
+      <BottomModal visible={showDriftModal} onClose={() => setShowDriftModal(false)} title="Member Access Check">
+        <View style={{ padding: 16, gap: 12 }}>
+          {!driftResults || driftResults.length === 0 ? (
+            <Text style={{ fontSize: 13, color: C.text3, textAlign: "center", paddingVertical: 20 }}>
+              ✓ Every member's access is correctly in sync.
+            </Text>
+          ) : (
+            <>
+              <Text style={{ fontSize: 13, color: C.text2, lineHeight: 18 }}>
+                {driftResults.length} member{driftResults.length === 1 ? " has" : "s have"} a mismatch between their
+                shown role and their actual access. This can happen after a manual data edit. Fixing it re-syncs their
+                access to match their shown role.
+              </Text>
+              {driftResults.map((d) => (
+                <View key={d.memberId} style={{
+                  borderWidth: 1, borderColor: C.border, borderRadius: 10, padding: 12, gap: 6,
+                }}>
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: C.text }}>{d.memberFullName}</Text>
+                  <Text style={{ fontSize: 11, color: C.text3 }}>
+                    Shows as: {d.memberRole} / {d.memberStatus}{"\n"}
+                    Actual access: {d.membershipRole ?? "no access record"} / {d.membershipStatus ?? "—"}
+                  </Text>
+                  <Button
+                    label="Fix This Member"
+                    onPress={() => handleFixDrift(d)}
+                    loading={fixingDriftId === d.memberId}
+                    size="sm"
+                  />
+                </View>
+              ))}
+              <Button
+                label={`Fix All (${driftResults.length})`}
+                onPress={handleFixAllDrift}
+                loading={fixingDriftId === "__all__"}
+                fullWidth
+                variant="success"
+              />
+            </>
+          )}
         </View>
       </BottomModal>
 

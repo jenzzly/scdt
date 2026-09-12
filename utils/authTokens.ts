@@ -50,3 +50,49 @@ export function generateSimpleToken(): string {
   }
   return token;
 }
+
+/**
+ * Request a login token for a member by email
+ * This function creates a token request document that can be processed by admins
+ * @param groupId The group ID
+ * @param email The member's email address
+ * @returns Object with success status and message
+ */
+export async function requestLoginTokenByEmail(
+  groupId: string,
+  email: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    // Route through the shared Firestore helper instead of hand-rolling a
+    // doc() call here. The previous version called
+    // `doc(db, "pendingTokenRequests", doc(db, "pendingTokenRequests").id)`
+    // — the *inner* doc(db, "pendingTokenRequests") is a bare collection
+    // name (1 path segment), which Firestore rejects with "Document
+    // references must have an even number of segments". createTokenRequest
+    // (lib/firestore/tokenRequests.ts) already does this correctly via
+    // pendingTokenRequestsCol + doc(pendingTokenRequestsCol) for a valid
+    // auto-ID document reference, and keeps this write in one place instead
+    // of two implementations that can drift apart.
+    const { serverTimestamp } = await import('firebase/firestore');
+    const { createTokenRequest } = await import('../lib/firestore/tokenRequests');
+
+    await createTokenRequest({
+      groupId,
+      email: email.toLowerCase(),
+      status: "pending",
+      requestedAt: serverTimestamp() as any,
+      processedAt: null,
+    });
+
+    return {
+      success: true,
+      message: "Token request submitted successfully. Your group administrator will generate and send your login token via email. This may take a few hours depending on admin availability."
+    };
+  } catch (error) {
+    console.error("[requestLoginTokenByEmail] Error:", error);
+    return {
+      success: false,
+      message: "Failed to submit token request. Please try again or contact your administrator."
+    };
+  }
+}

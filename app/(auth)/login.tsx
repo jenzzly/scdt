@@ -10,13 +10,14 @@ import { useRouter } from "expo-router";
 import { useAuth } from "../../hooks/useAuth";
 import { useStore } from "../../stores/useStore";
 import { Input, Button, Toast, useToast } from "../../components/ui";
-import { Colors, S, R, fmtCurrency } from "../../utils/theme";
+import { Colors, S, fmtCurrency } from "../../utils/theme";
 import { BRAND } from "../../lib/brand";
 import { FIXED_GROUP_ID } from "../../stores/fixedGroup";
 import * as FS from "../../lib/firestore";
 
 function LogoImage() {
   const { Image } = require("react-native");
+
   try {
     return (
       <Image
@@ -26,33 +27,33 @@ function LogoImage() {
       />
     );
   } catch {
-    return <Text style={{ fontSize: 28, color: "#fff" }}>S</Text>;
+    return (
+      <Text style={{ fontSize: 28, color: "#fff" }}>
+        S
+      </Text>
+    );
   }
 }
 
 export default function LoginScreen() {
-  const router  = useRouter();
+  const router = useRouter();
   const { width } = useWindowDimensions();
   const { signIn, resetPassword } = useAuth();
   const { show, visible, msg, type } = useToast();
-  // const { show, Toast }           = useToast();
   const { setActiveGroup, recalcTotals } = useStore();
 
-  const isWide  = width >= 768;
+  const isWide = width >= 768;
   const isXWide = width >= 1100;
 
-  const [email,        setEmail]        = useState("");
-  const [password,     setPassword]     = useState("");
-  const [loading,      setLoading]      = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
-  const [resetSent,    setResetSent]    = useState(false);
-  const [showPw,       setShowPw]       = useState(false);
-  const [loginMode,    setLoginMode]    = useState<"password" | "token">("password");
-  const [token,        setToken]        = useState("");
+  const [resetSent, setResetSent] = useState(false);
+  const [showPw, setShowPw] = useState(false);
 
   const passwordRef = useRef<RNTextInput>(null);
-  const emailRef    = useRef<RNTextInput>(null);
-  const tokenRef    = useRef<RNTextInput>(null);
+  const emailRef = useRef<RNTextInput>(null);
 
   useEffect(() => {
     if (Platform.OS === "web" && emailRef.current) {
@@ -61,240 +62,284 @@ export default function LoginScreen() {
   }, []);
 
   const handleLogin = async () => {
-    if (loginMode === "password") {
-      if (!email.trim()) { show("Email address is required", "error"); emailRef.current?.focus(); return; }
-      if (!password)     { show("Password is required",      "error"); passwordRef.current?.focus(); return; }
-      setLoading(true);
-      try {
-        const user = await signIn(email.trim(), password);
-        const member = await FS.ensureMemberExists(
-          FIXED_GROUP_ID, user.uid, user.displayName || email.trim(), email.trim(),
+    if (!email.trim()) {
+      show("Email address is required", "error");
+      emailRef.current?.focus();
+      return;
+    }
+
+    if (!password) {
+      show("Password is required", "error");
+      passwordRef.current?.focus();
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const user = await signIn(email.trim(), password);
+
+      const member = await FS.ensureMemberExists(
+        FIXED_GROUP_ID,
+        user.uid,
+        user.displayName || email.trim(),
+        email.trim(),
+      );
+
+      if (!member) {
+        throw new Error("Failed to load member account");
+      }
+
+      // Set current member immediately to prevent navigation delay
+      const { setCurrentMember } = useStore.getState();
+      setCurrentMember(member);
+
+      // Pending members can log in but remain restricted
+      if (member.status === "pending") {
+        show(
+          "Account created! Awaiting admin approval.",
+          "success"
         );
-        if (member && member.totalContributions > 0) {
-          show(`Welcome back! Balance: ${fmtCurrency(member.totalContributions)}`, "success");
-        }
+
         recalcTotals();
         setActiveGroup(FIXED_GROUP_ID);
         router.replace("/(tabs)/dashboard");
-      } catch (e: any) {
-        const code = e?.code ?? "";
-        const msg =
-          code === "auth/invalid-credential" ? "Invalid email or password" :
-          code === "auth/user-not-found"     ? "No account found with this email" :
-          code === "auth/too-many-requests"  ? "Too many failed attempts. Try again later" :
-          "Login failed. Please try again.";
-        show(msg, "error");
-        passwordRef.current?.focus();
-      } finally { setLoading(false); }
-    } else {
-      // Token-based login - simplified version that prompts for email after token verification
-      if (!token.trim()) { show("Login token is required", "error"); tokenRef.current?.focus(); return; }
-      setLoading(true);
-      try {
-        // Look up member by token
-        const members = await FS.getMembers(FIXED_GROUP_ID);
-        const member = members.find(m => m.loginToken === token.trim());
-        
-        if (!member) {
-          show("Invalid login token", "error");
-          setLoading(false);
-          return;
-        }
-        
-        // Check if token is expired
-        if (!member.loginTokenExpiry || new Date(member.loginTokenExpiry) < new Date()) {
-          show("Login token has expired. Please request a new one.", "error");
-          setLoading(false);
-          return;
-        }
-        
-        // For token login, we need their email to proceed with Firebase auth
-        if (!member.email) {
-          show("No email address configured for this account. Contact admin.", "error");
-          setLoading(false);
-          return;
-        }
-        
-        // Token verified - switch to password mode with email pre-filled
-        // They'll need to use password reset to set their password
-        show(`Token verified for ${member.fullName}. Please reset your password to continue.`, "success");
-        
-        // Send password reset email
-        await resetPassword(member.email);
-        
-        // Switch to password mode and pre-fill email
-        setLoginMode("password");
-        setEmail(member.email);
-        setPassword("");
-        setToken("");
-        
-      } catch (e: any) {
-        show(e.message || "Token login failed", "error");
-      } finally { setLoading(false); }
+        return;
+      }
+
+      // Suspended members can log in but remain restricted
+      if (member.status === "suspended") {
+        show(
+          "Account suspended. Contact admin.",
+          "error"
+        );
+
+        recalcTotals();
+        setActiveGroup(FIXED_GROUP_ID);
+        router.replace("/(tabs)/dashboard");
+        return;
+      }
+
+      if (member.totalContributions > 0) {
+        show(
+          `Welcome back! Balance: ${fmtCurrency(
+            member.totalContributions
+          )}`,
+          "success"
+        );
+      } else {
+        show("Login successful!", "success");
+      }
+
+      recalcTotals();
+      setActiveGroup(FIXED_GROUP_ID);
+      router.replace("/(tabs)/dashboard");
+    } catch (e: any) {
+      const code = e?.code ?? "";
+
+      const msg =
+        code === "auth/invalid-credential"
+          ? "Invalid email or password"
+          : code === "auth/user-not-found"
+            ? "No account found with this email"
+            : code === "auth/too-many-requests"
+              ? "Too many failed attempts. Try again later"
+              : "Login failed. Please try again.";
+
+      show(msg, "error");
+      passwordRef.current?.focus();
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleReset = async () => {
-    if (!email.trim()) { show("Enter your email address first", "error"); emailRef.current?.focus(); return; }
-    setResetLoading(true); setResetSent(false);
+    if (!email.trim()) {
+      show("Enter your email address first", "error");
+      emailRef.current?.focus();
+      return;
+    }
+
+    setResetLoading(true);
+    setResetSent(false);
+
     try {
       await resetPassword(email.trim());
+
       setResetSent(true);
-      show("If an account exists for this email, a password reset email has been sent.", "success");
+
+      show(
+        "If an account exists for this email, a password reset email has been sent.",
+        "success"
+      );
     } catch (e: any) {
       const code = e?.code ?? "";
-      // Deliberately NOT distinguishing "no account found" from other
-      // failures here — Firebase's own enumeration-protection setting
-      // may or may not suppress auth/user-not-found server-side
-      // depending on project configuration, but the client must never
-      // reveal it either way (telling an attacker "no account found
-      // with this email" is exactly the account-enumeration leak this
-      // flow needs to avoid). Only genuinely user-actionable errors —
-      // bad input, rate limiting — get a distinct message; anything
-      // else (including "no such user") shows the same generic
-      // success-shaped message as a real send, so the two cases are
-      // indistinguishable from the outside.
+
       if (code === "auth/invalid-email") {
         show("Enter a valid email address", "error");
       } else if (code === "auth/too-many-requests") {
-        show("Too many attempts. Please try again later.", "error");
+        show(
+          "Too many attempts. Please try again later.",
+          "error"
+        );
       } else {
         setResetSent(true);
-        show("If an account exists for this email, a password reset email has been sent.", "success");
+
+        show(
+          "If an account exists for this email, a password reset email has been sent.",
+          "success"
+        );
       }
-    } finally { setResetLoading(false); }
+    } finally {
+      setResetLoading(false);
+    }
   };
 
-  // ── Shared form ───────────────────────────────────────────────────────────
-  // IMPORTANT: this is a JSX *value*, not a component function. Defining it as
-  // `const Form = () => (...)` creates a new component type on every render
-  // (the parent re-renders on every keystroke), so React remounts the <Input>
-  // subtree and kicks focus out of the field after each character typed.
+  // IMPORTANT:
+  // This is JSX, not a component function.
+  // Keeping it as a value prevents the Input components from
+  // remounting on every keystroke.
   const formJsx = (
     <View style={f.form}>
-      {/* Login mode toggle */}
-      <View style={f.loginModeToggle}>
-        <TouchableOpacity
-          style={[f.modeButton, loginMode === "password" && f.modeButtonActive]}
-          onPress={() => setLoginMode("password")}
-          activeOpacity={0.7}
-        >
-          <Text style={[f.modeButtonText, loginMode === "password" && f.modeButtonTextActive]}>
-            Password
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[f.modeButton, loginMode === "token" && f.modeButtonActive]}
-          onPress={() => setLoginMode("token")}
-          activeOpacity={0.7}
-        >
-          <Text style={[f.modeButtonText, loginMode === "token" && f.modeButtonTextActive]}>
-            Token
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <Input
+        ref={emailRef as any}
+        label="Email Address"
+        value={email}
+        onChangeText={setEmail}
+        placeholder="you@example.com"
+        keyboardType="email-address"
+        autoCapitalize="none"
+        autoComplete="email"
+        returnKeyType="next"
+        onSubmitEditing={() =>
+          passwordRef.current?.focus()
+        }
+        leftIcon="📧"
+      />
 
-      {loginMode === "password" ? (
-        <>
-          <Input
-            ref={emailRef as any}
-            label="Email Address"
-            value={email}
-            onChangeText={setEmail}
-            placeholder="you@example.com"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoComplete="email"
-            returnKeyType="next"
-            onSubmitEditing={() => passwordRef.current?.focus()}
-            leftIcon="📧"
-          />
-
-          <Input
-            ref={passwordRef as any}
-            label="Password"
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Enter your password"
-            secureTextEntry={!showPw}
-            autoCapitalize="none"
-            autoComplete="password"
-            returnKeyType="go"
-            onSubmitEditing={handleLogin}
-            onKeyPress={(e: any) => { if (e.nativeEvent?.key === "Enter" || e.key === "Enter") handleLogin(); }}
-            leftIcon="🔒"
-            right={
-              <TouchableOpacity onPress={() => setShowPw(!showPw)} activeOpacity={0.7}>
-                <Text style={f.showHide}>{showPw ? "HIDE" : "SHOW"}</Text>
-              </TouchableOpacity>
-            }
-          />
-
-          <TouchableOpacity onPress={handleReset} disabled={resetLoading} style={f.forgotRow} activeOpacity={0.7}>
-            {resetLoading ? (
-              <ActivityIndicator size="small" color={Colors.accent} />
-            ) : resetSent ? (
-              <Text style={f.resetSent}>✓ Reset email sent!</Text>
-            ) : (
-              <Text style={f.forgot}>Forgot password?</Text>
-            )}
+      <Input
+        ref={passwordRef as any}
+        label="Password"
+        value={password}
+        onChangeText={setPassword}
+        placeholder="Enter your password"
+        secureTextEntry={!showPw}
+        autoCapitalize="none"
+        autoComplete="password"
+        returnKeyType="go"
+        onSubmitEditing={handleLogin}
+        onKeyPress={(e: any) => {
+          if (
+            e.nativeEvent?.key === "Enter" ||
+            e.key === "Enter"
+          ) {
+            handleLogin();
+          }
+        }}
+        leftIcon="🔒"
+        right={
+          <TouchableOpacity
+            onPress={() => setShowPw(!showPw)}
+            activeOpacity={0.7}
+          >
+            <Text style={f.showHide}>
+              {showPw ? "HIDE" : "SHOW"}
+            </Text>
           </TouchableOpacity>
-        </>
-      ) : (
-        <>
-          <Input
-            ref={tokenRef as any}
-            label="Login Token"
-            value={token}
-            onChangeText={setToken}
-            placeholder="Enter your login token"
-            autoCapitalize="none"
-            autoComplete="off"
-            returnKeyType="go"
-            onSubmitEditing={handleLogin}
-            onKeyPress={(e: any) => { if (e.nativeEvent?.key === "Enter" || e.key === "Enter") handleLogin(); }}
-            leftIcon="🔑"
-          />
-          <Text style={f.tokenHint}>
-            Enter the token provided by your group administrator. Tokens expire after 24 hours.
-            After verification, you'll need to set your password via email.
-          </Text>
-        </>
-      )}
+        }
+      />
 
-      <Button label="Sign In" onPress={handleLogin} fullWidth loading={loading} size="lg" />
+      <TouchableOpacity
+        onPress={handleReset}
+        disabled={resetLoading}
+        style={f.forgotRow}
+        activeOpacity={0.7}
+      >
+        {resetLoading ? (
+          <ActivityIndicator
+            size="small"
+            color={Colors.accent}
+          />
+        ) : resetSent ? (
+          <Text style={f.resetSent}>
+            ✓ Reset email sent!
+          </Text>
+        ) : (
+          <Text style={f.forgot}>
+            Forgot password?
+          </Text>
+        )}
+      </TouchableOpacity>
+
+      <Button
+        label="Sign In"
+        onPress={handleLogin}
+        fullWidth
+        loading={loading}
+        size="lg"
+      />
     </View>
   );
 
   const registerLinkJsx = (
     <View style={f.registerRow}>
-      <Text style={f.registerText}>Don't have an account? </Text>
-      <TouchableOpacity onPress={() => router.push("/(auth)/register")} activeOpacity={0.7}>
-        <Text style={f.registerLink}>Create Account</Text>
+      <Text style={f.registerText}>
+        Don't have an account?{" "}
+      </Text>
+
+      <TouchableOpacity
+        onPress={() => router.push("/(auth)/register")}
+        activeOpacity={0.7}
+      >
+        <Text style={f.registerLink}>
+          Create Account
+        </Text>
       </TouchableOpacity>
     </View>
   );
 
-  // ── Desktop: two-column ───────────────────────────────────────────────────
+  // Desktop: two-column
   if (isXWide) {
     return (
-      <View style={[f.root, { flexDirection: "row" }]}>
+      <View
+        style={[
+          f.root,
+          { flexDirection: "row" },
+        ]}
+      >
         {/* Left decorative panel */}
         <View style={f.desktopLeft}>
           <View style={f.desktopLeftInner}>
             <View style={f.logoRing}>
               <LogoImage />
             </View>
-            <Text style={f.desktopBrand}>{BRAND.appName}</Text>
+
+            <Text style={f.desktopBrand}>
+              {BRAND.appName}
+            </Text>
+
             <Text style={f.desktopTagline}>
               {"Group savings, loans and investments — "}
-              <Text style={{ color: "#4ade80" }}>{"all in one place."}</Text>
+              <Text style={{ color: "#4ade80" }}>
+                {"all in one place."}
+              </Text>
             </Text>
+
             <View style={f.desktopFeatures}>
-              {["💰 Savings tracking", "🏦 Loan management", "📈 Investments", "👥 Member tools"].map((t, i) => (
-                <View key={i} style={f.desktopFeatureRow}>
+              {[
+                "💰 Savings tracking",
+                "🏦 Loan management",
+                "📈 Investments",
+                "👥 Member tools",
+              ].map((t, i) => (
+                <View
+                  key={i}
+                  style={f.desktopFeatureRow}
+                >
                   <View style={f.desktopFeatureDot} />
-                  <Text style={f.desktopFeatureText}>{t}</Text>
+                  <Text style={f.desktopFeatureText}>
+                    {t}
+                  </Text>
                 </View>
               ))}
             </View>
@@ -304,31 +349,54 @@ export default function LoginScreen() {
         {/* Right: form */}
         <View style={f.desktopRight}>
           <View style={f.desktopCard}>
-            <TouchableOpacity onPress={() => router.back()} style={f.back} activeOpacity={0.7}>
-              <Text style={f.backText}>← Back</Text>
+            <TouchableOpacity
+              onPress={() => router.back()}
+              style={f.back}
+              activeOpacity={0.7}
+            >
+              <Text style={f.backText}>
+                ← Back
+              </Text>
             </TouchableOpacity>
-            <Text style={f.cardTitle}>Welcome back</Text>
-            <Text style={f.cardSub}>Sign in to your account</Text>
+
+            <Text style={f.cardTitle}>
+              Welcome back
+            </Text>
+
+            <Text style={f.cardSub}>
+              Sign in to your account
+            </Text>
+
             {formJsx}
             {registerLinkJsx}
           </View>
         </View>
+
         <Toast
-            visible={visible}
-            msg={msg}
-            type={type}
-          />
-        {/* <Toast /> */}
+          visible={visible}
+          msg={msg}
+          type={type}
+        />
       </View>
     );
   }
 
-  // ── Tablet: centered card ─────────────────────────────────────────────────
+  // Tablet: centered card
   if (isWide) {
     return (
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={[f.root, { alignItems: "center", justifyContent: "center" }]}
+        behavior={
+          Platform.OS === "ios"
+            ? "padding"
+            : "height"
+        }
+        style={[
+          f.root,
+          {
+            alignItems: "center",
+            justifyContent: "center",
+          },
+        ]}
       >
         <ScrollView
           contentContainerStyle={f.tabletScroll}
@@ -336,17 +404,29 @@ export default function LoginScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={f.tabletCard}>
-            <TouchableOpacity onPress={() => router.back()} style={f.back} activeOpacity={0.7}>
-              <Text style={f.backText}>← Back</Text>
+            <TouchableOpacity
+              onPress={() => router.back()}
+              style={f.back}
+              activeOpacity={0.7}
+            >
+              <Text style={f.backText}>
+                ← Back
+              </Text>
             </TouchableOpacity>
 
             <View style={f.tabletBrand}>
               <View style={f.logoRing}>
                 <LogoImage />
               </View>
+
               <View>
-                <Text style={f.cardTitle}>{BRAND.appName}</Text>
-                <Text style={f.cardSub}>Welcome back — sign in to continue</Text>
+                <Text style={f.cardTitle}>
+                  {BRAND.appName}
+                </Text>
+
+                <Text style={f.cardSub}>
+                  Welcome back — sign in to continue
+                </Text>
               </View>
             </View>
 
@@ -354,15 +434,20 @@ export default function LoginScreen() {
             {registerLinkJsx}
           </View>
         </ScrollView>
+
         <Toast />
       </KeyboardAvoidingView>
     );
   }
 
-  // ── Mobile: full-screen ───────────────────────────────────────────────────
+  // Mobile: full-screen
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      behavior={
+        Platform.OS === "ios"
+          ? "padding"
+          : "height"
+      }
       style={f.root}
     >
       <ScrollView
@@ -371,35 +456,53 @@ export default function LoginScreen() {
         keyboardDismissMode="interactive"
         showsVerticalScrollIndicator={false}
       >
-        <TouchableOpacity onPress={() => router.back()} style={f.back} activeOpacity={0.7}>
-          <Text style={f.backText}>← Back</Text>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={f.back}
+          activeOpacity={0.7}
+        >
+          <Text style={f.backText}>
+            ← Back
+          </Text>
         </TouchableOpacity>
 
         <View style={f.mobileBrand}>
           <View style={f.logoRing}>
             <LogoImage />
           </View>
-          <Text style={f.cardTitle}>{BRAND.appName}</Text>
-          <Text style={f.cardSub}>Welcome back</Text>
+
+          <Text style={f.cardTitle}>
+            {BRAND.appName}
+          </Text>
+
+          <Text style={f.cardSub}>
+            Welcome back
+          </Text>
         </View>
 
         {formJsx}
         {registerLinkJsx}
       </ScrollView>
+
       <Toast />
     </KeyboardAvoidingView>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
+
 const f = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Colors.bg },
+  root: {
+    flex: 1,
+    backgroundColor: Colors.bg,
+  },
 
   // Mobile
   mobileScroll: {
     flexGrow: 1,
     paddingHorizontal: S.lg,
-    paddingTop: Platform.OS === "ios" ? 60 : 44,
+    paddingTop:
+      Platform.OS === "ios" ? 60 : 44,
     paddingBottom: 40,
   },
 
@@ -411,6 +514,7 @@ const f = StyleSheet.create({
     padding: 40,
     minHeight: "100%",
   },
+
   tabletCard: {
     width: "100%" as any,
     maxWidth: 480,
@@ -419,16 +523,24 @@ const f = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     padding: 36,
-    ...(Platform.OS === "web" ? {
-      boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
-    } : {
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.18,
-      shadowRadius: 20,
-      elevation: 12,
-    }) as any,
+
+    ...(Platform.OS === "web"
+      ? {
+          boxShadow:
+            "0 8px 40px rgba(0,0,0,0.18)",
+        }
+      : {
+          shadowColor: "#000",
+          shadowOffset: {
+            width: 0,
+            height: 8,
+          },
+          shadowOpacity: 0.18,
+          shadowRadius: 20,
+          elevation: 12,
+        }) as any,
   },
+
   tabletBrand: {
     flexDirection: "row",
     alignItems: "center",
@@ -446,7 +558,12 @@ const f = StyleSheet.create({
     borderRightWidth: 1,
     borderRightColor: Colors.border,
   },
-  desktopLeftInner: { maxWidth: 360, width: "100%" as any },
+
+  desktopLeftInner: {
+    maxWidth: 360,
+    width: "100%" as any,
+  },
+
   desktopBrand: {
     fontSize: 28,
     fontWeight: "800",
@@ -455,6 +572,7 @@ const f = StyleSheet.create({
     marginTop: 16,
     marginBottom: 8,
   },
+
   desktopTagline: {
     fontSize: 20,
     fontWeight: "500",
@@ -462,19 +580,37 @@ const f = StyleSheet.create({
     lineHeight: 30,
     marginBottom: 32,
   },
-  desktopFeatures: { gap: 12 },
-  desktopFeatureRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+
+  desktopFeatures: {
+    gap: 12,
+  },
+
+  desktopFeatureRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+
   desktopFeatureDot: {
-    width: 6, height: 6, borderRadius: 3,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: Colors.primary,
   },
-  desktopFeatureText: { fontSize: 14, color: Colors.text2, fontWeight: "500" },
+
+  desktopFeatureText: {
+    fontSize: 14,
+    color: Colors.text2,
+    fontWeight: "500",
+  },
+
   desktopRight: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 60,
   },
+
   desktopCard: {
     width: "100%" as any,
     maxWidth: 420,
@@ -491,15 +627,26 @@ const f = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
-    ...(Platform.OS !== "web" ? {
-      shadowColor: Colors.primary,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.20,
-      shadowRadius: 12,
-      elevation: 6,
-    } : {}),
+
+    ...(Platform.OS !== "web"
+      ? {
+          shadowColor: Colors.primary,
+          shadowOffset: {
+            width: 0,
+            height: 4,
+          },
+          shadowOpacity: 0.20,
+          shadowRadius: 12,
+          elevation: 6,
+        }
+      : {}),
   },
-  mobileBrand: { alignItems: "center", marginBottom: 36 },
+
+  mobileBrand: {
+    alignItems: "center",
+    marginBottom: 36,
+  },
+
   cardTitle: {
     fontSize: 24,
     fontWeight: "800",
@@ -507,48 +654,53 @@ const f = StyleSheet.create({
     letterSpacing: -0.4,
     marginBottom: 4,
   },
-  cardSub: { fontSize: 14, color: Colors.text3 },
+
+  cardSub: {
+    fontSize: 14,
+    color: Colors.text3,
+  },
 
   // Back button
-  back: { marginBottom: 24, alignSelf: "flex-start" },
-  backText: { color: Colors.text3, fontSize: 14, fontWeight: "600" },
+  back: {
+    marginBottom: 24,
+    alignSelf: "flex-start",
+  },
+
+  backText: {
+    color: Colors.text3,
+    fontSize: 14,
+    fontWeight: "600",
+  },
 
   // Form
-  form: { marginBottom: 20 },
-  loginModeToggle: {
-    flexDirection: "row",
-    backgroundColor: Colors.elevated,
-    borderRadius: 10,
-    padding: 4,
-    marginBottom: 16,
+  form: {
+    marginBottom: 20,
   },
-  modeButton: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: "center",
+
+  showHide: {
+    color: Colors.accent,
+    fontSize: 12,
+    fontWeight: "700",
   },
-  modeButtonActive: {
-    backgroundColor: Colors.surface,
-  },
-  modeButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: Colors.text3,
-  },
-  modeButtonTextActive: {
-    color: Colors.text,
-  },
-  showHide: { color: Colors.accent, fontSize: 12, fontWeight: "700" },
-  forgotRow: { alignSelf: "flex-end", marginTop: 8, marginBottom: 16, minHeight: 20, justifyContent: "center" },
-  forgot:    { color: Colors.accent, fontSize: 13, fontWeight: "600" },
-  resetSent: { color: Colors.success, fontSize: 13, fontWeight: "600" },
-  tokenHint: {
-    fontSize: 11,
-    color: Colors.text3,
+
+  forgotRow: {
+    alignSelf: "flex-end",
     marginTop: 8,
     marginBottom: 16,
-    textAlign: "center",
+    minHeight: 20,
+    justifyContent: "center",
+  },
+
+  forgot: {
+    color: Colors.accent,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+
+  resetSent: {
+    color: Colors.success,
+    fontSize: 13,
+    fontWeight: "600",
   },
 
   // Footer register link
@@ -559,6 +711,15 @@ const f = StyleSheet.create({
     marginTop: 20,
     paddingVertical: 8,
   },
-  registerText: { color: Colors.text3, fontSize: 13 },
-  registerLink: { color: Colors.accent, fontSize: 13, fontWeight: "700" },
+
+  registerText: {
+    color: Colors.text3,
+    fontSize: 13,
+  },
+
+  registerLink: {
+    color: Colors.accent,
+    fontSize: 13,
+    fontWeight: "700",
+  },
 });

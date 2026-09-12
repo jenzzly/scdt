@@ -149,6 +149,7 @@ export interface Group {
   memberCount: number;
   rolePermissions?: Partial<Record<MemberRole, MemberPermissions>>; // per-system-role permission sets, editable
   customRoles?: GroupRole[]; // group-defined roles beyond the 5 built-in ones
+  customRolePermissions?: Record<string, MemberPermissions>; // per-custom-role permission sets, keyed by roleId
 }
 
 export interface ContributionGoalConfig {

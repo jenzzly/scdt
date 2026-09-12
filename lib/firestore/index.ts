@@ -36,6 +36,7 @@ export * from "./meetings";
 export * from "./notifications";
 export * from "./groupInit";
 export * from "./deletions";
+export * from "./tokenRequests";
 
 // getMembershipId is defined in core.ts (used internally by several domain
 // modules) but screens also import it directly off the FS namespace.

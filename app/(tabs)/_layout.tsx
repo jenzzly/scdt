@@ -1018,6 +1018,18 @@ export default function TabsLayout() {
 
   const group = useActiveGroup();
 
+  // Wire up role permissions migration for admins
+  useEffect(() => {
+    if (!activeGroupId || !currentMember) return;
+    if (currentMember.role === "admin" || currentMember.role === "accountant") {
+      import("../../lib/firestore/migrateRolePermissions").then(({ migrateRolePermissionsIfNeeded }) => {
+        migrateRolePermissionsIfNeeded(activeGroupId).catch((e) => {
+          console.warn("[migrateRolePermissions] skipped:", e?.message);
+        });
+      });
+    }
+  }, [activeGroupId, currentMember?.role]);
+
   const currentTitle =
     PAGE_TITLES[
       pathname
@@ -1065,15 +1077,16 @@ export default function TabsLayout() {
   };
 
   // ── Pending-approval gate ────────────────
+  // Show immediately if member is pending (or if auth exists but member isn't loaded yet)
   if (
-    currentMember &&
-    currentMember.status === "pending" &&
-    currentUserRole !== "admin"
+    (currentMember && currentMember.status === "pending" && currentUserRole !== "admin") ||
+    (authUid && !currentMember)
   ) {
+    const memberName = currentMember?.fullName || authName || "User";
     return (
       <PendingApprovalScreen
         onSignOut={handleSignOut}
-        memberName={currentMember.fullName}
+        memberName={memberName}
       />
     );
   }

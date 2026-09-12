@@ -94,6 +94,7 @@ export const groupsCol      = collection(db, "groups");
 export const membershipsCol = collection(db, "groupMemberships");
 export const notifsCol      = (uid: string) => collection(db, "users", uid, "notifications");
 export const pendingEmailsCol = collection(db, "pendingEmails");
+export const pendingTokenRequestsCol = collection(db, "pendingTokenRequests");
 
 export const groupDoc    = (gId: string) => doc(db, "groups", gId);
 export const membersCol  = (gId: string) => collection(db, "groups", gId, "members");

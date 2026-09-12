@@ -346,5 +346,13 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if false;
     }
+
+    // Allow unauthenticated users to request login tokens
+    match /pendingTokenRequests/{id} {
+      allow read:   if isAuth() && isAdmin(resource.data.groupId);
+      allow create: if true; // Allow anyone to submit token requests
+      allow update: if isAuth() && isAdmin(resource.data.groupId);
+      allow delete: if isAuth() && isAdmin(resource.data.groupId);
+    }
   }
 }

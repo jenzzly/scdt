@@ -59,17 +59,28 @@ export default function RegisterScreen() {
       
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      const groupId = await FS.createFirstGroupForUser(user.uid);
-      const member = await FS.ensureMemberExists(groupId, user.uid, fullName.trim(), email.trim());
+      // Use the fixed group ID for the single-group app
+      const { FIXED_GROUP_ID } = await import("../../stores/fixedGroup");
+      const member = await FS.ensureMemberExists(FIXED_GROUP_ID, user.uid, fullName.trim(), email.trim());
       
-      if (member && member.totalContributions > 0) {
+      if (!member) {
+        throw new Error("Failed to create member account");
+      }
+      
+      // Set current member immediately to prevent navigation delay
+      const { setCurrentMember } = useStore.getState();
+      setCurrentMember(member);
+      
+      if (member.status === "pending") {
+        show("Account created! Awaiting admin approval.", "success");
+      } else if (member.totalContributions > 0) {
         show(`Welcome back! Your balance of ${fmtCurrency(member.totalContributions)} has been restored.`, "success");
-      } else if (member) {
+      } else {
         show("Account created successfully!", "success");
       }
       
       recalcTotals();
-      setActiveGroup(groupId);
+      setActiveGroup(FIXED_GROUP_ID);
       router.replace("/(tabs)/dashboard");
     } catch (e: any) {
       let msg = "Registration failed. Try again.";

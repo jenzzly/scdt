@@ -127,14 +127,16 @@ export const useStore = create<StoreState>()(
         });
         
         // If we have a uid, try to find the member
+        // Note: This might fail if members aren't loaded yet - that's okay
+        // The member will be found when members are loaded via subscribeMembers
         if (uid) {
           const state = get();
           const member = state.members.find((m) => m.userId === uid);
           if (member) {
-            console.log(`[Store] Found member for auth: ${member.fullName}, role: ${member.role}`);
+            console.log(`[Store] Found member for auth: ${member.fullName}, role: ${member.role}, status: ${member.status}`);
             set({ currentMember: member });
           } else {
-            console.log('[Store] No member found for auth uid');
+            console.log('[Store] No member found for auth uid (members may not be loaded yet)');
           }
         }
       },
