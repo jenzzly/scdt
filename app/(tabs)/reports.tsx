@@ -53,6 +53,7 @@ import {
 
 import {
   findOverdueContributions,
+  findOverdueInstallments,
 } from "../../utils/lateFees";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -73,6 +74,15 @@ type DropdownOption = {
   value: string;
 };
 
+// Member-status advanced filter. "all" = no member-status restriction.
+type MemberStatusFilter =
+  | "all"
+  | "has_unpaid_fees"
+  | "late_contribution_fees"
+  | "late_loans"
+  | "no_contributions_in_period"
+  | "no_loans";
+
 // ─────────────────────────────────────────────────────────────────────────
 // Categories
 // ─────────────────────────────────────────────────────────────────────────
@@ -89,6 +99,15 @@ const CATEGORIES: {
   // { key: "expenses", label: "Expenses", icon: "🧾" },
   // { key: "investments", label: "Investments", icon: "📊" },
   { key: "earnings", label: "Profits", icon: "💰" },
+];
+
+const MEMBER_STATUS_OPTIONS: { label: string; value: MemberStatusFilter }[] = [
+  { label: "All members", value: "all" },
+  { label: "Has unpaid late fees", value: "has_unpaid_fees" },
+  { label: "Late contribution fees", value: "late_contribution_fees" },
+  { label: "Late loan repayments", value: "late_loans" },
+  { label: "No contributions in period", value: "no_contributions_in_period" },
+  { label: "No loans taken", value: "no_loans" },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -694,6 +713,8 @@ function FilterModal({
   contributionStatus,
   onLoanStatusChange,
   onContributionStatusChange,
+  memberStatus,
+  onMemberStatusChange,
   onApply,
   searchTerm,
   onSearchChange,
@@ -750,6 +771,22 @@ function FilterModal({
             />
           </View>
         </View>
+
+        <Text style={styles.modalSectionLabel}>Member Status</Text>
+
+        <Text style={{ fontSize: 11, color: C.text3, marginBottom: 8 }}>
+          Narrows results to members matching a fee/payment condition.
+          "No contributions in period" and "No loans taken" use the date
+          range above (or the selected month) to decide what counts as
+          "in period" where applicable.
+        </Text>
+
+        <Select
+          label="Member Status"
+          value={memberStatus}
+          options={MEMBER_STATUS_OPTIONS}
+          onChange={onMemberStatusChange}
+        />
 
         <View style={styles.modalButtonRow}>
           <TouchableOpacity style={styles.modalClearBtn} onPress={onClear}>
@@ -810,12 +847,18 @@ export default function ReportsScreen() {
     "all" | "approved" | "pending" | "rejected"
   >("all");
 
+  // Member-status advanced filter (fees/late/no-contribution/no-loan conditions).
+  const [memberStatusFilter, setMemberStatusFilter] =
+    useState<MemberStatusFilter>("all");
+
   const [tempSearch, setTempSearch] = useState("");
   const [tempFromDate, setTempFromDate] = useState("");
   const [tempToDate, setTempToDate] = useState("");
   const [tempLoanStatus, setTempLoanStatus] = useState<typeof loanStatus>("all");
   const [tempContributionStatus, setTempContributionStatus] =
     useState<typeof contributionStatus>("all");
+  const [tempMemberStatus, setTempMemberStatus] =
+    useState<MemberStatusFilter>("all");
 
   // Reset member filter whenever the header toggle flips personal <-> group,
   // since "all members" only makes sense in group view.
@@ -874,6 +917,7 @@ export default function ReportsScreen() {
     setTempToDate(selectedToDate);
     setTempLoanStatus(loanStatus);
     setTempContributionStatus(contributionStatus);
+    setTempMemberStatus(memberStatusFilter);
     setShowFilterModal(true);
   };
 
@@ -883,6 +927,7 @@ export default function ReportsScreen() {
     setSelectedToDate(tempToDate);
     setLoanStatus(tempLoanStatus);
     setContributionStatus(tempContributionStatus);
+    setMemberStatusFilter(tempMemberStatus);
     setMonthFilter("all");
     setShowFilterModal(false);
   };
@@ -895,12 +940,14 @@ export default function ReportsScreen() {
     setContributionStatus("all");
     setMonthFilter("all");
     setMemberIdFilter("all");
+    setMemberStatusFilter("all");
 
     setTempSearch("");
     setTempFromDate("");
     setTempToDate("");
     setTempLoanStatus("all");
     setTempContributionStatus("all");
+    setTempMemberStatus("all");
   };
 
   const hasActiveFilters =
@@ -909,7 +956,8 @@ export default function ReportsScreen() {
     loanStatus !== "all" ||
     contributionStatus !== "all" ||
     searchTerm !== "" ||
-    memberIdFilter !== "all";
+    memberIdFilter !== "all" ||
+    memberStatusFilter !== "all";
 
   const inDateRange = (dStr?: string) => {
     if (!dStr) return true;
@@ -931,7 +979,7 @@ export default function ReportsScreen() {
     allMembers.find((m) => m.id === id)?.fullName ?? "Unknown";
 
   // ───────────────────────────────────────────────────────────────────────
-  // Late fees
+  // Late fees (contributions)
   // ───────────────────────────────────────────────────────────────────────
 
   const overdue = useMemo(() => {
@@ -947,6 +995,108 @@ export default function ReportsScreen() {
       })
       .filter((item: any) => (isPersonalView ? item.memberId === currentMember?.id : true));
   }, [overdue, allWallet, isPersonalView, currentMember?.id]);
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Overdue loans — derived from findOverdueInstallments, which returns
+  // one record per overdue installment: { memberId, loanId, daysLate, ... }.
+  // ───────────────────────────────────────────────────────────────────────
+
+  const overdueLoans = useMemo(() => {
+    if (!group) return [];
+
+    try {
+      return findOverdueInstallments(group, allMembers, allLoans, allWallet) || [];
+    } catch (e) {
+      console.error("[Reports] findOverdueInstallments failed:", e);
+      return [];
+    }
+  }, [group, allMembers, allLoans, allWallet]);
+
+  const lateLoanMemberIds = useMemo(
+    () => new Set(overdueLoans.map((item: any) => item.memberId)),
+    [overdueLoans]
+  );
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Member-status derived sets — computed once per render from full
+  // (unfiltered-by-category) group data, then intersected into each
+  // category's row filter below.
+  // ───────────────────────────────────────────────────────────────────────
+
+  const unpaidFeeMemberIds = useMemo(
+    () => new Set(lateFees.filter((f: any) => !f.isPaid).map((f: any) => f.memberId)),
+    [lateFees]
+  );
+
+  const lateContributionFeeMemberIds = useMemo(
+    () =>
+      new Set(
+        lateFees
+          .filter((f: any) => !f.isPaid && (f.daysLate ?? 0) > 0)
+          .map((f: any) => f.memberId)
+      ),
+    [lateFees]
+  );
+
+  // Members with zero approved contributions inside the active date range
+  // (selectedFromDate/selectedToDate, or all-time if neither is set).
+  const noContributionMemberIds = useMemo(() => {
+    const contributingIds = new Set(
+      contributions
+        .filter((c) => c.status === "approved" && inDateRange(c.date))
+        .map((c) => c.memberId)
+    );
+
+    return new Set(
+      members
+        .filter((m) => m.status === "active" && !contributingIds.has(m.id))
+        .map((m) => m.id)
+    );
+  }, [contributions, members, selectedFromDate, selectedToDate]);
+
+  // Members who have never taken out a loan (no loan records at all).
+  const noLoanMemberIds = useMemo(() => {
+    const borrowerIds = new Set(loans.map((l) => l.memberId));
+
+    return new Set(
+      members
+        .filter((m) => m.status === "active" && !borrowerIds.has(m.id))
+        .map((m) => m.id)
+    );
+  }, [loans, members]);
+
+  const memberStatusSetFor = (status: MemberStatusFilter): Set<string> | null => {
+    switch (status) {
+      case "has_unpaid_fees":
+        return unpaidFeeMemberIds;
+      case "late_contribution_fees":
+        return lateContributionFeeMemberIds;
+      case "late_loans":
+        return lateLoanMemberIds;
+      case "no_contributions_in_period":
+        return noContributionMemberIds;
+      case "no_loans":
+        return noLoanMemberIds;
+      default:
+        return null; // "all" — no restriction
+    }
+  };
+
+  const memberStatusSet = memberStatusSetFor(memberStatusFilter);
+
+  const passesMemberStatus = (id?: string) =>
+    !memberStatusSet || (!!id && memberStatusSet.has(id));
+
+  // "No contributions in period" filtered against the Contributions
+  // category — and "No loans taken" filtered against the Loans category —
+  // can never produce a transaction row by definition: those members are
+  // in the set precisely because they have zero matching records. Detect
+  // that combination so we can show the qualifying MEMBERS instead of an
+  // structurally-guaranteed-empty transaction list.
+  const isNoActivityMemberView =
+    (category === "contributions" &&
+      memberStatusFilter === "no_contributions_in_period") ||
+    (category === "loans" && memberStatusFilter === "no_loans");
 
   // ───────────────────────────────────────────────────────────────────────
   // Overview financial calculations
@@ -1214,9 +1364,45 @@ export default function ReportsScreen() {
   // ───────────────────────────────────────────────────────────────────────
 
   const view = useMemo(() => {
+    if (isNoActivityMemberView) {
+      const list = members
+        .filter((m) => passesMemberStatus(m.id))
+        .filter((m) => matchesSearch(m, ["fullName", "email", "phone"]));
+
+      const isNoLoans = memberStatusFilter === "no_loans";
+
+      return {
+        rows: list,
+        headers: ["Name", "Phone", "Email", "Status", "Total Contributions", "Joined"],
+        toRow: (m: any) => [
+          m.fullName,
+          m.phone || "",
+          m.email || "",
+          m.status,
+          fmtCurrency(m.totalContributions || 0),
+          fmtDate(m.dateJoined),
+        ],
+        chart: { labels: [], values: [] },
+        chartColor: C.gold,
+        kpis: [
+          {
+            label: isNoLoans ? "Members w/ No Loans" : "Members w/ No Contributions",
+            value: String(list.length),
+          },
+          {
+            label: "Active Members",
+            value: String(members.filter((m) => m.status === "active").length),
+          },
+        ],
+      };
+    }
+
     if (category === "contributions") {
       let list = contributions.filter(
-        (c) => inDateRange(c.date) && inMember(c.memberId)
+        (c) =>
+          inDateRange(c.date) &&
+          inMember(c.memberId) &&
+          passesMemberStatus(c.memberId)
       );
 
       if (contributionStatus !== "all") {
@@ -1254,7 +1440,12 @@ export default function ReportsScreen() {
     }
 
     if (category === "loans") {
-      let list = loans.filter((l) => inDateRange(l.applicationDate) && inMember(l.memberId));
+      let list = loans.filter(
+        (l) =>
+          inDateRange(l.applicationDate) &&
+          inMember(l.memberId) &&
+          passesMemberStatus(l.memberId)
+      );
 
       if (loanStatus !== "all") {
         if (loanStatus === "active") {
@@ -1295,7 +1486,10 @@ export default function ReportsScreen() {
 
     if (category === "latefees") {
       let list = lateFees.filter(
-        (f: any) => inDateRange(f.periodStart) && inMember(f.memberId)
+        (f: any) =>
+          inDateRange(f.periodStart) &&
+          inMember(f.memberId) &&
+          passesMemberStatus(f.memberId)
       );
 
       list = list.filter((f: any) => matchesSearch(f, ["memberId", "periodLabel"]));
@@ -1329,9 +1523,9 @@ export default function ReportsScreen() {
     }
 
     if (category === "members") {
-      const list = members.filter((m) =>
-        matchesSearch(m, ["fullName", "email", "phone"])
-      );
+      const list = members
+        .filter((m) => passesMemberStatus(m.id))
+        .filter((m) => matchesSearch(m, ["fullName", "email", "phone"]));
 
       return {
         rows: list,
@@ -1362,7 +1556,8 @@ export default function ReportsScreen() {
         (t) =>
           ["bank_fee", "other_debit"].includes(t.type) &&
           inDateRange(t.date) &&
-          inMember(t.memberId)
+          inMember(t.memberId) &&
+          passesMemberStatus(t.memberId)
       );
 
       list = list.filter((t) => matchesSearch(t, ["type", "description"]));
@@ -1461,7 +1656,8 @@ export default function ReportsScreen() {
         (EARNING_TYPES.includes(t.type) || t.type === "loan_repayment") &&
         t.amount !== 0 &&
         inDateRange(t.date) &&
-        inMember(t.memberId)
+        inMember(t.memberId) &&
+        passesMemberStatus(t.memberId)
     );
 
     list = list.filter((t) => matchesSearch(t, ["type", "description"]));
@@ -1498,6 +1694,13 @@ export default function ReportsScreen() {
     searchTerm,
     loanStatus,
     contributionStatus,
+    memberStatusFilter,
+    unpaidFeeMemberIds,
+    lateContributionFeeMemberIds,
+    lateLoanMemberIds,
+    noContributionMemberIds,
+    noLoanMemberIds,
+    isNoActivityMemberView,
   ]);
 
   // ───────────────────────────────────────────────────────────────────────
@@ -1908,6 +2111,13 @@ export default function ReportsScreen() {
             <Text style={styles.searchIndicator}>🔍 "{searchTerm}"</Text>
           )}
 
+          {memberStatusFilter !== "all" && (
+            <Text style={styles.searchIndicator}>
+              👤{" "}
+              {MEMBER_STATUS_OPTIONS.find((o) => o.value === memberStatusFilter)?.label}
+            </Text>
+          )}
+
           {/* ═════════════════════════════════════════════════════════════
               MEMBERS
           ═════════════════════════════════════════════════════════════ */}
@@ -1930,7 +2140,11 @@ export default function ReportsScreen() {
 
               <View style={[styles.card, isWide && styles.reportColumn]}>
                 <Text style={styles.cardTitle}>
-                  {CATEGORIES.find((c) => c.key === category)?.label} Overview
+                  {isNoActivityMemberView
+                    ? memberStatusFilter === "no_loans"
+                      ? "Members With No Loans"
+                      : "Members With No Contributions"
+                    : `${CATEGORIES.find((c) => c.key === category)?.label} Overview`}
                 </Text>
 
                 <View style={styles.kpiMiniRow}>
@@ -2044,6 +2258,8 @@ export default function ReportsScreen() {
         contributionStatus={tempContributionStatus}
         onLoanStatusChange={setTempLoanStatus}
         onContributionStatusChange={setTempContributionStatus}
+        memberStatus={tempMemberStatus}
+        onMemberStatusChange={setTempMemberStatus}
         onApply={applyFilters}
         searchTerm={tempSearch}
         onSearchChange={setTempSearch}

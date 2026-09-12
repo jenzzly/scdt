@@ -142,6 +142,9 @@ export default function ContributionsScreen() {
 
   const canExport = permissions.downloadReports || isAdmin;
 
+  // Only these three roles may apply or clear a late fee. Members and
+  // committee can still SEE the late fee tab/list/amounts — this flag only
+  // gates the Apply/Clear action button.
   const canManageFees = [
     "admin",
     "accountant",
@@ -245,6 +248,10 @@ export default function ContributionsScreen() {
   //
   // Clearing a late-fee transaction does NOT stop future accrual.
   // The underlying contribution must still be unpaid for accrual to continue.
+  //
+  // NOTE: visibility of this list itself is NOT role-gated — members and
+  // committee can see their own/group late fees. Only the Apply/Clear
+  // action (see canManageFees) is restricted.
   // ---------------------------------------------------------------------------
 
   const visibleLateFees = useMemo(() => {
@@ -2410,6 +2417,13 @@ export default function ContributionsScreen() {
                             )}
                           </Text>
 
+                          {/*
+                            Apply/Clear action is restricted to
+                            admin, accountant, and loan_officer.
+                            Everyone else can still see the fee
+                            amount and detail above — this button
+                            is the only thing gated.
+                          */}
                           {canManageFees && (
                             <TouchableOpacity
                               style={
