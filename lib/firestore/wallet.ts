@@ -132,9 +132,33 @@ export function subscribeWalletTxs(
   onError?: (error: unknown) => void,
 ): () => void {
   return onSnapshot(
-    query(walletCol(gId), orderBy("date", "desc")),
-    (snap) => cb(snap.docs.map((s) => fromSnap<WalletTransaction>(s))),
-    onError,
+    query(
+      walletCol(gId),
+      orderBy("date", "desc"),
+    ),
+    (snap) => {
+      const txs = snap.docs.map((s) => {
+        const data = s.data();
+
+        // Firestore document ID is the canonical transaction ID.
+        return {
+          ...data,
+          id: s.id,
+        } as WalletTransaction;
+      });
+
+      console.log("[WALLET SNAPSHOT]", {
+        groupId: gId,
+        count: snap.docs.length,
+        ids: txs.map((tx) => tx.id),
+      });
+
+      cb(txs);
+    },
+    (error) => {
+      console.error("[WALLET SNAPSHOT ERROR]", error);
+      onError?.(error);
+    },
   );
 }
 

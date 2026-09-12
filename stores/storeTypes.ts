@@ -69,6 +69,7 @@ export interface StoreState {
   addWalletTxLocal: (tx: WalletTransaction) => void;
   updateWalletTxLocal: (id: ID, data: Partial<WalletTransaction>) => void;
   deleteWalletTxLocal: (id: ID) => void;
+  clearWalletTxs: () => void;
   setExpenses: (es: Expense[]) => void;
   addExpenseLocal: (e: Expense) => void;
   updateExpenseLocal: (id: ID, data: Partial<Expense>) => void;

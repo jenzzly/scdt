@@ -84,7 +84,10 @@ export function stripUndefined(obj: Record<string, unknown>): Record<string, unk
 }
 
 export function fromSnap<T>(snap: any): T {
-  return { ...snap.data(), _docId: snap.id } as T;
+  return {
+    ...snap.data(),
+    id: snap.id,
+  } as T;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

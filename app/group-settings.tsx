@@ -381,7 +381,7 @@ export default function GroupSettingsScreen() {
     { key: "settings", label: "⚙️ Settings" },
     { key: "members", label: "👥 Members" },
     { key: "permissions", label: "🔐 Permissions" },
-    { key: "tokenRequests", label: "🔑 Token Requests" },
+    // { key: "tokenRequests", label: "🔑 Token Requests" },
     { key: "audit", label: "📋 Audit" },
   ] as const;
 
@@ -2006,7 +2006,7 @@ export default function GroupSettingsScreen() {
                       </View>
                     </View>
 
-                    <View style={{ flexDirection: "row", gap: 8 }}>
+                    {/* <View style={{ flexDirection: "row", gap: 8 }}>
                       <Button
                         label="Send Token"
                         onPress={() => handleProcessTokenRequest(request)}
@@ -2029,7 +2029,7 @@ export default function GroupSettingsScreen() {
                           Cancel
                         </Text>
                       </TouchableOpacity>
-                    </View>
+                    </View> */}
                   </View>
                 ))}
               </View>
