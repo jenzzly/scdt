@@ -19,6 +19,12 @@ import { KpiCard } from "../../components/ui/KpiCard";
 
 const PAGE_SIZE = 20;
 
+// Roles allowed to edit a wallet transaction. Delete remains admin-only
+// (see `isAdmin` below) — this is a separate, slightly broader set for
+// editing only. Adjust here if your role enum uses different string
+// values (e.g. "accountant" vs "account").
+const EDIT_ROLES = ["admin", "loan_officer", "accountant"];
+
 const TX_LABEL: Record<string, string> = {
   contribution:             "Contribution",
   loan_disbursement:        "Loan Disbursement",
@@ -71,6 +77,8 @@ export default function WalletScreen() {
   const { show, visible, msg, type } = useToast();
 
   const isAdmin   = role === "admin";
+  // Editing is allowed for a slightly broader set of roles than deleting.
+  const canEdit   = EDIT_ROLES.includes(role);
   const isGroupView = useIsGroupView();
   const canSeeAll = isGroupView;
 
@@ -149,6 +157,17 @@ export default function WalletScreen() {
     }, undefined, true);
   };
 
+  // Navigates to an edit modal for this transaction. Mirrors the
+  // add-contribution / add-expense modal route pattern already used
+  // elsewhere in this screen — swap the path/param name here if your
+  // app uses a different modal route or param convention.
+  const handleEdit = (tx: WalletTransaction) => {
+    router.push({
+      pathname: "/modals/edit-transaction",
+      params: { id: tx.id },
+    });
+  };
+
   const handleTabChange = (t: string) => { setTab(t); setPage(1); };
   const handleSearch    = (v: string) => { setSearch(v); setPage(1); };
   const handleSort      = (v: string) => { setSort(v);  setPage(1); };
@@ -173,11 +192,18 @@ export default function WalletScreen() {
           fontWeight: "700", color: isCredit ? C.accent : C.debit }]}>
           {isCredit ? "+" : "−"}{fmtCurrency(Math.abs(tx.amount))}
         </Text>
-        {isAdmin && (
-          <View style={[wt.tableCell, { width: 60, alignItems: "center" }]}>
-            <TouchableOpacity onPress={() => handleDelete(tx)}>
-              <Text style={{ fontSize: 11, color: C.debit, fontWeight: "600" }}>Delete</Text>
-            </TouchableOpacity>
+        {(canEdit || isAdmin) && (
+          <View style={[wt.tableCell, { width: isAdmin && canEdit ? 110 : 60, flexDirection: "row", gap: 10, alignItems: "center", justifyContent: "center" }]}>
+            {canEdit && (
+              <TouchableOpacity onPress={() => handleEdit(tx)}>
+                <Text style={{ fontSize: 11, color: C.primary, fontWeight: "600" }}>Edit</Text>
+              </TouchableOpacity>
+            )}
+            {isAdmin && (
+              <TouchableOpacity onPress={() => handleDelete(tx)}>
+                <Text style={{ fontSize: 11, color: C.debit, fontWeight: "600" }}>Delete</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </View>
@@ -316,7 +342,9 @@ export default function WalletScreen() {
                 {canSeeAll && <Text style={[wt.tableHeadCell, { width: 150 }]}>MEMBER</Text>}
                 <Text style={[wt.tableHeadCell, { width: 120 }]}>DATE</Text>
                 <Text style={[wt.tableHeadCell, { width: 120, textAlign: "right" }]}>AMOUNT</Text>
-                {isAdmin && <View style={{ width: 60 }} />}
+                {(canEdit || isAdmin) && (
+                  <View style={{ width: isAdmin && canEdit ? 110 : 60 }} />
+                )}
               </View>
               {paginated.map(tx => <React.Fragment key={tx.id}><TableRow tx={tx} /></React.Fragment>)}
             </View>
@@ -329,7 +357,9 @@ export default function WalletScreen() {
                     tx={tx}
                     memberName={canSeeAll ? getMemberName(tx.memberId) : ""}
                     isAdmin={isAdmin}
+                    canEdit={canEdit}
                     onDelete={() => handleDelete(tx)}
+                    onEdit={() => handleEdit(tx)}
                   />
                   {i < paginated.length - 1 && <Divider />}
                 </React.Fragment>
@@ -346,8 +376,9 @@ export default function WalletScreen() {
 }
 
 // ── Mobile card row ────────────────────────────────────────────────────────
-function TxRow({ tx, memberName, isAdmin, onDelete }: {
-  tx: WalletTransaction; memberName: string; isAdmin: boolean; onDelete: () => void;
+function TxRow({ tx, memberName, isAdmin, canEdit, onDelete, onEdit }: {
+  tx: WalletTransaction; memberName: string; isAdmin: boolean; canEdit: boolean;
+  onDelete: () => void; onEdit: () => void;
 }) {
   const isCredit = tx.amount > 0;
   const abbr = TX_ABBR[tx.type] ?? "TX";
@@ -368,10 +399,19 @@ function TxRow({ tx, memberName, isAdmin, onDelete }: {
         <Text style={[wt.txAmount, { color: isCredit ? C.accent : C.debit }]}>
           {isCredit ? "+" : "−"}{fmtCurrency(Math.abs(tx.amount))}
         </Text>
-        {isAdmin && (
-          <TouchableOpacity onPress={onDelete} style={{ marginTop: 3 }}>
-            <Text style={{ fontSize: 10, color: C.debit, fontWeight: "600" }}>Delete</Text>
-          </TouchableOpacity>
+        {(canEdit || isAdmin) && (
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 3 }}>
+            {canEdit && (
+              <TouchableOpacity onPress={onEdit}>
+                <Text style={{ fontSize: 10, color: C.primary, fontWeight: "600" }}>Edit</Text>
+              </TouchableOpacity>
+            )}
+            {isAdmin && (
+              <TouchableOpacity onPress={onDelete}>
+                <Text style={{ fontSize: 10, color: C.debit, fontWeight: "600" }}>Delete</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         )}
       </View>
     </View>

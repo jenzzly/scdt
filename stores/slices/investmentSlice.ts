@@ -4,8 +4,12 @@ import type { ID, Investment, WalletTransaction, InvestmentApprovals } from "../
 import * as FS from "../../lib/firestore";
 import { uid, round2, fmtCurrency } from "../../utils/theme";
 import { recalcGroupTotals } from "../recalcGroupTotals";
+import {
+  findInvestmentWalletTx,
+  buildLinkedTxPatch,
+} from "../../utils/linkedWalletSync";
 
-export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addInvestmentLocal" | "approveInvestmentStep" | "closeInvestment" | "createInvestment" | "deleteInvestment" | "deleteInvestmentLocal" | "setInvestments" | "updateInvestment" | "updateInvestmentLocal"> => ({
+export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addInvestmentLocal" | "approveInvestmentStep" | "closeInvestment" | "createInvestment" | "deleteInvestment" | "deleteInvestmentLocal" | "setInvestments" | "updateInvestment" | "updateInvestmentAndSync" | "updateInvestmentLocal"> => ({
       setInvestments: (invs) => set({ investments: invs }),
       addInvestmentLocal: (inv) => set((s: StoreState) => ({ investments: [inv, ...s.investments] })),
       updateInvestmentLocal: (id, data) => set((s) => ({
@@ -159,6 +163,92 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
         get().updateInvestmentLocal(investmentId, data);
         if (activeGroupId) {
           await FS.updateInvestment(activeGroupId, investmentId, data).catch(console.warn);
+        }
+      },
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // EDIT INVESTMENT + SYNC LINKED WALLET TX
+      // ═══════════════════════════════════════════════════════════════════════
+      //
+      // Distinct from `updateInvestment` above (general-purpose patch, no
+      // wallet awareness — used internally by places that already know
+      // exactly what they're changing). This is the "user edited the
+      // investment's amount/date/description in a form" path.
+      //
+      // A linked wallet tx only exists once the investment has cleared BOTH
+      // approval steps and reached "open" (see approveInvestmentStep above —
+      // the investment_disbursement tx is created at the accountant step,
+      // not at createInvestment time). So for "pending_committee" / "pending"
+      // investments this only patches the Investment record itself — same
+      // pre-disbursement behavior as updateLoanAndSync.
+      //
+      // Only amount / date / description are accepted, same restriction as
+      // updateContributionAndSync / updateLoanAndSync / edit-transaction.tsx.
+      // This does NOT touch status, approvals, returnAmount, actualReturn,
+      // or profit — those stay on approveInvestmentStep / closeInvestment.
+      //
+      // NOTE: editing a CLOSED investment's amount only corrects the
+      // recorded investmentAmount/disbursement — it does not recompute
+      // profit (profit was fixed at close time from the returnAmount vs.
+      // whatever investmentAmount was then). If you need profit to reflect
+      // a corrected amount, that's a manual follow-up edit to the
+      // investment_return tx via edit-transaction.tsx.
+      updateInvestmentAndSync: async (investmentId, data) => {
+        const { activeGroupId, investments, walletTransactions } = get();
+        if (!activeGroupId) throw new Error("No active group");
+
+        const investment = investments.find((i: Investment) => i.id === investmentId);
+        if (!investment) throw new Error("Investment not found");
+
+        const invPatch: Partial<Investment> = {};
+        if (data.amount !== undefined) invPatch.investmentAmount = data.amount;
+        if (data.date !== undefined) invPatch.startDate = data.date;
+        if (data.description !== undefined) invPatch.description = data.description;
+        invPatch.updatedAt = new Date().toISOString();
+
+        const previousInvestment = { ...investment };
+        const linkedTx = findInvestmentWalletTx(walletTransactions, investmentId);
+        const previousTx = linkedTx ? { ...linkedTx } : null;
+
+        const txChanged = {
+          amount: data.amount,
+          date: data.date,
+          description: data.description,
+        };
+
+        get().updateInvestmentLocal(investmentId, invPatch);
+
+        if (linkedTx) {
+          const txPatch = buildLinkedTxPatch(linkedTx, txChanged);
+          get().updateWalletTxLocal(linkedTx.id, txPatch);
+        }
+
+        set((s: StoreState) => recalcGroupTotals(s));
+
+        try {
+          get().setSyncStatus("pending");
+
+          await FS.updateInvestment(activeGroupId, investmentId, invPatch);
+
+          if (linkedTx) {
+            const txPatch = buildLinkedTxPatch(linkedTx, txChanged);
+            await FS.updateWalletTx(activeGroupId, linkedTx.id, txPatch);
+          }
+
+          get().recalcTotals();
+          get().setSyncStatus("synced");
+        } catch (e) {
+          get().updateInvestmentLocal(investmentId, previousInvestment);
+          if (linkedTx && previousTx) {
+            get().updateWalletTxLocal(linkedTx.id, previousTx);
+          }
+          set((s: StoreState) => recalcGroupTotals(s));
+
+          get().setSyncStatus(
+            "failed",
+            e instanceof Error ? e.message : "Failed to update investment"
+          );
+          throw e;
         }
       },
 

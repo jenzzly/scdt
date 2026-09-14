@@ -160,6 +160,47 @@ function monthlyTotals(
   };
 }
 
+// Loan interest projection for a single loan, scoped to a date window.
+// Pulled out as a standalone helper (not a hook) so it can safely be
+// called from multiple useMemo blocks without violating the Rules of
+// Hooks and without duplicating the implementation.
+//
+// FIX: previously this only summed installments whose due date fell
+// between the loan's start and "now" (or the selected toDate). That
+// meant a freshly-disbursed loan with no installment due yet always
+// projected $0 interest, even though the full schedule clearly has
+// interest attached to it. "Projected Interest" should mean "interest
+// this loan will still earn" — i.e. every unpaid installment, past or
+// future — unless the user has explicitly narrowed the date range, in
+// which case we respect that window.
+function calculateLoanInterestProjection(
+  loan: any,
+  fromDate: string,
+  toDate: string
+) {
+  if (!loan.schedule || loan.status !== "disbursed") return 0;
+
+  // null = no bound on that side. Only apply a bound when the user
+  // actually set one via the date filters.
+  const asOfDate = toDate ? new Date(toDate) : null;
+  const fromDateObj = fromDate ? new Date(fromDate) : null;
+
+  let projectedInterest = 0;
+
+  loan.schedule.forEach((installment: any) => {
+    if (installment.paid) return; // Skip already paid installments
+
+    const dueDate = new Date(installment.dueDate);
+
+    if (fromDateObj && dueDate < fromDateObj) return;
+    if (asOfDate && dueDate > asOfDate) return;
+
+    projectedInterest += installment.interest;
+  });
+
+  return round2(projectedInterest);
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // KPI
 // ─────────────────────────────────────────────────────────────────────────
@@ -1190,6 +1231,31 @@ export default function ReportsScreen() {
     [wallet]
   );
 
+  // Total principal currently disbursed across active loans — replaces the
+  // old "Projected Late Fees" card, which was often $0 and less useful than
+  // seeing loan exposure at a glance. groupTotalInvestments is also kept
+  // here in case "Total Investments" is preferred in that slot instead.
+  const groupTotalLoansDisbursed = useMemo(
+    () =>
+      round2(
+        loans
+          .filter((l) => l.status === "disbursed")
+          .reduce((s, l) => s + (l.amount || 0), 0)
+      ),
+    [loans]
+  );
+
+  const groupTotalInvestments = useMemo(
+    () =>
+      round2(
+        investments.reduce(
+          (s: number, i: any) => s + (i.investmentAmount || 0),
+          0
+        )
+      ),
+    [investments]
+  );
+
   const groupOtherOnly = useMemo(() => {
     const known = [
       "contribution",
@@ -1210,6 +1276,91 @@ export default function ReportsScreen() {
   const groupTotalNetAssets = useMemo(
     () => round2(wallet.reduce((s, t) => s + t.amount, 0)),
     [wallet]
+  );
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Projected calculations — based on user-selected date range. These two
+  // hooks are the single source of truth for loan-interest and
+  // loan-late-fee projections. They are declared once, at the top level
+  // (never inside another hook's callback), and used by BOTH the Overview
+  // cards further down AND the Profits/Earnings report tab via `view`.
+  // ───────────────────────────────────────────────────────────────────────
+
+  const loanInterestProjections = useMemo(() => {
+    const fromDate = selectedFromDate || "";
+    const toDate = selectedToDate || "";
+
+    return loans
+      .filter(
+        (l) =>
+          l.status === "disbursed" &&
+          inMember(l.memberId) &&
+          passesMemberStatus(l.memberId)
+      )
+      .map((loan) => ({
+        loanId: loan.id,
+        memberId: loan.memberId,
+        memberName: getMemberName(loan.memberId),
+        amount: loan.amount,
+        projectedInterest: calculateLoanInterestProjection(loan, fromDate, toDate),
+        applicationDate: loan.applicationDate,
+      }))
+      .filter((item) => item.projectedInterest > 0);
+  }, [loans, selectedFromDate, selectedToDate, memberIdFilter, memberStatusFilter]);
+
+  const projectedLoanInterest = round2(
+    loanInterestProjections.reduce((sum, item) => sum + item.projectedInterest, 0)
+  );
+
+  const loanLateFees = useMemo(() => {
+    if (!group) return [];
+
+    const fromDate = selectedFromDate || "";
+    const toDate = selectedToDate || "";
+    const asOfDate = toDate ? new Date(toDate) : new Date();
+
+    try {
+      const overdueInstallments =
+        findOverdueInstallments(group, allMembers, allLoans, allWallet, asOfDate) || [];
+
+      return overdueInstallments
+        .filter(
+          (item: any) =>
+            inMember(item.memberId) &&
+            passesMemberStatus(item.memberId) &&
+            (!fromDate || item.dueDate >= fromDate)
+        )
+        .map((item: any) => ({
+          loanId: item.loanId,
+          memberId: item.memberId,
+          memberName: item.memberName,
+          installmentIndex: item.installmentIndex,
+          dueDate: item.dueDate,
+          amountDue: item.amountDue,
+          daysLate: item.daysLate,
+          feeAmount: item.feeAmount,
+        }));
+    } catch (e) {
+      console.error("[Reports] loan late fees calculation failed:", e);
+      return [];
+    }
+  }, [
+    group,
+    allMembers,
+    allLoans,
+    allWallet,
+    selectedFromDate,
+    selectedToDate,
+    memberIdFilter,
+    memberStatusFilter,
+  ]);
+
+  const projectedLoanLateFees = round2(
+    loanLateFees.reduce((sum, item) => sum + item.feeAmount, 0)
+  );
+
+  const totalProjectedEarnings = round2(
+    projectedLoanInterest + projectedLoanLateFees
   );
 
   // ───────────────────────────────────────────────────────────────────────
@@ -1629,7 +1780,20 @@ export default function ReportsScreen() {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Earnings
+    // Earnings ("Profits" tab). loanInterestProjections and loanLateFees
+    // are computed ONCE at the top level of the component (see above) and
+    // simply referenced here — no hooks are called inside this branch.
+    //
+    // FIX: previously the chart used monthlyTotals(list, "date", null),
+    // which COUNTS records instead of summing dollars (amountField=null
+    // makes every item contribute 1). That's why the chart looked empty
+    // or meaningless even when money existed. It now sums real amounts
+    // for both actual and projected rows. The KPIs are also broken out
+    // by source (interest / late fees / projected) instead of one vague
+    // "Actual Collected" bucket, and each shows the ALL-IN total
+    // (actual + projected combined) where that makes sense, plus a
+    // standalone "Projected Earnings" figure for the forward-looking
+    // piece alone.
     // ─────────────────────────────────────────────────────────────────────
 
     const EARNING_TYPES = [
@@ -1662,23 +1826,117 @@ export default function ReportsScreen() {
 
     list = list.filter((t) => matchesSearch(t, ["type", "description"]));
 
-    const chart = monthlyTotals(list, "date", null);
+    // ── Actual earnings, broken down by source ────────────────────────
+    const actualInterest = round2(
+      list
+        .filter((t) =>
+          ["loan_repayment", "loan_interest_income", "interest"].includes(t.type)
+        )
+        .reduce((s, t) => s + earningAmount(t), 0)
+    );
 
-    const totalEarnings = round2(list.reduce((s, t) => s + earningAmount(t), 0));
+    const actualLateFees = round2(
+      list.filter((t) => t.type === "late_fee").reduce((s, t) => s + t.amount, 0)
+    );
+
+    const actualInvestmentReturns = round2(
+      list
+        .filter((t) => t.type === "investment_return")
+        .reduce((s, t) => s + t.amount, 0)
+    );
+
+    const actualOther = round2(
+      list
+        .filter(
+          (t) =>
+            ![
+              "loan_repayment",
+              "loan_interest_income",
+              "interest",
+              "late_fee",
+              "investment_return",
+            ].includes(t.type)
+        )
+        .reduce((s, t) => s + earningAmount(t), 0)
+    );
+
+    const totalEarnings = round2(
+      actualInterest + actualLateFees + actualInvestmentReturns + actualOther
+    );
+
+    // ── Projected (top-level memos, independent of wallet history) ────
+    const totalProjectedInterest = projectedLoanInterest;
+    const totalLoanLateFees = projectedLoanLateFees;
+    const totalProjected = round2(totalProjectedInterest + totalLoanLateFees);
+
+    // ── Combined, all-in totals shown on the KPI row ───────────────────
+    const combinedTotal = round2(totalEarnings + totalProjected);
+    const totalInterestAllIn = round2(actualInterest + totalProjectedInterest);
+    const totalLateFeesAllIn = round2(actualLateFees + totalLoanLateFees);
+
+    // Line-item rows for the projected interest / projected late fees,
+    // built from the shared top-level memos.
+    const projectedRows = [
+      ...loanInterestProjections.map((item) => ({
+        type: "projected_interest",
+        date: item.applicationDate,
+        memberId: item.memberId,
+        memberName: item.memberName,
+        description: `Projected interest for loan ${item.loanId.slice(0, 8)}...`,
+        amount: item.projectedInterest,
+        loanId: item.loanId,
+      })),
+      ...loanLateFees.map((item) => ({
+        type: "loan_late_fee",
+        date: item.dueDate,
+        memberId: item.memberId,
+        memberName: item.memberName,
+        description: `Late fee - Installment ${item.installmentIndex + 1} (${item.daysLate} days late)`,
+        amount: item.feeAmount,
+        loanId: item.loanId,
+      })),
+    ];
+
+    // Combine actual wallet transactions with projections
+    const combinedList = [
+      ...list.map((t) => ({
+        type: t.type,
+        date: t.date,
+        memberId: t.memberId,
+        memberName: getMemberName(t.memberId),
+        description: t.description || t.type.replace(/_/g, " "),
+        amount: earningAmount(t),
+        source: "actual",
+      })),
+      ...projectedRows.map((r) => ({
+        ...r,
+        source: "projected",
+      })),
+    ];
+
+    // Chart now sums real dollar amounts (actual + projected) per month,
+    // instead of counting records like the previous `null` amountField did.
+    const chart = monthlyTotals(combinedList, "date", "amount");
 
     return {
-      rows: list,
-      headers: ["Date", "Member", "Type", "Description", "Amount"],
+      rows: combinedList,
+      headers: ["Date", "Member", "Type", "Description", "Amount", "Source"],
       toRow: (t: any) => [
         fmtDate(t.date),
-        getMemberName(t.memberId),
-        t.type,
-        t.description ?? "",
-        fmtCurrency(earningAmount(t)),
+        t.memberName,
+        t.type.replace(/_/g, " "),
+        t.description,
+        fmtCurrency(t.amount),
+        t.source === "projected" ? "Projected" : "Actual",
       ],
       chart,
       chartColor: C.success,
-      kpis: [{ label: "Net Earnings", value: fmtCurrency(totalEarnings) }],
+      kpis: [
+        { label: "Total Earnings", value: fmtCurrency(combinedTotal) },
+        { label: "Interest Earned", value: fmtCurrency(totalInterestAllIn) },
+        { label: "Late Fees", value: fmtCurrency(totalLateFeesAllIn) },
+        { label: "Projected Earnings", value: fmtCurrency(totalProjected) },
+      ],
     };
   }, [
     category,
@@ -1701,6 +1959,14 @@ export default function ReportsScreen() {
     noContributionMemberIds,
     noLoanMemberIds,
     isNoActivityMemberView,
+    group,
+    allMembers,
+    allLoans,
+    allWallet,
+    loanInterestProjections,
+    loanLateFees,
+    projectedLoanInterest,
+    projectedLoanLateFees,
   ]);
 
   // ───────────────────────────────────────────────────────────────────────
@@ -1942,6 +2208,25 @@ export default function ReportsScreen() {
                   from loan repayments
                 </Text>
               </View>
+
+              <View style={styles.gfpStatBorderBottom}>
+                <Text style={styles.gfpStatLabel} numberOfLines={1}>
+                  Projected Interest
+                </Text>
+
+                <Text
+                  style={[styles.gfpStatValue, { color: "#6366f1" }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {fmtCurrency(projectedLoanInterest)}
+                </Text>
+
+                <Text style={T.small} numberOfLines={1}>
+                  from active loans
+                </Text>
+              </View>
             </View>
 
             <View style={styles.gfpRow}>
@@ -1961,6 +2246,46 @@ export default function ReportsScreen() {
 
                 <Text style={T.small} numberOfLines={1}>
                   collected
+                </Text>
+              </View>
+
+              <View style={styles.gfpStat}>
+                <Text style={T.label} numberOfLines={1}>
+                  Total Loans
+                </Text>
+
+                <Text
+                  style={[styles.gfpStatValue, { color: "#f97316" }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {fmtCurrency(groupTotalLoansDisbursed)}
+                </Text>
+
+                <Text style={T.small} numberOfLines={1}>
+                  {isPersonalView ? "my disbursed balance" : "principal disbursed"}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.gfpRow}>
+              <View style={[styles.gfpStat, styles.gfpStatBorderRight]}>
+                <Text style={T.label} numberOfLines={1}>
+                  Investment Returns
+                </Text>
+
+                <Text
+                  style={[styles.gfpStatValue, { color: C.success }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {fmtCurrency(groupInvestmentReturnsOnly)}
+                </Text>
+
+                <Text style={T.small} numberOfLines={1}>
+                  from investments
                 </Text>
               </View>
 
@@ -1993,13 +2318,16 @@ export default function ReportsScreen() {
             <Text style={styles.chartTitle}>Profits by source</Text>
             <Text style={styles.chartSubtitle}>
               {isPersonalView ? "My earnings this period" : "Group earnings this period"}
+              {selectedFromDate || selectedToDate ? ` (${selectedFromDate || "start"} to ${selectedToDate || "now"})` : ""}
             </Text>
 
             <EarningsDonut
               segments={[
-                { label: "Loan interest", value: groupInterestOnly, color: "#2a78d6" },
-                { label: "Late fees", value: groupPenaltiesOnly, color: "#eb6834" },
+                { label: "Loan interest (actual)", value: groupInterestOnly, color: "#2a78d6" },
+                { label: "Late fees (actual)", value: groupPenaltiesOnly, color: "#eb6834" },
                 { label: "Investment returns", value: groupInvestmentReturnsOnly, color: "#1baf7a" },
+                { label: "Projected interest", value: projectedLoanInterest, color: "#6366f1" },
+                { label: "Projected late fees", value: projectedLoanLateFees, color: "#f97316" },
                 { label: "Other", value: groupOtherOnly, color: "#eda100" },
               ]}
             />

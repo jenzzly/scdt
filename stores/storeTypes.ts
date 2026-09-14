@@ -14,6 +14,18 @@ import type { OverdueContribution, OverdueInstallment } from "../utils/lateFees"
 
 export type DataViewMode = "personal" | "group" | "admin" | "mine";
 
+// Shared shape for the three new "edit parent record + sync its linked
+// wallet transaction" actions (contributions, loans, investments). Only
+// amount / date / description are editable this way — see
+// updateContributionAndSync / updateLoanAndSync / updateInvestmentAndSync
+// in their respective slices, and utils/linkedWalletSync.ts for the shared
+// sync logic they all call.
+export interface LinkedRecordEditPatch {
+  amount?: number;
+  date?: string;
+  description?: string;
+}
+
 export interface StoreState {
   dataViewMode: DataViewMode;
   authUid: string | null;
@@ -64,6 +76,10 @@ export interface StoreState {
   deleteInvestmentLocal: (id: ID) => void;
   createInvestment: (data: Omit<Investment, "id" | "createdAt" | "updatedAt">) => Promise<ID>;
   updateInvestment: (investmentId: ID, data: Partial<Investment>) => Promise<void>;
+  // Edits an investment's amount/date/description AND, if it has already
+  // reached "open" (i.e. has a linked investment_disbursement wallet tx),
+  // patches that tx to match in the same call. See investmentSlice.ts.
+  updateInvestmentAndSync: (investmentId: ID, data: LinkedRecordEditPatch) => Promise<void>;
   approveInvestmentStep: (investmentId: ID, step: "committee" | "accountant", approved: boolean, comment?: string) => Promise<void>;
   setWalletTxs: (txs: WalletTransaction[]) => void;
   addWalletTxLocal: (tx: WalletTransaction) => void;
@@ -100,15 +116,31 @@ export interface StoreState {
 
   // Loan actions
   deleteLoan: (loanId: ID, reason: string) => Promise<void>;
+  // Edits a loan's amount/applicationDate/purpose AND, if it has already
+  // been disbursed (i.e. has a linked loan_disbursement wallet tx),
+  // patches that tx to match in the same call. Does NOT recompute the
+  // repayment schedule or interest. See loanSlice.ts.
+  updateLoanAndSync: (loanId: ID, data: LinkedRecordEditPatch) => Promise<void>;
+  // Moves a single unpaid installment's due date (loan.schedule[index].dueDate)
+  // only — no wallet tx exists for an unpaid installment, so there's
+  // nothing else to sync. Throws if the installment is already paid or
+  // doesn't exist. See loanSlice.ts.
+  rescheduleLoanInstallment: (loanId: ID, installmentIndex: number, newDueDate: string) => Promise<void>;
 
   // Contribution actions
   deleteContribution: (contributionId: ID, reason: string) => Promise<void>;
+  // Edits a contribution's amount/date/description AND, if it's approved
+  // (i.e. has a linked "contribution"-type wallet tx), patches that tx to
+  // match in the same call. Rolls back both writes together on failure.
+  // See contributionSlice.ts.
+  updateContributionAndSync: (contributionId: ID, data: LinkedRecordEditPatch) => Promise<void>;
 
   // Wallet actions
   deleteWalletTransaction: (transactionId: ID, reason: string) => Promise<void>;
   applyContributionLateFee: (overdue: OverdueContribution) => Promise<void>;
   applyLoanLateFee: (overdue: OverdueInstallment) => Promise<void>;
   clearStandaloneLateFee: (transactionId: ID) => Promise<void>;
+  updateWalletTransaction: (transactionId: ID, data: Partial<WalletTransaction>) => Promise<void>;
 
   // High-level actions
   createMember: (data: Omit<Member, "id" | "totalContributions" | "totalSavings" | "loanEarnings">) => Promise<ID>;

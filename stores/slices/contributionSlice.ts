@@ -4,8 +4,12 @@ import type { ID, Contribution, WalletTransaction } from "../../types";
 import * as FS from "../../lib/firestore";
 import { uid } from "../../utils/theme";
 import { recalcGroupTotals } from "../recalcGroupTotals";
+import {
+  findContributionWalletTx,
+  buildLinkedTxPatch,
+} from "../../utils/linkedWalletSync";
 
-export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addContributionLocal" | "approveContribution" | "deleteContribution" | "deleteContributionLocal" | "recordContribution" | "rejectContribution" | "setContributions" | "updateContribution" | "updateContributionLocal"> => ({
+export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addContributionLocal" | "approveContribution" | "deleteContribution" | "deleteContributionLocal" | "recordContribution" | "rejectContribution" | "setContributions" | "updateContribution" | "updateContributionAndSync" | "updateContributionLocal"> => ({
       setContributions: (cs) => set({ contributions: cs }),
       addContributionLocal: (c) => set((s) => ({ contributions: [c, ...s.contributions] })),
       updateContributionLocal: (id, data) => set((s) => ({
@@ -224,5 +228,77 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
         }
       },
 
+      // ═══════════════════════════════════════════════════════════════════════
+      // EDIT CONTRIBUTION + SYNC LINKED WALLET TX
+      // ═══════════════════════════════════════════════════════════════════════
+      //
+      // Distinct from `updateContribution` above (which is a general-purpose
+      // patch used for status transitions and doesn't touch amount/date of
+      // an existing linked tx). This is specifically the "user edited the
+      // contribution's amount/date/description in a form" path — it:
+      //
+      //   1. Updates the Contribution record itself.
+      //   2. If an approved contribution has a linked wallet tx
+      //      (type: "contribution", contributionId match), patches that
+      //      tx's amount/date/description to match.
+      //   3. Rolls back BOTH writes if either Firestore call fails, so the
+      //      contribution and its wallet tx never drift out of sync.
+      //
+      // Only amount / date / description are accepted here — matches the
+      // same restriction edit-transaction.tsx enforces for direct wallet
+      // edits, and avoids the more complex status-transition logic that
+      // `updateContribution` already owns.
+      updateContributionAndSync: async (contributionId, data) => {
+        const { activeGroupId, contributions, walletTransactions } = get();
+        if (!activeGroupId) throw new Error("No active group");
 
+        const contribution = contributions.find((c) => c.id === contributionId);
+        if (!contribution) throw new Error("Contribution not found");
+
+        const allowed: Partial<Pick<Contribution, "amount" | "date" | "description">> = {};
+        if (data.amount !== undefined) allowed.amount = data.amount;
+        if (data.date !== undefined) allowed.date = data.date;
+        if (data.description !== undefined) allowed.description = data.description;
+
+        const previousContribution = { ...contribution };
+        const linkedTx = findContributionWalletTx(walletTransactions, contributionId);
+        const previousTx = linkedTx ? { ...linkedTx } : null;
+
+        // Optimistic local updates.
+        get().updateContributionLocal(contributionId, allowed);
+
+        if (linkedTx) {
+          const txPatch = buildLinkedTxPatch(linkedTx, allowed);
+          get().updateWalletTxLocal(linkedTx.id, txPatch);
+        }
+
+        set((s) => recalcGroupTotals(s));
+
+        try {
+          get().setSyncStatus("pending");
+
+          await FS.updateContribution(activeGroupId, contributionId, allowed);
+
+          if (linkedTx) {
+            const txPatch = buildLinkedTxPatch(linkedTx, allowed);
+            await FS.updateWalletTx(activeGroupId, linkedTx.id, txPatch);
+          }
+
+          get().recalcTotals();
+          get().setSyncStatus("synced");
+        } catch (e) {
+          // Roll back both records together.
+          get().updateContributionLocal(contributionId, previousContribution);
+          if (linkedTx && previousTx) {
+            get().updateWalletTxLocal(linkedTx.id, previousTx);
+          }
+          set((s) => recalcGroupTotals(s));
+
+          get().setSyncStatus(
+            "failed",
+            e instanceof Error ? e.message : "Failed to update contribution"
+          );
+          throw e;
+        }
+      },
 });

@@ -154,19 +154,6 @@ function maxDate(
     : new Date(second);
 }
 
-/**
- * Returns true when the late-fee calculation is allowed to
- * start for the supplied date.
- *
- * The activation date is inclusive.
- */
-function isOnOrAfter(
-  date: Date,
-  activationDate: Date,
-): boolean {
-  return date.getTime() >= activationDate.getTime();
-}
-
 // -----------------------------------------------------------------------------
 // Existing late-fee accrual
 // -----------------------------------------------------------------------------
@@ -932,6 +919,55 @@ export function findOverdueInstallments(
         }
 
         /**
+         * If the schedule item has a payment date,
+         * use it as the accrual endpoint.
+         *
+         * Otherwise, accrue through asOf.
+         *
+         * We support paidDate and paymentDate here
+         * without changing the existing Loan type.
+         */
+        let accrualAsOf = asOf;
+
+        if (
+          typeof (item as any).paidDate ===
+          "string"
+        ) {
+          const paymentDate =
+            new Date(
+              (item as any).paidDate,
+            );
+
+          if (
+            !Number.isNaN(
+              paymentDate.getTime(),
+            ) &&
+            paymentDate < asOf
+          ) {
+            accrualAsOf =
+              paymentDate;
+          }
+        } else if (
+          typeof (item as any).paymentDate ===
+          "string"
+        ) {
+          const paymentDate =
+            new Date(
+              (item as any).paymentDate,
+            );
+
+          if (
+            !Number.isNaN(
+              paymentDate.getTime(),
+            ) &&
+            paymentDate < asOf
+          ) {
+            accrualAsOf =
+              paymentDate;
+          }
+        }
+
+        /**
          * Calculate complete fee-days after both:
          *
          * 1. grace period
@@ -944,7 +980,7 @@ export function findOverdueInstallments(
             0,
             wholeDaysBetween(
               feeStartBoundary,
-              asOf,
+              accrualAsOf,
             ),
           );
 
@@ -982,7 +1018,7 @@ export function findOverdueInstallments(
             0,
             wholeDaysBetween(
               dueDate,
-              asOf,
+              accrualAsOf,
             ),
           );
 
@@ -1031,4 +1067,24 @@ export function findOverdueInstallments(
   }
 
   return results;
+}
+
+// -----------------------------------------------------------------------------
+// Late-fee transaction ID helpers
+// -----------------------------------------------------------------------------
+
+export function getLateFeeTransactionPrefix(
+  type: "contribution" | "loan",
+  sourceId: string,
+  periodOrIndex: string | number,
+): string {
+  if (type === "contribution") {
+    return `late-fee-contrib-${sourceId}-${String(
+      periodOrIndex,
+    )}`;
+  }
+
+  return `late-fee-loan-${sourceId}-${String(
+    periodOrIndex,
+  )}`;
 }

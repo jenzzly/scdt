@@ -121,6 +121,7 @@ function LoanDetailModal({
   onApprove,
   onReject,
   onDelete,
+  onEdit,
   onEditResubmit,
   isAdmin,
   isPending,
@@ -138,6 +139,7 @@ function LoanDetailModal({
   onApprove: () => void;
   onReject: () => void;
   onDelete?: () => void;
+  onEdit?: () => void;
   onEditResubmit?: () => void;
   isAdmin: boolean;
   isPending: boolean;
@@ -184,6 +186,9 @@ function LoanDetailModal({
         <View style={styles.modalInfo}>
           <Text style={styles.modalMember}>{member?.fullName ?? "Unknown"}</Text>
           <Text style={styles.modalAmount}>{fmtCurrency(loan.amount)}</Text>
+          <Text style={styles.modalDetail}>
+            Applied: {fmtDate(loan.applicationDate)}
+          </Text>
           <Text style={styles.modalDetail}>
             {loan.interestRate}% {(loan as any).interestRatePeriod === "annual" ? "annual" : "monthly"}{isRB ? " · daily accrual" : " flat"} · {loan.repaymentMonths} months
           </Text>
@@ -377,6 +382,11 @@ function LoanDetailModal({
         {canDisburse && onDelete && (
           <TouchableOpacity style={styles.deleteBtn} onPress={onDelete} activeOpacity={0.8}>
             <Text style={styles.deleteBtnText}>🗑 Delete Loan</Text>
+          </TouchableOpacity>
+        )}
+        {canDisburse && onEdit && (
+          <TouchableOpacity style={styles.editBtn} onPress={onEdit} activeOpacity={0.8}>
+            <Text style={styles.editBtnText}>✏️ Edit Loan</Text>
           </TouchableOpacity>
         )}
 
@@ -1023,6 +1033,10 @@ export default function LoansScreen() {
           }
         }}
         onDelete={selectedLoan ? () => handleDeleteLoan(selectedLoan) : undefined}
+        onEdit={selectedLoan ? () => {
+          setShowLoanDetail(false);
+          router.push({ pathname: "/modals/edit-loan", params: { id: selectedLoan.id } });
+        } : undefined}
         onEditResubmit={
           selectedLoan && selectedLoan.status === "rejected" && (selectedLoan.memberId === currentMember?.id || isAdmin)
             ? () => router.push({
@@ -1033,6 +1047,7 @@ export default function LoansScreen() {
                   prefillPurpose: selectedLoan.purpose ?? "",
                   prefillMonths: String(selectedLoan.repaymentMonths ?? 6),
                   prefillMemberId: selectedLoan.memberId,
+                  prefillDate: selectedLoan.applicationDate?.slice(0, 10) ?? "",
                 },
               })
             : undefined
@@ -1421,6 +1436,20 @@ const styles = StyleSheet.create({
   },
   deleteBtnText: {
     color: C.error,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  editBtn: {
+    backgroundColor: C.infoBg,
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.3)",
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  editBtnText: {
+    color: C.info,
     fontSize: 12,
     fontWeight: "700",
   },

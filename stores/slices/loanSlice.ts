@@ -4,8 +4,12 @@ import type {ID, Loan, LoanApprovals, Group, Member} from "../../types";
 import * as FS from "../../lib/firestore";
 import { uid, loanSchedule, round2 } from "../../utils/theme";
 import { recalcGroupTotals } from "../recalcGroupTotals";
+import {
+  findLoanDisbursementWalletTx,
+  buildLinkedTxPatch,
+} from "../../utils/linkedWalletSync";
 
-export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLoanLocal" | "approveLoanStep" | "deleteLoan" | "deleteLoanLocal" | "disburseLoan" | "recordRepayment" | "rejectLoan" | "setLoans" | "submitLoan" | "updateLoan" | "updateLoanLocal"> => ({
+export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLoanLocal" | "approveLoanStep" | "deleteLoan" | "deleteLoanLocal" | "disburseLoan" | "recordRepayment" | "rejectLoan" | "rescheduleLoanInstallment" | "setLoans" | "submitLoan" | "updateLoan" | "updateLoanAndSync" | "updateLoanLocal"> => ({
       setLoans: (loans) => set({ loans }),
       addLoanLocal: (loan) => set((s: StoreState) => ({ loans: [loan, ...s.loans] })),
       updateLoanLocal: (id, data) => set((s) => ({
@@ -263,6 +267,157 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
         get().updateLoanLocal(loanId, data);
         if (activeGroupId) {
           await FS.updateLoan(activeGroupId, loanId, data).catch(console.warn);
+        }
+      },
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // EDIT LOAN + SYNC DISBURSEMENT WALLET TX
+      // ═══════════════════════════════════════════════════════════════════════
+      //
+      // Distinct from `updateLoan` above (general-purpose patch, used e.g.
+      // by disburseLoan/recordRepayment to write server-computed fields —
+      // it never touches the wallet). This is the "user edited the loan's
+      // amount/date/description in a form" path.
+      //
+      // ASSUMPTION: a Loan has a single "disbursement" wallet tx
+      // (type: "loan_disbursement", loanId match) created at disbursement
+      // time — I inferred this from disburseLoan's `result.walletTx` below
+      // and TX_LABEL["loan_disbursement"] in wallet.tsx/edit-transaction.tsx.
+      // If the loan hasn't been disbursed yet, there's no linked tx to sync
+      // — editing amount/date pre-disbursement just updates the loan record
+      // itself (which is also what the schedule is later derived from at
+      // disbursement, so this is safe).
+      //
+      // Only amount / date / description are accepted, per the same
+      // restriction as edit-transaction.tsx and updateContributionAndSync.
+      // Editing `amount` on an ALREADY-DISBURSED loan intentionally does
+      // NOT recompute the repayment schedule/interest — that's a much
+      // bigger change (would need loanSchedule() re-run against remaining
+      // balance) and out of scope here; treat this as a correction to the
+      // recorded amount/date, not a schedule recalculation. Add a warning
+      // in the UI if you disburse-edit a loan with repayments already made.
+      updateLoanAndSync: async (loanId, data) => {
+        const { activeGroupId, loans, walletTransactions } = get();
+        if (!activeGroupId) throw new Error("No active group");
+
+        const loan = loans.find((l: Loan) => l.id === loanId);
+        if (!loan) throw new Error("Loan not found");
+
+        const allowed: Partial<Pick<Loan, "amount" | "applicationDate" | "purpose">> & {
+          date?: string;
+          description?: string;
+        } = {};
+
+        // Loan doesn't have a generic "description" field in the shape
+        // shown in loans.tsx (it uses `purpose`), so accept either the
+        // caller's `description` (mapped to `purpose`) or `purpose`
+        // directly — whichever your Loan type actually uses. ASSUMPTION:
+        // adjust the field name below if `Loan.purpose` isn't right.
+        if (data.amount !== undefined) allowed.amount = data.amount;
+        if (data.date !== undefined) allowed.applicationDate = data.date;
+        if (data.description !== undefined) allowed.purpose = data.description;
+
+        const loanPatch: Partial<Loan> = {};
+        if (allowed.amount !== undefined) loanPatch.amount = allowed.amount;
+        if (allowed.applicationDate !== undefined) loanPatch.applicationDate = allowed.applicationDate;
+        if (allowed.purpose !== undefined) loanPatch.purpose = allowed.purpose;
+
+        const previousLoan = { ...loan };
+        const linkedTx = findLoanDisbursementWalletTx(walletTransactions, loanId);
+        const previousTx = linkedTx ? { ...linkedTx } : null;
+
+        const txChanged = {
+          amount: data.amount,
+          date: data.date,
+          description: data.description,
+        };
+
+        get().updateLoanLocal(loanId, loanPatch);
+
+        if (linkedTx) {
+          const txPatch = buildLinkedTxPatch(linkedTx, txChanged);
+          get().updateWalletTxLocal(linkedTx.id, txPatch);
+        }
+
+        set((s) => recalcGroupTotals(s));
+
+        try {
+          get().setSyncStatus("pending");
+
+          await FS.updateLoan(activeGroupId, loanId, loanPatch);
+
+          if (linkedTx) {
+            const txPatch = buildLinkedTxPatch(linkedTx, txChanged);
+            await FS.updateWalletTx(activeGroupId, linkedTx.id, txPatch);
+          }
+
+          get().recalcTotals();
+          get().setSyncStatus("synced");
+        } catch (e) {
+          get().updateLoanLocal(loanId, previousLoan);
+          if (linkedTx && previousTx) {
+            get().updateWalletTxLocal(linkedTx.id, previousTx);
+          }
+          set((s) => recalcGroupTotals(s));
+
+          get().setSyncStatus(
+            "failed",
+            e instanceof Error ? e.message : "Failed to update loan"
+          );
+          throw e;
+        }
+      },
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // RESCHEDULE AN INSTALLMENT'S DUE DATE
+      // ═══════════════════════════════════════════════════════════════════════
+      //
+      // This is intentionally SEPARATE from updateLoanAndSync above: an
+      // unpaid schedule item has no wallet transaction at all yet (see
+      // lateFees.ts — findOverdueInstallments walks `loan.schedule`
+      // directly, not the wallet), so there's nothing to sync here. This
+      // only patches `loan.schedule[index].dueDate` — it does NOT recompute
+      // interest or shift any other installment's date. Call it once per
+      // installment you want to move; for a full re-space of every
+      // remaining installment, call it in a loop from the UI.
+      //
+      // ASSUMPTION: Loan.schedule items expose `dueDate` (confirmed from
+      // findOverdueInstallments and loans.tsx's schedule modal, which both
+      // read `item.dueDate`) and are addressed by array index (confirmed
+      // from `installmentIndex` in OverdueInstallment and the `.forEach((item, index) => ...)`
+      // walk in findOverdueInstallments).
+      rescheduleLoanInstallment: async (loanId, installmentIndex, newDueDate) => {
+        const { activeGroupId, loans } = get();
+        if (!activeGroupId) throw new Error("No active group");
+
+        const loan = loans.find((l: Loan) => l.id === loanId);
+        if (!loan) throw new Error("Loan not found");
+        if (!loan.schedule || !loan.schedule[installmentIndex]) {
+          throw new Error("Installment not found");
+        }
+        if (loan.schedule[installmentIndex].paid) {
+          throw new Error("Cannot reschedule a paid installment");
+        }
+
+        const previousSchedule = loan.schedule.map((item) => ({ ...item }));
+
+        const newSchedule = loan.schedule.map((item, i) =>
+          i === installmentIndex ? { ...item, dueDate: newDueDate } : item
+        );
+
+        get().updateLoanLocal(loanId, { schedule: newSchedule });
+
+        try {
+          get().setSyncStatus("pending");
+          await FS.updateLoan(activeGroupId, loanId, { schedule: newSchedule });
+          get().setSyncStatus("synced");
+        } catch (e) {
+          get().updateLoanLocal(loanId, { schedule: previousSchedule });
+          get().setSyncStatus(
+            "failed",
+            e instanceof Error ? e.message : "Failed to reschedule installment"
+          );
+          throw e;
         }
       },
 
