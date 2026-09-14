@@ -38,11 +38,13 @@ import {
   useGroupWallet,
   useCurrentUserRole,
   useStore,
+  useGroupLoans,
 } from "../../stores/useStore";
 
 import { useToast, Toast, DatePicker } from "../../components/ui";
-import { C, fmtCurrency, showConfirm } from "../../utils/theme";
+import { C, fmtCurrency, showConfirm, round2 } from "../../utils/theme";
 import type { WalletTransaction } from "../../types";
+import { projectAccruedInterest } from "../../lib/firestore/loans";
 
 // Same allow-list as wallet.tsx — keep these two in sync, or better,
 // move this into a shared constants file and import it in both places.
@@ -74,6 +76,7 @@ export default function EditTransactionModal() {
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const allTxs = useGroupWallet();
+  const allLoans = useGroupLoans();
   const role = useCurrentUserRole();
   // ASSUMPTION: `updateWalletTransaction` does not yet exist on the store —
   // add it alongside `deleteWalletTransaction`, matching its call
@@ -90,6 +93,11 @@ export default function EditTransactionModal() {
     [allTxs, id]
   );
 
+  const linkedLoan = useMemo(() => {
+    if (!tx?.loanId || tx.type !== "loan_disbursement") return null;
+    return allLoans.find((l) => l.id === tx.loanId);
+  }, [tx, allLoans]);
+
   const isLinked =
     !!tx?.loanId ||
     !!tx?.contributionId ||
@@ -101,6 +109,39 @@ export default function EditTransactionModal() {
   const [date, setDate] = useState("");
   const [txType, setTxType] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Calculate accrued interest projection when date changes for loan disbursements
+  const accruedInterestProjection = useMemo(() => {
+    if (!linkedLoan || linkedLoan.interestMethod !== "reducing_balance") return null;
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    
+    try {
+      // Use the loan's current application date as the anchor if lastAccrualDate is not set
+      const anchorDate = (linkedLoan as any).lastAccrualDate || linkedLoan.applicationDate || date;
+      
+      const projection = projectAccruedInterest(
+        {
+          balance: linkedLoan.balance,
+          interestRate: linkedLoan.interestRate,
+          interestMethod: linkedLoan.interestMethod,
+          interestRatePeriod: (linkedLoan as any).interestRatePeriod,
+          accruedInterest: (linkedLoan as any).accruedInterest || 0,
+          lastAccrualDate: anchorDate,
+        },
+        date + "T00:00:00.000Z" // Ensure proper ISO format
+      );
+      console.log("Accrued interest projection (wallet):", projection, "loan data:", {
+        balance: linkedLoan.balance,
+        interestRate: linkedLoan.interestRate,
+        lastAccrualDate: anchorDate,
+        newDate: date,
+      });
+      return projection;
+    } catch (e) {
+      console.error("Failed to calculate accrued interest projection:", e);
+      return null;
+    }
+  }, [linkedLoan, date]);
 
   useEffect(() => {
     if (!tx) return;
@@ -133,7 +174,7 @@ export default function EditTransactionModal() {
         <Text style={s.subtitle}>
           This transaction may have been deleted, or the link is invalid.
         </Text>
-        <TouchableOpacity style={s.secondaryBtnText} onPress={() => router.back()}>
+        <TouchableOpacity style={s.secondaryBtn} onPress={() => router.back()}>
           <Text style={s.secondaryBtnText}>Go back</Text>
         </TouchableOpacity>
       </View>
@@ -218,10 +259,20 @@ export default function EditTransactionModal() {
           <View style={s.noticeBox}>
             <Text style={s.noticeText}>
               This transaction is linked to a{" "}
-              {tx.loanId ? "loan" : tx.contributionId ? "contribution" : "investment"}.
+              {tx.loanId ? "loan" : tx.contributionId ? "contribution" : tx.investmentId ? "investment" : "record"}.
               Only the description, amount, and date can be edited here — the
               transaction type and linked record stay the same.
             </Text>
+            <Text style={s.noticeText}>
+              {"\n"}Editing the date or amount will also update the linked{" "}
+              {tx.loanId ? "loan" : tx.contributionId ? "contribution" : tx.investmentId ? "investment" : "record"}
+              {" "}to keep data synchronized.
+            </Text>
+            {tx.loanId && tx.type === "loan_disbursement" && (
+              <Text style={s.noticeText}>
+                {"\n"}For reducing-balance loans, editing the date will also recalculate accrued interest.
+              </Text>
+            )}
           </View>
         )}
 
@@ -260,6 +311,19 @@ export default function EditTransactionModal() {
             placeholder="YYYY-MM-DD"
           />
         </View>
+
+        {/* Show accrued interest projection for loan disbursements */}
+        {linkedLoan && linkedLoan.interestMethod === "reducing_balance" && accruedInterestProjection && (
+          <View style={s.accruedInterestBox}>
+            <Text style={s.accruedInterestLabel}>Projected Accrued Interest</Text>
+            <Text style={s.accruedInterestValue}>
+              {fmtCurrency(accruedInterestProjection.total)} 
+              <Text style={s.accruedInterestSub}>
+                ({accruedInterestProjection.days} days · +{fmtCurrency(accruedInterestProjection.accrued)})
+              </Text>
+            </Text>
+          </View>
+        )}
 
         {!isLinked && (
           <View style={s.field}>
@@ -311,6 +375,16 @@ const s = StyleSheet.create({
   },
   title: { fontSize: 16, fontWeight: "800", color: C.text },
   subtitle: { fontSize: 13, color: C.text3, textAlign: "center" },
+  secondaryBtn: {
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    marginTop: 8,
+  },
+  secondaryBtnText: { fontSize: 14, fontWeight: "600", color: C.text },
 
   header: {
     flexDirection: "row",
@@ -373,6 +447,25 @@ const s = StyleSheet.create({
   typeChipActive: { backgroundColor: C.primary, borderColor: C.primary },
   typeChipText: { fontSize: 12, fontWeight: "600", color: C.text3 },
   typeChipTextActive: { color: "#fff" },
+
+  accruedInterestBox: {
+    marginTop: 8,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  accruedInterestLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 5,
+  },
+  accruedInterestValue: { fontSize: 14, fontWeight: "700", color: C.gold },
+  accruedInterestSub: { fontSize: 11, fontWeight: "400", color: C.text3 },
 
   summaryBox: {
     marginTop: 8,

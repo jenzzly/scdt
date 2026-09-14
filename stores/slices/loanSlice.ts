@@ -279,23 +279,43 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
       // it never touches the wallet). This is the "user edited the loan's
       // amount/date/description in a form" path.
       //
-      // ASSUMPTION: a Loan has a single "disbursement" wallet tx
-      // (type: "loan_disbursement", loanId match) created at disbursement
-      // time — I inferred this from disburseLoan's `result.walletTx` below
-      // and TX_LABEL["loan_disbursement"] in wallet.tsx/edit-transaction.tsx.
-      // If the loan hasn't been disbursed yet, there's no linked tx to sync
-      // — editing amount/date pre-disbursement just updates the loan record
-      // itself (which is also what the schedule is later derived from at
-      // disbursement, so this is safe).
+      // ── WHY loan.balance MATTERS HERE (found during review against
+      //    recalcGroupTotals.ts) ──
+      //
+      // recalcGroupTotals.ts's `totalLoans` (the group's "outstanding
+      // loans" figure) is NOT derived from wallet transactions — it sums
+      // `loan.balance` directly across every disbursed loan. `loan.amount`
+      // (the original principal) and `loan.balance` (current outstanding
+      // principal, set equal to `amount` at disbursement and decremented
+      // by every recordRepayment) are DIFFERENT fields.
+      //
+      // If this action only patched `loan.amount` — which is all it did
+      // in the previous version — editing a disbursed loan's amount would
+      // change the wallet's disbursement tx (so `availableBalance` shifts)
+      // and `loan.amount` itself, but NOT `loan.balance`, so the group's
+      // `totalLoans` figure would silently drift out of step with the
+      // wallet. That's exactly the kind of report-shows-wrong-number bug
+      // this review was asked to catch.
+      //
+      // FIX: when the loan has had ZERO repayments so far
+      // (`amountRepaid === 0`), it's safe to shift `balance` by the same
+      // delta as `amount` — nothing has been paid down yet, so the
+      // outstanding balance IS the principal. When repayments already
+      // exist, shifting the balance by a flat delta would be a guess
+      // (should the delta come off principal, or should the whole
+      // repayment schedule re-run?) — so this action refuses that case
+      // with a clear error instead of silently producing a number nobody
+      // asked for. The caller (edit-loan.tsx) should tell the user to use
+      // a different flow (e.g. write off / manual adjustment) in that case.
       //
       // Only amount / date / description are accepted, per the same
       // restriction as edit-transaction.tsx and updateContributionAndSync.
-      // Editing `amount` on an ALREADY-DISBURSED loan intentionally does
-      // NOT recompute the repayment schedule/interest — that's a much
-      // bigger change (would need loanSchedule() re-run against remaining
-      // balance) and out of scope here; treat this as a correction to the
-      // recorded amount/date, not a schedule recalculation. Add a warning
-      // in the UI if you disburse-edit a loan with repayments already made.
+      // This still does NOT recompute the repayment schedule or interest
+      // (totalInterest/totalRepayable/monthlyPayment stay as originally
+      // computed by loanSchedule() at submission) — correcting those too
+      // would require re-running loanSchedule() against the new amount,
+      // which changes every future installment's due amounts and is a
+      // bigger, more disruptive edit than "fix a typo in the amount."
       updateLoanAndSync: async (loanId, data) => {
         const { activeGroupId, loans, walletTransactions } = get();
         if (!activeGroupId) throw new Error("No active group");
@@ -303,24 +323,35 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
         const loan = loans.find((l: Loan) => l.id === loanId);
         if (!loan) throw new Error("Loan not found");
 
-        const allowed: Partial<Pick<Loan, "amount" | "applicationDate" | "purpose">> & {
-          date?: string;
-          description?: string;
-        } = {};
+        const isDisbursed = loan.status === "disbursed" || loan.status === "repaid";
+        const hasRepayments = (loan.amountRepaid ?? 0) > 0;
 
-        // Loan doesn't have a generic "description" field in the shape
-        // shown in loans.tsx (it uses `purpose`), so accept either the
-        // caller's `description` (mapped to `purpose`) or `purpose`
-        // directly — whichever your Loan type actually uses. ASSUMPTION:
-        // adjust the field name below if `Loan.purpose` isn't right.
-        if (data.amount !== undefined) allowed.amount = data.amount;
-        if (data.date !== undefined) allowed.applicationDate = data.date;
-        if (data.description !== undefined) allowed.purpose = data.description;
+        if (
+          data.amount !== undefined &&
+          data.amount !== loan.amount &&
+          isDisbursed &&
+          hasRepayments
+        ) {
+          throw new Error(
+            "Cannot change the amount of a loan that already has repayments recorded. " +
+            "The outstanding balance can no longer be inferred from a simple delta — " +
+            "adjust the balance manually via a wallet correction instead."
+          );
+        }
 
         const loanPatch: Partial<Loan> = {};
-        if (allowed.amount !== undefined) loanPatch.amount = allowed.amount;
-        if (allowed.applicationDate !== undefined) loanPatch.applicationDate = allowed.applicationDate;
-        if (allowed.purpose !== undefined) loanPatch.purpose = allowed.purpose;
+        if (data.amount !== undefined) {
+          loanPatch.amount = data.amount;
+
+          // Safe case: no repayments yet, so balance === amount still
+          // holds and can be shifted by the same delta.
+          if (isDisbursed && !hasRepayments) {
+            const delta = round2(data.amount - loan.amount);
+            loanPatch.balance = round2((loan.balance ?? loan.amount) + delta);
+          }
+        }
+        if (data.date !== undefined) loanPatch.applicationDate = data.date;
+        if (data.description !== undefined) loanPatch.purpose = data.description;
 
         const previousLoan = { ...loan };
         const linkedTx = findLoanDisbursementWalletTx(walletTransactions, loanId);
@@ -372,20 +403,24 @@ export const createLoanSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addLo
       // RESCHEDULE AN INSTALLMENT'S DUE DATE
       // ═══════════════════════════════════════════════════════════════════════
       //
-      // This is intentionally SEPARATE from updateLoanAndSync above: an
-      // unpaid schedule item has no wallet transaction at all yet (see
-      // lateFees.ts — findOverdueInstallments walks `loan.schedule`
-      // directly, not the wallet), so there's nothing to sync here. This
-      // only patches `loan.schedule[index].dueDate` — it does NOT recompute
-      // interest or shift any other installment's date. Call it once per
-      // installment you want to move; for a full re-space of every
-      // remaining installment, call it in a loop from the UI.
+      // Separate from updateLoanAndSync above: an unpaid schedule item has
+      // no wallet transaction at all yet (findOverdueInstallments walks
+      // `loan.schedule` directly, not the wallet), so there's nothing to
+      // sync here. This only patches `loan.schedule[index].dueDate` — it
+      // does NOT recompute interest or shift any other installment's date.
       //
-      // ASSUMPTION: Loan.schedule items expose `dueDate` (confirmed from
-      // findOverdueInstallments and loans.tsx's schedule modal, which both
-      // read `item.dueDate`) and are addressed by array index (confirmed
-      // from `installmentIndex` in OverdueInstallment and the `.forEach((item, index) => ...)`
-      // walk in findOverdueInstallments).
+      // ── Interaction with late fees (confirmed against lateFees.ts) ──
+      // findOverdueInstallments recomputes daysPastGrace live from
+      // whatever dueDate is currently in loan.schedule, so pushing a due
+      // date LATER correctly stops new fee-days from accruing on next
+      // read. It does NOT retroactively delete or refund any late-fee
+      // wallet transactions already applied for days that are no longer
+      // late — daysAlreadyCharged() reads the wallet ledger, which this
+      // action never touches. If a reschedule should also forgive
+      // already-applied fees, that's a separate, explicit
+      // clearStandaloneLateFee() call — never done implicitly here, since
+      // silently erasing a wallet record on a date edit would be a much
+      // bigger surprise than leaving it for a human to clear.
       rescheduleLoanInstallment: async (loanId, installmentIndex, newDueDate) => {
         const { activeGroupId, loans } = get();
         if (!activeGroupId) throw new Error("No active group");

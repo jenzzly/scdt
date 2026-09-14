@@ -83,6 +83,12 @@ type MemberStatusFilter =
   | "no_contributions_in_period"
   | "no_loans";
 
+// Profits tab: which slice of earnings to show. "all" combines what's
+// already been collected with what's still expected; "actual" shows only
+// money that has actually landed (repayments + fees already paid);
+// "projected" shows only what's still outstanding/expected.
+type EarningsViewMode = "all" | "actual" | "projected";
+
 // ─────────────────────────────────────────────────────────────────────────
 // Categories
 // ─────────────────────────────────────────────────────────────────────────
@@ -108,6 +114,68 @@ const MEMBER_STATUS_OPTIONS: { label: string; value: MemberStatusFilter }[] = [
   { label: "Late loan repayments", value: "late_loans" },
   { label: "No contributions in period", value: "no_contributions_in_period" },
   { label: "No loans taken", value: "no_loans" },
+];
+
+// Simple chip-row options for Loan/Contribution status — short label +
+// short helper shown under the row, no nested modal (avoids stacking a
+// dropdown-modal inside the already-open filter modal).
+const LOAN_STATUS_CHIPS: { label: string; value: "all" | "pending" | "active" | "repaid" }[] = [
+  { label: "All", value: "all" },
+  { label: "Pending", value: "pending" },
+  { label: "Active", value: "active" },
+  { label: "Repaid", value: "repaid" },
+];
+
+const CONTRIBUTION_STATUS_CHIPS: { label: string; value: "all" | "approved" | "pending" | "rejected" }[] = [
+  { label: "All", value: "all" },
+  { label: "Approved", value: "approved" },
+  { label: "Pending", value: "pending" },
+  { label: "Rejected", value: "rejected" },
+];
+
+// Member Condition, grouped with one-line explanations so it's clear
+// what each option actually checks for — this is the part of the old
+// modal that was most likely to confuse people (six flat options with no
+// context for what "late" or "no activity" means here).
+const MEMBER_CONDITION_GROUPS: {
+  groupLabel: string;
+  options: { label: string; value: MemberStatusFilter; description: string }[];
+}[] = [
+  {
+    groupLabel: "Payment issues",
+    options: [
+      {
+        label: "Has unpaid late fees",
+        value: "has_unpaid_fees",
+        description: "Any late fee — from a contribution or a loan — that hasn't been paid",
+      },
+      {
+        label: "Late contribution fees",
+        value: "late_contribution_fees",
+        description: "Specifically an unpaid fee from a missed contribution",
+      },
+      {
+        label: "Late loan repayments",
+        value: "late_loans",
+        description: "Currently has a loan installment past its due date",
+      },
+    ],
+  },
+  {
+    groupLabel: "Activity",
+    options: [
+      {
+        label: "No contributions in period",
+        value: "no_contributions_in_period",
+        description: "Hasn't contributed within the selected date range (or ever, if no range is set)",
+      },
+      {
+        label: "No loans taken",
+        value: "no_loans",
+        description: "Has never taken out a loan",
+      },
+    ],
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -136,6 +204,27 @@ function monthBounds(key: string) {
   const end = new Date(y, m, 0);
   const iso = (d: Date) => d.toISOString().slice(0, 10);
   return { from: iso(start), to: iso(end) };
+}
+
+// Counts how many distinct filter GROUPS are active (not individual
+// fields) — a date range counts once even though it's two fields, so the
+// number matches how many chips a person would see, not how many state
+// variables changed.
+function countActiveFilters(opts: {
+  search: string;
+  fromDate: string;
+  toDate: string;
+  loanStatus: string;
+  contributionStatus: string;
+  memberStatus: string;
+}) {
+  let n = 0;
+  if (opts.search) n++;
+  if (opts.fromDate || opts.toDate) n++;
+  if (opts.loanStatus !== "all") n++;
+  if (opts.contributionStatus !== "all") n++;
+  if (opts.memberStatus !== "all") n++;
+  return n;
 }
 
 function monthlyTotals(
@@ -743,6 +832,40 @@ function Dropdown({
 // Advanced filter modal
 // ─────────────────────────────────────────────────────────────────────────
 
+// Small single-select chip row — used for Loan/Contribution status so
+// the filter modal doesn't have to nest another dropdown-modal inside
+// itself. Chips are always all visible at once (max 4 options), so
+// there's no extra tap needed to see what's available.
+function StatusChipRow({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: { label: string; value: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <View style={styles.chipRow}>
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <TouchableOpacity
+            key={opt.value}
+            style={[styles.statusChip, active && styles.statusChipActive]}
+            onPress={() => onChange(opt.value)}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
+              {opt.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
 function FilterModal({
   visible,
   onClose,
@@ -760,6 +883,7 @@ function FilterModal({
   searchTerm,
   onSearchChange,
   onClear,
+  activeFilterCount,
 }: any) {
   return (
     <BottomModal visible={visible} onClose={onClose} title="Advanced Filters">
@@ -767,67 +891,102 @@ function FilterModal({
         contentContainerStyle={{ padding: 16, paddingBottom: 30 }}
         keyboardShouldPersistTaps="handled"
       >
-        <Input
-          label="Search"
-          value={searchTerm}
-          onChangeText={onSearchChange}
-          placeholder="Search by member, ID, description..."
-          leftIcon="🔍"
-        />
-
-        <Text style={styles.modalSectionLabel}>Custom Date Range</Text>
-
-        <Text style={{ fontSize: 11, color: C.text3, marginBottom: 8 }}>
-          Overrides the "All Months" quick filter when set
+        <Text style={styles.modalIntro}>
+          Every filter below narrows the same list further — a record has
+          to match ALL of the ones you set, not just one.
         </Text>
 
-        <DatePicker label="From Date" value={fromDate} onChange={onFromDateChange} placeholder="Start date" />
-
-        <DatePicker label="To Date" value={toDate} onChange={onToDateChange} placeholder="End date" />
-
-        <Text style={styles.modalSectionLabel}>Status Filters</Text>
-
-        <View style={styles.modalRow}>
-          <View style={styles.modalHalf}>
-            <Select
-              label="Loans"
-              value={loanStatus}
-              options={["all", "pending", "active", "repaid"].map((s) => ({
-                label: s.charAt(0).toUpperCase() + s.slice(1),
-                value: s,
-              }))}
-              onChange={onLoanStatusChange}
-            />
-          </View>
-
-          <View style={styles.modalHalf}>
-            <Select
-              label="Contributions"
-              value={contributionStatus}
-              options={["all", "approved", "pending", "rejected"].map((s) => ({
-                label: s.charAt(0).toUpperCase() + s.slice(1),
-                value: s,
-              }))}
-              onChange={onContributionStatusChange}
-            />
-          </View>
+        {/* ── Search ──────────────────────────────────────────────── */}
+        <View style={styles.filterSection}>
+          <Text style={styles.filterSectionTitle}>Search</Text>
+          <Input
+            value={searchTerm}
+            onChangeText={onSearchChange}
+            placeholder="Search by member, ID, description..."
+            leftIcon="🔍"
+          />
         </View>
 
-        <Text style={styles.modalSectionLabel}>Member Status</Text>
+        {/* ── Time period ─────────────────────────────────────────── */}
+        <View style={styles.filterSection}>
+          <Text style={styles.filterSectionTitle}>Time Period</Text>
+          <Text style={styles.filterSectionHelp}>
+            Set a custom range to look at a specific window. This replaces
+            the "Month" quick-filter on the main screen while it's active —
+            clear both dates below to go back to using that instead.
+          </Text>
 
-        <Text style={{ fontSize: 11, color: C.text3, marginBottom: 8 }}>
-          Narrows results to members matching a fee/payment condition.
-          "No contributions in period" and "No loans taken" use the date
-          range above (or the selected month) to decide what counts as
-          "in period" where applicable.
-        </Text>
+          <DatePicker label="From Date" value={fromDate} onChange={onFromDateChange} placeholder="Start date" />
+          <DatePicker label="To Date" value={toDate} onChange={onToDateChange} placeholder="End date" />
+        </View>
 
-        <Select
-          label="Member Status"
-          value={memberStatus}
-          options={MEMBER_STATUS_OPTIONS}
-          onChange={onMemberStatusChange}
-        />
+        {/* ── Loan status ─────────────────────────────────────────── */}
+        <View style={styles.filterSection}>
+          <Text style={styles.filterSectionTitle}>Loan Status</Text>
+          <Text style={styles.filterSectionHelp}>Only affects the Loans report tab.</Text>
+          <StatusChipRow value={loanStatus} options={LOAN_STATUS_CHIPS} onChange={onLoanStatusChange} />
+        </View>
+
+        {/* ── Contribution status ─────────────────────────────────── */}
+        <View style={styles.filterSection}>
+          <Text style={styles.filterSectionTitle}>Contribution Status</Text>
+          <Text style={styles.filterSectionHelp}>Only affects the Contributions report tab.</Text>
+          <StatusChipRow
+            value={contributionStatus}
+            options={CONTRIBUTION_STATUS_CHIPS}
+            onChange={onContributionStatusChange}
+          />
+        </View>
+
+        {/* ── Member condition ────────────────────────────────────── */}
+        <View style={styles.filterSection}>
+          <Text style={styles.filterSectionTitle}>Member Condition</Text>
+          <Text style={styles.filterSectionHelp}>
+            Show only members matching one condition below — grouped by
+            what kind of issue it is. Pick "All members" to remove this
+            filter.
+          </Text>
+
+          <TouchableOpacity
+            style={[styles.conditionCard, memberStatus === "all" && styles.conditionCardActive]}
+            onPress={() => onMemberStatusChange("all")}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.conditionRadio, memberStatus === "all" && styles.conditionRadioActive]}>
+              {memberStatus === "all" ? <View style={styles.conditionRadioDot} /> : null}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.conditionCardTitle}>All members</Text>
+              <Text style={styles.conditionCardDesc}>No member condition applied</Text>
+            </View>
+          </TouchableOpacity>
+
+          {MEMBER_CONDITION_GROUPS.map((group) => (
+            <View key={group.groupLabel} style={{ marginTop: 12 }}>
+              <Text style={styles.conditionGroupLabel}>{group.groupLabel}</Text>
+
+              {group.options.map((opt) => {
+                const active = memberStatus === opt.value;
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[styles.conditionCard, active && styles.conditionCardActive]}
+                    onPress={() => onMemberStatusChange(opt.value)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.conditionRadio, active && styles.conditionRadioActive]}>
+                      {active ? <View style={styles.conditionRadioDot} /> : null}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.conditionCardTitle}>{opt.label}</Text>
+                      <Text style={styles.conditionCardDesc}>{opt.description}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ))}
+        </View>
 
         <View style={styles.modalButtonRow}>
           <TouchableOpacity style={styles.modalClearBtn} onPress={onClear}>
@@ -835,7 +994,9 @@ function FilterModal({
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.modalApplyBtn} onPress={onApply}>
-            <Text style={styles.modalApplyBtnText}>Apply Filters</Text>
+            <Text style={styles.modalApplyBtnText}>
+              Apply Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+            </Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -891,6 +1052,9 @@ export default function ReportsScreen() {
   // Member-status advanced filter (fees/late/no-contribution/no-loan conditions).
   const [memberStatusFilter, setMemberStatusFilter] =
     useState<MemberStatusFilter>("all");
+
+  // Profits tab only: which slice of earnings to show (see EarningsViewMode).
+  const [earningsMode, setEarningsMode] = useState<EarningsViewMode>("all");
 
   const [tempSearch, setTempSearch] = useState("");
   const [tempFromDate, setTempFromDate] = useState("");
@@ -1806,9 +1970,25 @@ export default function ReportsScreen() {
       "other_debit",
     ];
 
+    // FIX: "loan_interest_income" is the MODERN wallet-tx shape written by
+    // recordRepaymentServer's split-transaction repayment flow — its
+    // `amount` IS the interest portion already, isolated at write time.
+    // Previously this function ran every non-"loan_repayment" type
+    // through the `return t.amount` branch too, which was harmless for
+    // loan_interest_income specifically (still returned the full amount)
+    // — but "loan_repayment" itself is the OLD, pre-split, COMBINED
+    // transaction shape (principal + interest blended into one row) and
+    // is the only case that legitimately needs the totalInterest /
+    // totalRepayable ratio estimate. "loan_principal_recovery" (the
+    // modern shape's principal-only counterpart) is intentionally never
+    // routed through here as earnings — it's excluded from `list` below.
     const earningAmount = (t: any) => {
       if (t.type !== "loan_repayment") return t.amount;
 
+      // Legacy combined tx only — estimate the interest slice of a
+      // blended repayment using the loan's fixed schedule ratio. Modern
+      // loans already have a dedicated loan_interest_income row with the
+      // exact amount, so they never reach this branch.
       const loan = loans.find((l) => l.id === t.loanId);
       if (!loan?.totalRepayable) return 0;
 
@@ -1897,29 +2077,58 @@ export default function ReportsScreen() {
       })),
     ];
 
-    // Combine actual wallet transactions with projections
-    const combinedList = [
-      ...list.map((t) => ({
-        type: t.type,
-        date: t.date,
-        memberId: t.memberId,
-        memberName: getMemberName(t.memberId),
-        description: t.description || t.type.replace(/_/g, " "),
-        amount: earningAmount(t),
-        source: "actual",
-      })),
-      ...projectedRows.map((r) => ({
-        ...r,
-        source: "projected",
-      })),
-    ];
+    const actualRows = list.map((t) => ({
+      type: t.type,
+      date: t.date,
+      memberId: t.memberId,
+      memberName: getMemberName(t.memberId),
+      description: t.description || t.type.replace(/_/g, " "),
+      amount: earningAmount(t),
+      source: "actual" as const,
+    }));
 
-    // Chart now sums real dollar amounts (actual + projected) per month,
-    // instead of counting records like the previous `null` amountField did.
-    const chart = monthlyTotals(combinedList, "date", "amount");
+    const projectedRowsTagged = projectedRows.map((r) => ({ ...r, source: "projected" as const }));
+
+    // earningsMode picks which rows/kpis the Profits tab actually shows.
+    // "all" keeps the original combined view; "actual" and "projected"
+    // isolate one side so someone can check "what have we actually
+    // collected (including fees already paid)" separately from "what's
+    // still expected."
+    let earningsRows: any[];
+    let earningsKpis: { label: string; value: string }[];
+
+    if (earningsMode === "actual") {
+      earningsRows = actualRows;
+      earningsKpis = [
+        { label: "Total Earned", value: fmtCurrency(totalEarnings) },
+        { label: "Interest Collected", value: fmtCurrency(actualInterest) },
+        { label: "Fees Paid", value: fmtCurrency(actualLateFees) },
+        { label: "Records", value: String(actualRows.length) },
+      ];
+    } else if (earningsMode === "projected") {
+      earningsRows = projectedRowsTagged;
+      earningsKpis = [
+        { label: "Total Projected", value: fmtCurrency(totalProjected) },
+        { label: "Projected Interest", value: fmtCurrency(totalProjectedInterest) },
+        { label: "Projected Late Fees", value: fmtCurrency(totalLoanLateFees) },
+        { label: "Records", value: String(projectedRowsTagged.length) },
+      ];
+    } else {
+      earningsRows = [...actualRows, ...projectedRowsTagged];
+      earningsKpis = [
+        { label: "Total Earnings", value: fmtCurrency(combinedTotal) },
+        { label: "Interest Earned", value: fmtCurrency(totalInterestAllIn) },
+        { label: "Late Fees", value: fmtCurrency(totalLateFeesAllIn) },
+        { label: "Projected Earnings", value: fmtCurrency(totalProjected) },
+      ];
+    }
+
+    // Chart sums real dollar amounts (not record counts) per month, for
+    // whichever row set is currently selected.
+    const chart = monthlyTotals(earningsRows, "date", "amount");
 
     return {
-      rows: combinedList,
+      rows: earningsRows,
       headers: ["Date", "Member", "Type", "Description", "Amount", "Source"],
       toRow: (t: any) => [
         fmtDate(t.date),
@@ -1931,12 +2140,7 @@ export default function ReportsScreen() {
       ],
       chart,
       chartColor: C.success,
-      kpis: [
-        { label: "Total Earnings", value: fmtCurrency(combinedTotal) },
-        { label: "Interest Earned", value: fmtCurrency(totalInterestAllIn) },
-        { label: "Late Fees", value: fmtCurrency(totalLateFeesAllIn) },
-        { label: "Projected Earnings", value: fmtCurrency(totalProjected) },
-      ],
+      kpis: earningsKpis,
     };
   }, [
     category,
@@ -1967,6 +2171,7 @@ export default function ReportsScreen() {
     loanLateFees,
     projectedLoanInterest,
     projectedLoanLateFees,
+    earningsMode,
   ]);
 
   // ───────────────────────────────────────────────────────────────────────
@@ -2435,15 +2640,70 @@ export default function ReportsScreen() {
             )}
           </View>
 
-          {searchTerm !== "" && (
-            <Text style={styles.searchIndicator}>🔍 "{searchTerm}"</Text>
-          )}
+          {hasActiveFilters && (
+            <View style={styles.activeFiltersRow}>
+              {searchTerm !== "" && (
+                <View style={styles.activeFilterChip}>
+                  <Text style={styles.activeFilterChipText} numberOfLines={1}>
+                    🔍 "{searchTerm}"
+                  </Text>
+                  <TouchableOpacity onPress={() => setSearchTerm("")} hitSlop={8}>
+                    <Text style={styles.activeFilterChipClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
 
-          {memberStatusFilter !== "all" && (
-            <Text style={styles.searchIndicator}>
-              👤{" "}
-              {MEMBER_STATUS_OPTIONS.find((o) => o.value === memberStatusFilter)?.label}
-            </Text>
+              {(selectedFromDate || selectedToDate) !== "" && (selectedFromDate || selectedToDate) && (
+                <View style={styles.activeFilterChip}>
+                  <Text style={styles.activeFilterChipText} numberOfLines={1}>
+                    📅 {selectedFromDate || "start"} → {selectedToDate || "now"}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setSelectedFromDate("");
+                      setSelectedToDate("");
+                      setMonthFilter("all");
+                    }}
+                    hitSlop={8}
+                  >
+                    <Text style={styles.activeFilterChipClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {loanStatus !== "all" && (
+                <View style={styles.activeFilterChip}>
+                  <Text style={styles.activeFilterChipText} numberOfLines={1}>
+                    🏦 Loans: {LOAN_STATUS_CHIPS.find((o) => o.value === loanStatus)?.label}
+                  </Text>
+                  <TouchableOpacity onPress={() => setLoanStatus("all")} hitSlop={8}>
+                    <Text style={styles.activeFilterChipClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {contributionStatus !== "all" && (
+                <View style={styles.activeFilterChip}>
+                  <Text style={styles.activeFilterChipText} numberOfLines={1}>
+                    📈 Contributions: {CONTRIBUTION_STATUS_CHIPS.find((o) => o.value === contributionStatus)?.label}
+                  </Text>
+                  <TouchableOpacity onPress={() => setContributionStatus("all")} hitSlop={8}>
+                    <Text style={styles.activeFilterChipClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {memberStatusFilter !== "all" && (
+                <View style={styles.activeFilterChip}>
+                  <Text style={styles.activeFilterChipText} numberOfLines={1}>
+                    👤 {MEMBER_STATUS_OPTIONS.find((o) => o.value === memberStatusFilter)?.label}
+                  </Text>
+                  <TouchableOpacity onPress={() => setMemberStatusFilter("all")} hitSlop={8}>
+                    <Text style={styles.activeFilterChipClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
           )}
 
           {/* ═════════════════════════════════════════════════════════════
@@ -2474,6 +2734,37 @@ export default function ReportsScreen() {
                       : "Members With No Contributions"
                     : `${CATEGORIES.find((c) => c.key === category)?.label} Overview`}
                 </Text>
+
+                {category === "earnings" && !isNoActivityMemberView && (
+                  <View style={styles.earningsModeRow}>
+                    {(
+                      [
+                        { label: "All", value: "all" },
+                        { label: "Earned", value: "actual" },
+                        { label: "Projected", value: "projected" },
+                      ] as { label: string; value: EarningsViewMode }[]
+                    ).map((opt) => {
+                      const active = earningsMode === opt.value;
+                      return (
+                        <TouchableOpacity
+                          key={opt.value}
+                          style={[styles.earningsModeBtn, active && styles.earningsModeBtnActive]}
+                          onPress={() => setEarningsMode(opt.value)}
+                          activeOpacity={0.8}
+                        >
+                          <Text
+                            style={[
+                              styles.earningsModeBtnText,
+                              active && styles.earningsModeBtnTextActive,
+                            ]}
+                          >
+                            {opt.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
 
                 <View style={styles.kpiMiniRow}>
                   {view.kpis.map((k) => (
@@ -2592,6 +2883,14 @@ export default function ReportsScreen() {
         searchTerm={tempSearch}
         onSearchChange={setTempSearch}
         onClear={clearAllFilters}
+        activeFilterCount={countActiveFilters({
+          search: tempSearch,
+          fromDate: tempFromDate,
+          toDate: tempToDate,
+          loanStatus: tempLoanStatus,
+          contributionStatus: tempContributionStatus,
+          memberStatus: tempMemberStatus,
+        })}
       />
 
       <Toast visible={visible} msg={msg} type={type} />
@@ -3705,6 +4004,139 @@ const styles = StyleSheet.create({
   transactionDate: { fontSize: 11, color: C.text3, marginTop: 2 },
 
   transactionAmount: { fontSize: 13, fontWeight: "700", marginLeft: 8, flexShrink: 0 },
+
+  modalIntro: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: C.text3,
+    marginBottom: 16,
+  },
+
+  filterSection: {
+    marginBottom: 22,
+    paddingBottom: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderLight,
+  },
+
+  filterSectionTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: C.text,
+    marginBottom: 4,
+  },
+
+  filterSectionHelp: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: C.text3,
+    marginBottom: 10,
+  },
+
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+
+  statusChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.surface,
+  },
+
+  statusChipActive: { backgroundColor: C.primary, borderColor: C.primary },
+
+  statusChipText: { fontSize: 12, fontWeight: "600", color: C.text2 },
+
+  statusChipTextActive: { color: "#fff" },
+
+  conditionGroupLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+
+  conditionCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.surface,
+    marginBottom: 8,
+  },
+
+  conditionCardActive: { borderColor: C.primary, backgroundColor: C.pill },
+
+  conditionRadio: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: C.border,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+
+  conditionRadioActive: { borderColor: C.primary },
+
+  conditionRadioDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: C.primary },
+
+  conditionCardTitle: { fontSize: 13, fontWeight: "700", color: C.text },
+
+  conditionCardDesc: { fontSize: 11, color: C.text3, marginTop: 2, lineHeight: 15 },
+
+  activeFiltersRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 16,
+  },
+
+  activeFilterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: C.pill,
+    borderWidth: 1,
+    borderColor: C.border,
+    maxWidth: "100%",
+  },
+
+  activeFilterChipText: { fontSize: 11, fontWeight: "600", color: C.primary, flexShrink: 1 },
+
+  activeFilterChipClose: { fontSize: 11, fontWeight: "800", color: C.primary, opacity: 0.7 },
+
+  earningsModeRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 14,
+  },
+
+  earningsModeBtn: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.surface,
+  },
+
+  earningsModeBtnActive: { backgroundColor: "#2E7D6C", borderColor: "#2E7D6C" },
+
+  earningsModeBtnText: { fontSize: 12, fontWeight: "700", color: C.text2 },
+
+  earningsModeBtnTextActive: { color: "#fff" },
 
   modalSectionLabel: { fontSize: 13, fontWeight: "700", color: C.text, marginTop: 12, marginBottom: 8 },
 

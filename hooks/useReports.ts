@@ -36,18 +36,40 @@ export function useReportData() {
   );
 
   // ── Total interest earned ──────────────────────────────────────────────────
-  const totalInterestEarned = useMemo(() => {
-    const loanInterest = loans
-      .filter((l) => (l.amountRepaid || 0) > 0)
-      .reduce((sum, l) => {
-        const ratio = l.totalRepayable > 0 ? (l.totalInterest / l.totalRepayable) : 0;
-        return sum + round2((l.amountRepaid || 0) * ratio);
-      }, 0);
-    const nonLoanInterest = wallet
-      .filter((t) => t.type === "interest" && !t.loanId)
-      .reduce((sum, t) => sum + t.amount, 0);
-    return round2(loanInterest + nonLoanInterest);
-  }, [loans, wallet]);
+  //
+  // FIXED (found during wallet-source-of-truth review):
+  //
+  // This used to recompute interest independently as
+  // `sum(loan.amountRepaid * (loan.totalInterest / loan.totalRepayable))`
+  // for every loan with amountRepaid > 0, plus non-loan "interest" wallet
+  // txs. That's the OLD, legacy-only estimation method —
+  // recalcGroupTotals.ts's own comment explicitly calls this out as
+  // superseded: "Interest earned is now read directly from wallet tx
+  // types rather than back-calculated from loan objects — this is correct
+  // for both flat and reducing-balance loans and avoids rounding drift."
+  //
+  // recalcGroupTotals.ts already maintains `group.totalInterestEarned`
+  // correctly — it reads `loan_interest_income` wallet transactions
+  // directly (the modern split-tx shape from recordRepaymentServer), and
+  // only falls back to the ratio-estimation method for old
+  // `loan_repayment` (pre-split, combined) transactions still sitting in
+  // the ledger. Recomputing a second, divergent version of the same
+  // number here — using ONLY the old method, unconditionally, for every
+  // loan regardless of which tx shape actually backs it — is exactly the
+  // kind of two-implementations-drift bug that produces a report showing
+  // the wrong figure. Reading the single source of truth instead of
+  // re-deriving it fixes that.
+  //
+  // Also fixes a real double-count for loans repaid via the OLD
+  // (pre-split) transaction shape: those loans' interest is included in
+  // group.totalInterestEarned via recalcGroupTotals's own legacy-ratio
+  // fallback, so recomputing the same ratio again here was literally
+  // counting that interest a second time, in addition to being stale for
+  // every loan already migrated to the new split-tx shape.
+  const totalInterestEarned = useMemo(
+    () => group?.totalInterestEarned ?? 0,
+    [group?.totalInterestEarned]
+  );
 
   // ── Pending contributions ────────────────────────────────────────────────────
   const pendingContributions = useMemo(

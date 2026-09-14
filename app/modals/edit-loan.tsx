@@ -1,9 +1,17 @@
 // app/modals/edit-loan.tsx
 //
+// Updated after review against recalcGroupTotals.ts: updateLoanAndSync
+// now REFUSES to change `amount` on a disbursed loan that already has
+// repayments recorded (loanSlice.ts explains why — the group's totalLoans
+// figure reads loan.balance directly, and a flat delta can't safely be
+// applied to balance once real repayments exist). Rather than let the
+// user fill in a new amount and only discover the refusal from a toast
+// after tapping Save, the Amount field itself is disabled with an inline
+// explanation whenever that case applies.
+//
 // ASSUMPTIONS — please verify against your actual codebase:
 // 1. Store actions: updateLoanAndSync(id, patch) and
-//    rescheduleLoanInstallment(id, index, date) — both added in
-//    loanSlice.ts.
+//    rescheduleLoanInstallment(id, index, date) — both in loanSlice.ts.
 // 2. Loan.purpose is the field used as "description" (see
 //    updateLoanAndSync's comment in loanSlice.ts) — swap if your Loan
 //    type has a dedicated description field instead.
@@ -108,6 +116,10 @@ export default function EditLoanModal() {
 
   const isDisbursed = loan.status === "disbursed" || loan.status === "repaid";
   const hasRepayments = (loan.amountRepaid ?? 0) > 0;
+  // Matches loanSlice.ts's updateLoanAndSync refusal exactly — surfaced
+  // here so the field is disabled BEFORE the user tries to save, not
+  // discovered only from a thrown error afterward.
+  const amountLocked = isDisbursed && hasRepayments;
 
   const originalAmount = Math.abs(Number(loan.amount ?? 0));
   const parsedAmount = Number(amount.replace(/,/g, "").trim());
@@ -118,7 +130,7 @@ export default function EditLoanModal() {
   const originalDate = (loan.applicationDate ?? "").slice(0, 10);
   const hasChanges =
     purpose.trim() !== (loan.purpose ?? "") ||
-    parsedAmount !== originalAmount ||
+    (!amountLocked && parsedAmount !== originalAmount) ||
     date !== originalDate;
 
   const handleSave = async () => {
@@ -139,7 +151,10 @@ export default function EditLoanModal() {
     setLoading(true);
     try {
       await updateLoanAndSync(loan.id, {
-        amount: parsedAmount,
+        // Amount is intentionally omitted when locked — even if the
+        // input still holds a different value, we never send a change
+        // the store would refuse anyway.
+        amount: amountLocked ? undefined : parsedAmount,
         date,
         description: purpose.trim(),
       });
@@ -150,9 +165,9 @@ export default function EditLoanModal() {
           : "Loan updated"
       );
       router.back();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to update loan:", error);
-      show("Failed to update loan", "error");
+      show(error?.message || "Failed to update loan", "error");
     } finally {
       setLoading(false);
     }
@@ -173,9 +188,9 @@ export default function EditLoanModal() {
       show(`Installment #${index + 1} rescheduled`);
       setReschedulingIndex(null);
       setNewDueDate("");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to reschedule installment:", error);
-      show("Failed to reschedule installment", "error");
+      show(error?.message || "Failed to reschedule installment", "error");
     } finally {
       setReschedulingLoading(false);
     }
@@ -192,10 +207,24 @@ export default function EditLoanModal() {
           <View style={styles.noticeBox}>
             <Text style={styles.noticeTitle}>Disbursed loan</Text>
             <Text style={styles.noticeText}>
-              This loan has been disbursed{hasRepayments ? " and has repayments recorded" : ""}.
-              Editing amount/date here updates the recorded disbursement
-              transaction — it does NOT recalculate the repayment schedule
-              or interest{hasRepayments ? ". Consider whether a correction here needs manual adjustment to repayment records too" : ""}.
+              This loan has been disbursed. Editing the amount or date here
+              updates the recorded disbursement transaction — it does NOT
+              recalculate the repayment schedule or interest.
+            </Text>
+          </View>
+        )}
+
+        {amountLocked && (
+          <View style={[styles.noticeBox, styles.lockedNoticeBox]}>
+            <Text style={[styles.noticeTitle, styles.lockedNoticeTitle]}>
+              Amount locked
+            </Text>
+            <Text style={styles.noticeText}>
+              This loan has {fmtCurrency(loan.amountRepaid ?? 0)} in
+              repayments recorded, so the amount can no longer be safely
+              edited here — the outstanding balance can't be inferred from
+              a simple change. Adjust the balance via a manual wallet
+              correction instead if needed.
             </Text>
           </View>
         )}
@@ -207,6 +236,7 @@ export default function EditLoanModal() {
           keyboardType="numeric"
           prefix="RWF"
           hint={`Original: ${fmtCurrency(originalAmount)}`}
+          editable={!amountLocked}
         />
         {!amountValid && amount.length > 0 && (
           <Text style={styles.errorText}>Enter a valid positive amount.</Text>
@@ -256,7 +286,9 @@ export default function EditLoanModal() {
             <Text style={styles.sectionTitle}>Reschedule Installments</Text>
             <Text style={styles.sectionSubtitle}>
               Move an unpaid installment's due date. This does not change
-              the amount owed or any other installment.
+              the amount owed or any other installment, and does not
+              refund any late fee already applied for days that were
+              overdue before the reschedule.
             </Text>
 
             {unpaidInstallments.map((item) => (
@@ -323,7 +355,12 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.elevated, borderRadius: 10, borderWidth: 1,
     borderColor: Colors.border, padding: S.md, marginBottom: S.lg,
   },
+  lockedNoticeBox: {
+    backgroundColor: "rgba(239,68,68,0.06)",
+    borderColor: "rgba(239,68,68,0.2)",
+  },
   noticeTitle: { fontSize: 12, fontWeight: "800", color: Colors.text, marginBottom: 4 },
+  lockedNoticeTitle: { color: Colors.error },
   noticeText: { fontSize: 12, lineHeight: 18, color: Colors.text2 },
   errorText: { fontSize: 11, color: Colors.error, marginTop: -10, marginBottom: S.md },
   summaryBox: {

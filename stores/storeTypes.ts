@@ -140,7 +140,7 @@ export interface StoreState {
   applyContributionLateFee: (overdue: OverdueContribution) => Promise<void>;
   applyLoanLateFee: (overdue: OverdueInstallment) => Promise<void>;
   clearStandaloneLateFee: (transactionId: ID) => Promise<void>;
-  updateWalletTransaction: (transactionId: ID, data: Partial<WalletTransaction>) => Promise<void>;
+  updateWalletTransaction: (transactionId: ID, data: Partial<WalletTransaction>, reason?: string) => Promise<void>;
 
   // High-level actions
   createMember: (data: Omit<Member, "id" | "totalContributions" | "totalSavings" | "loanEarnings">) => Promise<ID>;
