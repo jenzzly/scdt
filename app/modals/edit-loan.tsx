@@ -1,30 +1,24 @@
 // app/modals/edit-loan.tsx
 //
-// Updated after review against recalcGroupTotals.ts: updateLoanAndSync
-// now REFUSES to change `amount` on a disbursed loan that already has
-// repayments recorded (loanSlice.ts explains why — the group's totalLoans
-// figure reads loan.balance directly, and a flat delta can't safely be
-// applied to balance once real repayments exist). Rather than let the
-// user fill in a new amount and only discover the refusal from a toast
-// after tapping Save, the Amount field itself is disabled with an inline
-// explanation whenever that case applies.
+// Rules for what "the date" means depend on the loan's lifecycle:
 //
-// ASSUMPTIONS — please verify against your actual codebase:
-// 1. Store actions: updateLoanAndSync(id, patch) and
-//    rescheduleLoanInstallment(id, index, date) — both in loanSlice.ts.
-// 2. Loan.purpose is the field used as "description" (see
-//    updateLoanAndSync's comment in loanSlice.ts) — swap if your Loan
-//    type has a dedicated description field instead.
-// 3. Reschedule section only lists UNPAID installments (loan.schedule
-//    items where !item.paid), since paid installments can't move and
-//    a disbursement's own date is edited via the Amount/Date fields
-//    above, not here.
-// 4. Who can edit: EDIT_ROLES (admin, loan_officer, accountant) — same
-//    as edit-transaction.tsx and edit-contribution.tsx. Adjust if loans
-//    need a narrower set (e.g. accountant only).
+//   - NOT disbursed yet  → editing the date changes loan.applicationDate
+//   - ALREADY disbursed  → editing the date changes loan.disbursementDate
+//     (the date that drives interest accrual, wallet reconciliation,
+//      and late-fee evaluation). The original applicationDate is shown
+//      read-only so it's obvious it isn't being touched.
+//
+// updateLoanAndSync in loanSlice.ts is what actually applies the patch —
+// this modal just decides which field to seed and what label to show.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from "react-native";
+import {
+  View,
+  Text,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+} from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import {
@@ -33,13 +27,7 @@ import {
   useCurrentUserRole,
 } from "../../stores/useStore";
 
-import {
-  Input,
-  Button,
-  useToast,
-  Toast,
-  DatePicker,
-} from "../../components/ui";
+import { Input, Button, useToast, Toast, DatePicker } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
 import { Colors, S, fmtCurrency, fmtDate } from "../../utils/theme";
@@ -55,11 +43,8 @@ export default function EditLoanModal() {
 
   const allLoans = useGroupLoans();
   const role = useCurrentUserRole();
-  const {
-    updateLoanAndSync,
-    rescheduleLoanInstallment,
-    recalcTotals,
-  } = useStore();
+  const { updateLoanAndSync, rescheduleLoanInstallment, recalcTotals } =
+    useStore();
   const { show, visible, msg, type } = useToast();
 
   const canEdit = EDIT_ROLES.includes(role);
@@ -74,25 +59,43 @@ export default function EditLoanModal() {
   const [purpose, setPurpose] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Reschedule sub-form
   const [reschedulingIndex, setReschedulingIndex] = useState<number | null>(null);
   const [newDueDate, setNewDueDate] = useState("");
   const [reschedulingLoading, setReschedulingLoading] = useState(false);
 
+  const isDisbursed =
+    loan?.status === "disbursed" ||
+    loan?.status === "repaid" ||
+    loan?.status === "defaulted";
+
   useEffect(() => {
     if (!loan) return;
     setAmount(String(Math.abs(Number(loan.amount ?? 0))));
-    setDate((loan.applicationDate ?? "").slice(0, 10));
+
+    // Seed the editable date field from the field that actually matters
+    // for this loan's lifecycle stage.
+    const sourceDate = isDisbursed
+      ? (loan as any).disbursementDate ?? loan.applicationDate
+      : loan.applicationDate;
+
+    setDate((sourceDate ?? "").slice(0, 10));
     setPurpose(loan.purpose ?? "");
-  }, [loan?.id]);
+  }, [loan?.id, isDisbursed]);
 
   if (!canEdit) {
     return (
       <ModalShell title="Edit Loan" onClose={() => router.back()}>
         <View style={styles.center}>
           <Text style={styles.title}>Not authorized</Text>
-          <Text style={styles.subtitle}>You don't have permission to edit loans.</Text>
-          <Button label="Go Back" onPress={() => router.back()} variant="secondary" fullWidth />
+          <Text style={styles.subtitle}>
+            You don't have permission to edit loans.
+          </Text>
+          <Button
+            label="Go Back"
+            onPress={() => router.back()}
+            variant="secondary"
+            fullWidth
+          />
         </View>
         <Toast visible={visible} msg={msg} type={type} />
       </ModalShell>
@@ -107,18 +110,19 @@ export default function EditLoanModal() {
           <Text style={styles.subtitle}>
             This loan may have been deleted, or the link is invalid.
           </Text>
-          <Button label="Go Back" onPress={() => router.back()} variant="secondary" fullWidth />
+          <Button
+            label="Go Back"
+            onPress={() => router.back()}
+            variant="secondary"
+            fullWidth
+          />
         </View>
         <Toast visible={visible} msg={msg} type={type} />
       </ModalShell>
     );
   }
 
-  const isDisbursed = loan.status === "disbursed" || loan.status === "repaid";
   const hasRepayments = (loan.amountRepaid ?? 0) > 0;
-  // Matches loanSlice.ts's updateLoanAndSync refusal exactly — surfaced
-  // here so the field is disabled BEFORE the user tries to save, not
-  // discovered only from a thrown error afterward.
   const amountLocked = isDisbursed && hasRepayments;
 
   const originalAmount = Math.abs(Number(loan.amount ?? 0));
@@ -127,7 +131,10 @@ export default function EditLoanModal() {
   const dateValid = /^\d{4}-\d{2}-\d{2}$/.test(date);
   const canSave = amountValid && dateValid;
 
-  const originalDate = (loan.applicationDate ?? "").slice(0, 10);
+  const originalDate = isDisbursed
+    ? ((loan as any).disbursementDate ?? "").slice(0, 10)
+    : (loan.applicationDate ?? "").slice(0, 10);
+
   const hasChanges =
     purpose.trim() !== (loan.purpose ?? "") ||
     (!amountLocked && parsedAmount !== originalAmount) ||
@@ -151,9 +158,6 @@ export default function EditLoanModal() {
     setLoading(true);
     try {
       await updateLoanAndSync(loan.id, {
-        // Amount is intentionally omitted when locked — even if the
-        // input still holds a different value, we never send a change
-        // the store would refuse anyway.
         amount: amountLocked ? undefined : parsedAmount,
         date,
         description: purpose.trim(),
@@ -161,8 +165,8 @@ export default function EditLoanModal() {
       recalcTotals();
       show(
         isDisbursed
-          ? "Loan updated — disbursement record synced"
-          : "Loan updated"
+          ? "Loan updated — disbursement and accrued interest synced"
+          : "Loan updated",
       );
       router.back();
     } catch (error: any) {
@@ -207,9 +211,10 @@ export default function EditLoanModal() {
           <View style={styles.noticeBox}>
             <Text style={styles.noticeTitle}>Disbursed loan</Text>
             <Text style={styles.noticeText}>
-              This loan has been disbursed. Editing the amount or date here
-              updates the recorded disbursement transaction — it does NOT
-              recalculate the repayment schedule or interest.
+              Editing the disbursement date re-anchors when interest starts
+              accruing and re-stamps the wallet transaction. For a
+              reducing-balance loan this will also recompute the accrued
+              interest total to reflect the new start day.
             </Text>
           </View>
         )}
@@ -220,11 +225,11 @@ export default function EditLoanModal() {
               Amount locked
             </Text>
             <Text style={styles.noticeText}>
-              This loan has {fmtCurrency(loan.amountRepaid ?? 0)} in
-              repayments recorded, so the amount can no longer be safely
-              edited here — the outstanding balance can't be inferred from
-              a simple change. Adjust the balance via a manual wallet
-              correction instead if needed.
+              This loan has {fmtCurrency(loan.amountRepaid ?? 0)} in repayments
+              recorded, so the amount can no longer be safely edited here — the
+              outstanding balance can't be inferred from a simple change.
+              Adjust the balance via a manual wallet correction instead if
+              needed.
             </Text>
           </View>
         )}
@@ -242,14 +247,29 @@ export default function EditLoanModal() {
           <Text style={styles.errorText}>Enter a valid positive amount.</Text>
         )}
 
+        {/* Read-only application date — shown only when disbursed, so it's
+            obvious that editing "the date" below does NOT touch it. */}
+        {isDisbursed && loan.applicationDate ? (
+          <View style={styles.readonlyBox}>
+            <Text style={styles.readonlyLabel}>Application Date</Text>
+            <Text style={styles.readonlyValue}>
+              {fmtDate(loan.applicationDate)}
+            </Text>
+          </View>
+        ) : null}
+
         <DatePicker
-          label="Application Date *"
+          label={isDisbursed ? "Disbursement Date *" : "Application Date *"}
           value={date}
           onChange={setDate}
-          placeholder="Select date"
+          placeholder={
+            isDisbursed ? "Select disbursement date" : "Select application date"
+          }
         />
         {!dateValid && date.length > 0 && (
-          <Text style={styles.errorText}>Enter a valid date in YYYY-MM-DD format.</Text>
+          <Text style={styles.errorText}>
+            Enter a valid date in YYYY-MM-DD format.
+          </Text>
         )}
 
         <Input
@@ -261,9 +281,11 @@ export default function EditLoanModal() {
         />
 
         <View style={styles.summaryBox}>
-          <Text style={styles.summaryLabel}>Original loan</Text>
+          <Text style={styles.summaryLabel}>
+            {isDisbursed ? "Current disbursement" : "Current application"}
+          </Text>
           <Text style={styles.summaryValue}>
-            {fmtCurrency(originalAmount)} · {originalDate}
+            {fmtCurrency(originalAmount)} · {originalDate || "—"}
           </Text>
         </View>
 
@@ -278,17 +300,14 @@ export default function EditLoanModal() {
           size="lg"
         />
 
-        {/* ── Reschedule installments — separate from the fields above.
-             No wallet tx exists for an unpaid installment, so this only
-             ever touches loan.schedule[i].dueDate. ── */}
         {isDisbursed && unpaidInstallments.length > 0 && (
           <View style={styles.rescheduleSection}>
             <Text style={styles.sectionTitle}>Reschedule Installments</Text>
             <Text style={styles.sectionSubtitle}>
-              Move an unpaid installment's due date. This does not change
-              the amount owed or any other installment, and does not
-              refund any late fee already applied for days that were
-              overdue before the reschedule.
+              Move an unpaid installment's due date. This does not change the
+              amount owed or any other installment, and does not refund any
+              late fee already applied for days that were overdue before the
+              reschedule.
             </Text>
 
             {unpaidInstallments.map((item) => (
@@ -310,11 +329,16 @@ export default function EditLoanModal() {
                       onChange={setNewDueDate}
                       placeholder="New due date"
                     />
-                    <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                    <View
+                      style={{ flexDirection: "row", gap: 8, marginTop: 6 }}
+                    >
                       <Button
                         label="Cancel"
                         variant="secondary"
-                        onPress={() => { setReschedulingIndex(null); setNewDueDate(""); }}
+                        onPress={() => {
+                          setReschedulingIndex(null);
+                          setNewDueDate("");
+                        }}
                         style={{ flex: 1 }}
                       />
                       <Button
@@ -328,7 +352,10 @@ export default function EditLoanModal() {
                 ) : (
                   <TouchableOpacity
                     style={styles.rescheduleBtn}
-                    onPress={() => { setReschedulingIndex(item.index); setNewDueDate(item.dueDate.slice(0, 10)); }}
+                    onPress={() => {
+                      setReschedulingIndex(item.index);
+                      setNewDueDate(item.dueDate.slice(0, 10));
+                    }}
                   >
                     <Text style={styles.rescheduleBtnText}>Reschedule</Text>
                   </TouchableOpacity>
@@ -349,25 +376,78 @@ export default function EditLoanModal() {
 const styles = StyleSheet.create({
   body: { padding: S.lg, paddingBottom: 60 },
   center: { padding: S.lg, gap: 12 },
-  title: { fontSize: 17, fontWeight: "800", color: Colors.text, textAlign: "center" },
-  subtitle: { fontSize: 13, lineHeight: 19, color: Colors.text3, textAlign: "center", marginBottom: 8 },
+  title: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: Colors.text,
+    textAlign: "center",
+  },
+  subtitle: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: Colors.text3,
+    textAlign: "center",
+    marginBottom: 8,
+  },
   noticeBox: {
-    backgroundColor: Colors.elevated, borderRadius: 10, borderWidth: 1,
-    borderColor: Colors.border, padding: S.md, marginBottom: S.lg,
+    backgroundColor: Colors.elevated,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: S.md,
+    marginBottom: S.lg,
   },
   lockedNoticeBox: {
     backgroundColor: "rgba(239,68,68,0.06)",
     borderColor: "rgba(239,68,68,0.2)",
   },
-  noticeTitle: { fontSize: 12, fontWeight: "800", color: Colors.text, marginBottom: 4 },
+  noticeTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: Colors.text,
+    marginBottom: 4,
+  },
   lockedNoticeTitle: { color: Colors.error },
   noticeText: { fontSize: 12, lineHeight: 18, color: Colors.text2 },
-  errorText: { fontSize: 11, color: Colors.error, marginTop: -10, marginBottom: S.md },
-  summaryBox: {
-    marginTop: S.sm, padding: S.md, borderRadius: 10,
-    backgroundColor: Colors.elevated, borderWidth: 1, borderColor: Colors.border,
+  errorText: {
+    fontSize: 11,
+    color: Colors.error,
+    marginTop: -10,
+    marginBottom: S.md,
   },
-  summaryLabel: { fontSize: 10, fontWeight: "800", color: Colors.text3, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 5 },
+  readonlyBox: {
+    padding: S.md,
+    borderRadius: 10,
+    backgroundColor: Colors.elevated,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: S.md,
+  },
+  readonlyLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: Colors.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  readonlyValue: { fontSize: 13, color: Colors.text2, fontWeight: "600" },
+  summaryBox: {
+    marginTop: S.sm,
+    padding: S.md,
+    borderRadius: 10,
+    backgroundColor: Colors.elevated,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  summaryLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: Colors.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 5,
+  },
   summaryValue: { fontSize: 12, lineHeight: 18, color: Colors.text2 },
   spacer: { height: S.lg },
   bottomSpacer: { height: 12 },
@@ -378,8 +458,18 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.border,
     paddingTop: S.lg,
   },
-  sectionTitle: { fontSize: 13, fontWeight: "800", color: Colors.text, marginBottom: 4 },
-  sectionSubtitle: { fontSize: 11, color: Colors.text3, marginBottom: 12, lineHeight: 16 },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  sectionSubtitle: {
+    fontSize: 11,
+    color: Colors.text3,
+    marginBottom: 12,
+    lineHeight: 16,
+  },
   installmentRow: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -389,11 +479,23 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
     gap: 10,
   },
-  installmentLabel: { fontSize: 12, fontWeight: "700", color: Colors.text },
+  installmentLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: Colors.text,
+  },
   installmentMeta: { fontSize: 11, color: Colors.text3, marginTop: 2 },
   rescheduleBtn: {
-    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8,
-    backgroundColor: Colors.elevated, borderWidth: 1, borderColor: Colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: Colors.elevated,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-  rescheduleBtnText: { fontSize: 12, fontWeight: "700", color: Colors.primary },
+  rescheduleBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: Colors.primary,
+  },
 });

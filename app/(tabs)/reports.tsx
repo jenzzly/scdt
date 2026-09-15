@@ -56,6 +56,12 @@ import {
   findOverdueInstallments,
 } from "../../utils/lateFees";
 
+// Shared with loans.tsx and record-repayment.tsx — same anchor chain,
+// same daily-rate math. Used here only for the "Accrued (unpaid)"
+// snapshot figure; the "Interest Earned" and "Projected Interest"
+// figures below still measure different things (see comments there).
+import { computeTodayAccrued } from "../../utils/accrual";
+
 // ─────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────
@@ -254,14 +260,21 @@ function monthlyTotals(
 // called from multiple useMemo blocks without violating the Rules of
 // Hooks and without duplicating the implementation.
 //
+// NOTE on what this measures: this is the SCHEDULE-BASED projection —
+// the interest that will be earned IF every remaining installment is
+// paid exactly on its scheduled due date. For reducing-balance loans,
+// the real interest earned depends on actual payment timing (late
+// payments accrue more; early payments accrue less), which is what
+// groupAccruedInterestUnpaid captures live. The two figures answer
+// different questions:
+//   - this one: "what does the plan say we'll earn?"
+//   - accruedUnpaid: "what has already accrued but isn't yet paid?"
+//
 // FIX: previously this only summed installments whose due date fell
 // between the loan's start and "now" (or the selected toDate). That
 // meant a freshly-disbursed loan with no installment due yet always
 // projected $0 interest, even though the full schedule clearly has
-// interest attached to it. "Projected Interest" should mean "interest
-// this loan will still earn" — i.e. every unpaid installment, past or
-// future — unless the user has explicitly narrowed the date range, in
-// which case we respect that window.
+// interest attached to it.
 function calculateLoanInterestProjection(
   loan: any,
   fromDate: string,
@@ -269,15 +282,13 @@ function calculateLoanInterestProjection(
 ) {
   if (!loan.schedule || loan.status !== "disbursed") return 0;
 
-  // null = no bound on that side. Only apply a bound when the user
-  // actually set one via the date filters.
   const asOfDate = toDate ? new Date(toDate) : null;
   const fromDateObj = fromDate ? new Date(fromDate) : null;
 
   let projectedInterest = 0;
 
   loan.schedule.forEach((installment: any) => {
-    if (installment.paid) return; // Skip already paid installments
+    if (installment.paid) return;
 
     const dueDate = new Date(installment.dueDate);
 
@@ -1443,6 +1454,39 @@ export default function ReportsScreen() {
   );
 
   // ───────────────────────────────────────────────────────────────────────
+  // Accrued (unpaid) interest — current snapshot, "how much interest has
+  // built up on reducing-balance loans that hasn't been collected yet".
+  //
+  // Uses the SAME computeTodayAccrued() helper as loans.tsx's loan detail
+  // modal and record-repayment.tsx, so this figure matches exactly what
+  // each individual loan shows when you open it.
+  //
+  // Respects the Member filter (only this member's loans, if scoped) and
+  // the Member Condition filter, but NOT the date range — it's a live
+  // "as of right now" balance, not a period-bounded figure, the same way
+  // Total Net Assets and Total Loans above also ignore the date range.
+  // ───────────────────────────────────────────────────────────────────────
+
+  const groupAccruedInterestUnpaid = useMemo(
+    () =>
+      round2(
+        loans
+          .filter(
+            (l) =>
+              l.status === "disbursed" &&
+              l.interestMethod === "reducing_balance" &&
+              inMember(l.memberId) &&
+              passesMemberStatus(l.memberId),
+          )
+          .reduce((sum, loan) => {
+            const acc = computeTodayAccrued(loan);
+            return sum + (acc?.total ?? 0);
+          }, 0),
+      ),
+    [loans, memberIdFilter, memberStatusFilter]
+  );
+
+  // ───────────────────────────────────────────────────────────────────────
   // Projected calculations — based on user-selected date range. These two
   // hooks are the single source of truth for loan-interest and
   // loan-late-fee projections. They are declared once, at the top level
@@ -1948,16 +1992,12 @@ export default function ReportsScreen() {
     // are computed ONCE at the top level of the component (see above) and
     // simply referenced here — no hooks are called inside this branch.
     //
-    // FIX: previously the chart used monthlyTotals(list, "date", null),
-    // which COUNTS records instead of summing dollars (amountField=null
-    // makes every item contribute 1). That's why the chart looked empty
-    // or meaningless even when money existed. It now sums real amounts
-    // for both actual and projected rows. The KPIs are also broken out
-    // by source (interest / late fees / projected) instead of one vague
-    // "Actual Collected" bucket, and each shows the ALL-IN total
-    // (actual + projected combined) where that makes sense, plus a
-    // standalone "Projected Earnings" figure for the forward-looking
-    // piece alone.
+    // The chart sums real dollar amounts for both actual and projected
+    // rows. The KPIs are broken out by source (interest / late fees /
+    // projected) instead of one vague "Actual Collected" bucket, and each
+    // shows the ALL-IN total (actual + projected combined) where that
+    // makes sense, plus a standalone "Projected Earnings" figure for the
+    // forward-looking piece alone.
     // ─────────────────────────────────────────────────────────────────────
 
     const EARNING_TYPES = [
@@ -1970,18 +2010,6 @@ export default function ReportsScreen() {
       "other_debit",
     ];
 
-    // FIX: "loan_interest_income" is the MODERN wallet-tx shape written by
-    // recordRepaymentServer's split-transaction repayment flow — its
-    // `amount` IS the interest portion already, isolated at write time.
-    // Previously this function ran every non-"loan_repayment" type
-    // through the `return t.amount` branch too, which was harmless for
-    // loan_interest_income specifically (still returned the full amount)
-    // — but "loan_repayment" itself is the OLD, pre-split, COMBINED
-    // transaction shape (principal + interest blended into one row) and
-    // is the only case that legitimately needs the totalInterest /
-    // totalRepayable ratio estimate. "loan_principal_recovery" (the
-    // modern shape's principal-only counterpart) is intentionally never
-    // routed through here as earnings — it's excluded from `list` below.
     const earningAmount = (t: any) => {
       if (t.type !== "loan_repayment") return t.amount;
 
@@ -2300,34 +2328,6 @@ export default function ReportsScreen() {
         ═══════════════════════════════════════════════════════════════ */}
 
         <View style={[styles.contentContainer, isWide && styles.contentContainerWide]}>
-          {/* <View style={styles.kpiGrid}>
-            <KpiCard
-              label="TOTAL EARNINGS"
-              value={fmtCurrency(groupWalletEarnings)}
-              color={C.info}
-              subtext={isPersonalView ? "my interest, fees & other" : "interest, fees & other"}
-            />
-
-            <KpiCard
-              label="INVESTMENTS"
-              value={fmtCurrency(
-                investments.reduce(
-                  (sum: number, item: any) => sum + (item.investmentAmount || 0),
-                  0
-                )
-              )}
-              color={C.success}
-              subtext={isPersonalView ? "my investments" : "group total"}
-            />
-
-            <KpiCard
-              label="EXPENSES"
-              value={fmtCurrency(groupExpenses)}
-              color={C.error}
-              subtext={isPersonalView ? "my wallet" : "operational"}
-            />
-          </View> */}
-
           <View style={styles.chartCard}>
             <Text style={styles.chartTitle}>
               {isPersonalView ? "Personal Financial Position" : "Group Financial Position"}
@@ -2410,11 +2410,35 @@ export default function ReportsScreen() {
                 </Text>
 
                 <Text style={T.small} numberOfLines={1}>
-                  from loan repayments
+                  {isPersonalView ? "my interest collected" : "already collected"}
+                </Text>
+              </View>
+            </View>
+
+            {/* Interest split: Accrued (unpaid, live) vs Projected
+                (schedule-based). Two different ways of looking at the
+                same money before it lands in the wallet. */}
+            <View style={styles.gfpRow}>
+              <View style={[styles.gfpStat, styles.gfpStatBorderRight, styles.gfpStatBorderBottom]}>
+                <Text style={styles.gfpStatLabel} numberOfLines={1}>
+                  Accrued (unpaid)
+                </Text>
+
+                <Text
+                  style={[styles.gfpStatValue, { color: "#a855f7" }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {fmtCurrency(groupAccruedInterestUnpaid)}
+                </Text>
+
+                <Text style={T.small} numberOfLines={1}>
+                  reducing-balance loans
                 </Text>
               </View>
 
-              <View style={styles.gfpStatBorderBottom}>
+              <View style={[styles.gfpStat, styles.gfpStatBorderBottom]}>
                 <Text style={styles.gfpStatLabel} numberOfLines={1}>
                   Projected Interest
                 </Text>
@@ -2429,13 +2453,13 @@ export default function ReportsScreen() {
                 </Text>
 
                 <Text style={T.small} numberOfLines={1}>
-                  from active loans
+                  from remaining schedule
                 </Text>
               </View>
             </View>
 
             <View style={styles.gfpRow}>
-              <View style={[styles.gfpStat, styles.gfpStatBorderRight]}>
+              <View style={[styles.gfpStat, styles.gfpStatBorderRight, styles.gfpStatBorderBottom]}>
                 <Text style={T.label} numberOfLines={1}>
                   Penalties & Late Fees
                 </Text>
@@ -2454,7 +2478,7 @@ export default function ReportsScreen() {
                 </Text>
               </View>
 
-              <View style={styles.gfpStat}>
+              <View style={[styles.gfpStat, styles.gfpStatBorderBottom]}>
                 <Text style={T.label} numberOfLines={1}>
                   Total Loans
                 </Text>
@@ -2515,9 +2539,11 @@ export default function ReportsScreen() {
             </View>
           </View>
 
-          {/* Earnings breakdown donut — replaces the old scope-toggle
-              buttons. Group vs Personal is controlled by the header
-              ViewSwitch only; there is no in-page toggle here anymore. */}
+          {/* Earnings breakdown donut — the interest numbers are split
+              into three distinct buckets: what's been collected
+              ("Loan interest (actual)"), what's accrued but not yet paid
+              ("Accrued (unpaid)"), and what the schedule says is still
+              coming ("Projected interest (schedule)"). */}
 
           <View style={styles.chartCard}>
             <Text style={styles.chartTitle}>Profits by source</Text>
@@ -2531,7 +2557,8 @@ export default function ReportsScreen() {
                 { label: "Loan interest (actual)", value: groupInterestOnly, color: "#2a78d6" },
                 { label: "Late fees (actual)", value: groupPenaltiesOnly, color: "#eb6834" },
                 { label: "Investment returns", value: groupInvestmentReturnsOnly, color: "#1baf7a" },
-                { label: "Projected interest", value: projectedLoanInterest, color: "#6366f1" },
+                { label: "Accrued (unpaid)", value: groupAccruedInterestUnpaid, color: "#a855f7" },
+                { label: "Projected interest (schedule)", value: projectedLoanInterest, color: "#6366f1" },
                 { label: "Projected late fees", value: projectedLoanLateFees, color: "#f97316" },
                 { label: "Other", value: groupOtherOnly, color: "#eda100" },
               ]}
@@ -3066,6 +3093,21 @@ function MemberDetail({
 
   const interestEarned = round2(interestFromLedger + interestLegacy);
 
+  // Live accrued (unpaid) interest across this member's reducing-balance
+  // loans — same helper the loan detail modal and repayment screen use.
+  const accruedInterestUnpaid = round2(
+    loans
+      .filter(
+        (l: any) =>
+          l.status === "disbursed" &&
+          l.interestMethod === "reducing_balance",
+      )
+      .reduce((sum: number, loan: any) => {
+        const acc = computeTodayAccrued(loan);
+        return sum + (acc?.total ?? 0);
+      }, 0),
+  );
+
   const recentWallet = [...wallet]
     .sort(
       (a: any, b: any) =>
@@ -3148,6 +3190,14 @@ function MemberDetail({
 
           <Text style={[styles.memberKpiValue, { color: C.gold }]}>
             {fmtCurrency(interestEarned)}
+          </Text>
+        </View>
+
+        <View style={styles.memberKpi}>
+          <Text style={styles.memberKpiLabel}>Accrued (Unpaid)</Text>
+
+          <Text style={[styles.memberKpiValue, { color: "#a855f7" }]}>
+            {fmtCurrency(accruedInterestUnpaid)}
           </Text>
         </View>
       </View>

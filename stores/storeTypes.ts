@@ -159,7 +159,10 @@ export interface StoreState {
   approveLoanStep: (loanId: ID, step: "loan_officer" | "committee" | "accountant", approved: boolean, comment?: string) => Promise<void>;
   rejectLoan: (loanId: ID, reason: string) => Promise<void>;
   updateLoan: (loanId: ID, data: Partial<Loan>) => Promise<void>;
-  disburseLoan: (loanId: ID) => Promise<void>;
+  // disbursementDate (optional, ISO string or YYYY-MM-DD) lets the caller
+  // record when the money actually left, instead of always stamping the
+  // moment this action runs — see loanSlice.ts / disburseLoanServer.
+  disburseLoan: (loanId: ID, disbursementDate?: string) => Promise<void>;
   recordRepayment: (loanId: ID, amount: number, date?: string) => Promise<void>;
   closeInvestment: (investmentId: ID, returnAmount: number, actualReturn?: number) => Promise<void>;
   addExpense: (data: Omit<Expense, "id" | "createdAt">) => Promise<ID>;

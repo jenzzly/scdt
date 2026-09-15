@@ -325,7 +325,16 @@ export async function updateWalletTx(
 
 
         // ======================================================
-        // Interest starts from application date
+        // FIX: interest starts from the DISBURSEMENT date, not
+        // application date — the borrower doesn't have the money
+        // (and interest can't be accruing on it) until it's actually
+        // disbursed. This used to re-anchor lastAccrualDate to
+        // loanBefore.applicationDate whenever the disbursement date
+        // was edited, which is the same "phantom interest before the
+        // money moved" bug as disburseLoanServer's original default —
+        // just triggered by a later date-correction instead of the
+        // initial disbursement. Anchoring to newDisbursementDate here
+        // keeps this path consistent with disburseLoanServer.
         // ======================================================
 
         const amountRepaid =
@@ -334,23 +343,16 @@ export async function updateWalletTx(
               .amountRepaid ?? 0,
           );
 
-        const applicationDate =
-          normalizeDate(
-            (loanBefore as any)
-              .applicationDate,
-          );
-
         /*
          * For loans with no repayment yet,
-         * use applicationDate as the accrual
-         * start date.
+         * re-anchor accrual to the corrected
+         * disbursement date.
          */
         if (
-          amountRepaid <= 0 &&
-          applicationDate
+          amountRepaid <= 0
         ) {
           loanUpdate.lastAccrualDate =
-            applicationDate;
+            newDisbursementDate;
         }
       }
     }
