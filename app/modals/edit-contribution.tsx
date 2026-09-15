@@ -13,6 +13,10 @@
 // 4. Who can edit: reused EDIT_ROLES from edit-transaction.tsx
 //    (admin, loan_officer, accountant) — adjust if contributions should
 //    have a different edit permission than wallet txs.
+//
+// NOTE: this modal is for editing an EXISTING contribution only — it
+// requires an ?id= param and shows "Contribution not found" without one.
+// Creating a new contribution goes through add-contribution.tsx instead.
 
 import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, ScrollView, StyleSheet } from "react-native";
@@ -102,7 +106,8 @@ export default function EditContributionModal() {
   const parsedAmount = Number(amount.replace(/,/g, "").trim());
   const amountValid = Number.isFinite(parsedAmount) && parsedAmount > 0;
   const dateValid = /^\d{4}-\d{2}-\d{2}$/.test(date);
-  const descriptionValid = description.trim().length >= 0; // description is optional for contributions
+  // Description is optional for contributions (unlike edit-transaction.tsx,
+  // where it's required), so there's no descriptionValid gate on canSave.
   const canSave = amountValid && dateValid;
 
   const originalDate = (contribution.date ?? "").slice(0, 10);

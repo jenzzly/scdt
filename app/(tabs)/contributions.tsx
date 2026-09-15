@@ -37,26 +37,26 @@ import {
   TabRow,
 } from "../../components/ui";
 
-import {
-  Colors,
-  C,
-  T,
-  S,
-  R,
-  fmtCurrency,
-  fmtDate,
-} from "../../utils/theme";
+import { Colors, C, T, S, R, fmtCurrency, fmtDate } from "../../utils/theme";
 
-import { exportXlsx, importXlsx, exportPdf, generatePaymentScheduleHtml as _unused } from "../../utils/export";
+import {
+  exportXlsx,
+  importXlsx,
+  exportPdf,
+  generatePaymentScheduleHtml as _unused,
+} from "../../utils/export";
 import { findOverdueContributions } from "../../utils/lateFees";
 import { getCurrentGoalPeriod } from "../../lib/firestore/contributionGoals";
 
-import type {
-  Contribution,
-  ContributionGoalPeriod,
-} from "../../types";
+import type { Contribution, ContributionGoalPeriod } from "../../types";
 
 import { KpiCard } from "../../components/ui/KpiCard";
+
+// -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
+
+const PAGE_SIZE = 20;
 
 const STATUS_COLOR: Record<string, "teal" | "gold" | "green" | "red" | "muted"> = {
   approved: "green",
@@ -75,8 +75,6 @@ const TYPE_LABELS: Record<string, string> = {
   other: "Other",
 };
 
-const PAGE_SIZE = 20;
-
 const SORT_OPTIONS = [
   { label: "Newest first", value: "date_desc" },
   { label: "Oldest first", value: "date_asc" },
@@ -86,26 +84,30 @@ const SORT_OPTIONS = [
 
 const TYPE_OPTIONS = [
   { label: "All types", value: "all" },
-  ...Object.entries(TYPE_LABELS).map(([value, label]) => ({
-    label,
-    value,
-  })),
+  ...Object.entries(TYPE_LABELS).map(([value, label]) => ({ label, value })),
 ];
 
-const Divider = () => (
-  <View
-    style={{
-      height: 1,
-      backgroundColor: C.border,
-      marginHorizontal: 16,
-    }}
-  />
-);
+const STATUS_TABS = ["All", "Approved", "Pending", "Late Fee"] as const;
+
+// Matches EDIT_ROLES in edit-contribution.tsx — kept in sync manually
+// since that file is a separate route/bundle.
+const EDIT_ROLES = ["admin", "loan_officer", "accountant"];
+
+// -----------------------------------------------------------------------------
+// Small shared pieces
+// -----------------------------------------------------------------------------
+
+const Divider = () => <View style={st.divider} />;
+
+const typeLabel = (type: string) => TYPE_LABELS[type] ?? type;
+
+/** Card width caps content at 900px and centers it on wide/desktop layouts. */
+const wideCardStyle = (isWide: boolean) =>
+  isWide ? { maxWidth: 900, alignSelf: "center" as const, width: "100%" as const } : null;
 
 export default function ContributionsScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
-
   const isWide = width >= 768;
 
   const {
@@ -139,17 +141,21 @@ export default function ContributionsScreen() {
     (role === "committee" && permissions.approveContributions);
 
   const canAdd = permissions.addContribution || isAdmin;
-
   const canExport = permissions.downloadReports || isAdmin;
 
   // Only these three roles may apply or clear a late fee. Members and
   // committee can still SEE the late fee tab/list/amounts — this flag only
   // gates the Apply/Clear action button.
-  const canManageFees = [
-    "admin",
-    "accountant",
-    "loan_officer",
-  ].includes(role);
+  const canManageFees = ["admin", "accountant", "loan_officer"].includes(role);
+
+  const canEditContribution = EDIT_ROLES.includes(role);
+
+  const getMemberName = (id: string) =>
+    allMembers.find((m) => m.id === id)?.fullName ?? "Unknown";
+
+  const handleEditPress = (id: string) => {
+    router.push(`/modals/edit-contribution?id=${id}`);
+  };
 
   // ---------------------------------------------------------------------------
   // Scope contributions to either group view or personal view.
@@ -159,14 +165,8 @@ export default function ContributionsScreen() {
     () =>
       isGroupView
         ? allContributions
-        : allContributions.filter(
-            (c) => c.memberId === currentMember?.id
-          ),
-    [
-      isGroupView,
-      allContributions,
-      currentMember?.id,
-    ]
+        : allContributions.filter((c) => c.memberId === currentMember?.id),
+    [isGroupView, allContributions, currentMember?.id]
   );
 
   // ---------------------------------------------------------------------------
@@ -179,75 +179,43 @@ export default function ContributionsScreen() {
   const [sort, setSort] = useState("date_desc");
   const [page, setPage] = useState(1);
 
-  const [selectedContrib, setSelectedContrib] =
-    useState<Contribution | null>(null);
+  const [selectedContrib, setSelectedContrib] = useState<Contribution | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [applyingFeeId, setApplyingFeeId] = useState<string | null>(null);
+  const [goalPeriod, setGoalPeriod] = useState<ContributionGoalPeriod | null>(null);
 
-  const [approvingId, setApprovingId] =
-    useState<string | null>(null);
+  const [dateRangeStart, setDateRangeStart] = useState("");
+  const [dateRangeEnd, setDateRangeEnd] = useState("");
 
-  const [applyingFeeId, setApplyingFeeId] =
-    useState<string | null>(null);
-
-  const [goalPeriod, setGoalPeriod] =
-    useState<ContributionGoalPeriod | null>(null);
-
-  const [dateRangeStart, setDateRangeStart] =
-    useState("");
-
-  const [dateRangeEnd, setDateRangeEnd] =
-    useState("");
-
-  const [viewMode, setViewMode] =
-    useState<"list" | "monthly">("list");
-
+  const [viewMode, setViewMode] = useState<"list" | "monthly">("list");
   const [importing, setImporting] = useState(false);
 
   // ---------------------------------------------------------------------------
   // Late fees
   //
-  // IMPORTANT:
-  // allWallet MUST be a dependency because applying/clearing a fee changes
-  // wallet state and therefore changes the late-fee lifecycle.
+  // allWallet MUST be a dependency below because applying/clearing a fee
+  // changes wallet state and therefore the late-fee lifecycle.
   // ---------------------------------------------------------------------------
 
   const overdueContributions = useMemo(() => {
     if (!group) return [];
-
-    return findOverdueContributions(
-      group,
-      allMembers,
-      allContributions,
-      allWallet
-    );
-  }, [
-    group,
-    allMembers,
-    allContributions,
-    allWallet,
-  ]);
+    return findOverdueContributions(group, allMembers, allContributions, allWallet);
+  }, [group, allMembers, allContributions, allWallet]);
 
   // ---------------------------------------------------------------------------
   // Visible late fees
   //
-  // A late-fee chunk is identified by:
-  //
-  //     item.feeTxId === walletTransaction.id
-  //
-  // NOT:
-  //
-  //     item.feeTxId === walletTransaction.sourceId
-  //
-  // sourceId is the member/contribution source, while feeTxId is the actual
-  // wallet transaction ID.
+  // A late-fee chunk is identified by item.feeTxId === walletTransaction.id
+  // (NOT walletTransaction.sourceId — sourceId is the member/contribution
+  // source, while feeTxId is the actual wallet transaction ID).
   //
   // State:
-  //
   //   no transaction              -> Apply
   //   transaction feePaid=false   -> Clear
   //   transaction feePaid=true    -> hidden
   //
-  // Clearing a late-fee transaction does NOT stop future accrual.
-  // The underlying contribution must still be unpaid for accrual to continue.
+  // Clearing a late-fee transaction does NOT stop future accrual — the
+  // underlying contribution must still be unpaid for accrual to continue.
   //
   // NOTE: visibility of this list itself is NOT role-gated — members and
   // committee can see their own/group late fees. Only the Apply/Clear
@@ -260,9 +228,7 @@ export default function ContributionsScreen() {
     const fees = overdueContributions
       .map((item) => {
         const matchingTx = allWallet.find(
-          (tx) =>
-            tx.id === item.feeTxId &&
-            tx.type === "late_fee"
+          (tx) => tx.id === item.feeTxId && tx.type === "late_fee"
         );
 
         return {
@@ -275,16 +241,8 @@ export default function ContributionsScreen() {
 
     return isGroupView
       ? fees
-      : fees.filter(
-          (item) =>
-            item.memberId === currentMember?.id
-        );
-  }, [
-    overdueContributions,
-    allWallet,
-    isGroupView,
-    currentMember?.id,
-  ]);
+      : fees.filter((item) => item.memberId === currentMember?.id);
+  }, [overdueContributions, allWallet, isGroupView, currentMember?.id]);
 
   // ---------------------------------------------------------------------------
   // Load current goal period
@@ -295,17 +253,10 @@ export default function ContributionsScreen() {
 
     (async () => {
       try {
-        const period =
-          await getCurrentGoalPeriod(
-            activeGroupId
-          );
-
+        const period = await getCurrentGoalPeriod(activeGroupId);
         setGoalPeriod(period);
       } catch (e) {
-        console.error(
-          "[Contributions] Failed to load goal period:",
-          e
-        );
+        console.error("[Contributions] Failed to load goal period:", e);
       }
     })();
   }, [activeGroupId]);
@@ -325,23 +276,14 @@ export default function ContributionsScreen() {
   // ---------------------------------------------------------------------------
 
   const collectionStats = useMemo(() => {
-    if (!group || !allMembers) {
-      return null;
-    }
+    if (!group || !allMembers) return null;
 
-    const contributionAmount =
-      group.contributionAmount || 0;
+    const contributionAmount = group.contributionAmount || 0;
+    const perMemberTarget = goalPeriod?.targetAmount ?? contributionAmount;
 
-    const perMemberTarget =
-      goalPeriod?.targetAmount ?? contributionAmount;
+    if (perMemberTarget <= 0) return null;
 
-    if (perMemberTarget <= 0) {
-      return null;
-    }
-
-    const activeMembers = allMembers.filter(
-      (m) => m.status === "active"
-    );
+    const activeMembers = allMembers.filter((m) => m.status === "active");
 
     const totalExpected = isGroupView
       ? perMemberTarget * activeMembers.length
@@ -354,33 +296,17 @@ export default function ContributionsScreen() {
           c.contributionType === "regular" &&
           (isGroupView || c.memberId === currentMember?.id)
       )
-      .reduce(
-        (sum, c) =>
-          sum + (c.amount || 0),
-        0
-      );
+      .reduce((sum, c) => sum + (c.amount || 0), 0);
 
-    const collectionRate =
-      totalExpected > 0
-        ? (totalCollected /
-            totalExpected) *
-          100
-        : 0;
+    const collectionRate = totalExpected > 0 ? (totalCollected / totalExpected) * 100 : 0;
 
     // Only currently visible unpaid chunks count here.
-    const totalLateFeesRemaining =
-      visibleLateFees.reduce(
-        (sum, item) =>
-          sum + (item.feeAmount || 0),
-        0
-      );
+    const totalLateFeesRemaining = visibleLateFees.reduce(
+      (sum, item) => sum + (item.feeAmount || 0),
+      0
+    );
 
-    return {
-      totalExpected,
-      totalCollected,
-      collectionRate,
-      totalLateFeesRemaining,
-    };
+    return { totalExpected, totalCollected, collectionRate, totalLateFeesRemaining };
   }, [
     group,
     allMembers,
@@ -396,34 +322,15 @@ export default function ContributionsScreen() {
   // ---------------------------------------------------------------------------
 
   const memberGoalRows = useMemo(() => {
-    if (
-      !goalPeriod ||
-      !allMembers ||
-      !allContributions
-    ) {
-      return [];
-    }
+    if (!goalPeriod || !allMembers || !allContributions) return [];
 
-    const periodStart = new Date(
-      goalPeriod.periodStart
-    );
-
-    const periodEnd = new Date(
-      goalPeriod.periodEnd
-    );
-
-    const target =
-      goalPeriod.targetAmount;
+    const periodStart = new Date(goalPeriod.periodStart);
+    const periodEnd = new Date(goalPeriod.periodEnd);
+    const target = goalPeriod.targetAmount;
 
     const scopedMembers = isGroupView
-      ? allMembers.filter(
-          (m) => m.status === "active"
-        )
-      : allMembers.filter(
-          (m) =>
-            m.status === "active" &&
-            m.id === currentMember?.id
-        );
+      ? allMembers.filter((m) => m.status === "active")
+      : allMembers.filter((m) => m.status === "active" && m.id === currentMember?.id);
 
     return scopedMembers
       .map((member) => {
@@ -432,42 +339,18 @@ export default function ContributionsScreen() {
             (c) =>
               c.memberId === member.id &&
               c.status === "approved" &&
-              c.contributionType ===
-                "regular" &&
-              new Date(c.date) >=
-                periodStart &&
-              new Date(c.date) <=
-                periodEnd
+              c.contributionType === "regular" &&
+              new Date(c.date) >= periodStart &&
+              new Date(c.date) <= periodEnd
           )
-          .reduce(
-            (sum, c) =>
-              sum + (c.amount || 0),
-            0
-          );
+          .reduce((sum, c) => sum + (c.amount || 0), 0);
 
-        const remaining = Math.max(
-          0,
-          target - paid
-        );
+        const remaining = Math.max(0, target - paid);
+        const percentage = target > 0 ? Math.round((paid / target) * 100) : 0;
 
-        const percentage =
-          target > 0
-            ? Math.round(
-                (paid / target) * 100
-              )
-            : 0;
-
-        const lateFees =
-          visibleLateFees
-            .filter(
-              (f) =>
-                f.memberId === member.id
-            )
-            .reduce(
-              (sum, f) =>
-                sum + (f.feeAmount || 0),
-              0
-            );
+        const lateFees = visibleLateFees
+          .filter((f) => f.memberId === member.id)
+          .reduce((sum, f) => sum + (f.feeAmount || 0), 0);
 
         return {
           memberId: member.id,
@@ -476,15 +359,10 @@ export default function ContributionsScreen() {
           remaining,
           percentage,
           lateFees,
-          isCompleted:
-            paid >= target,
+          isCompleted: paid >= target,
         };
       })
-      .sort(
-        (a, b) =>
-          b.percentage -
-          a.percentage
-      );
+      .sort((a, b) => b.percentage - a.percentage);
   }, [
     goalPeriod,
     allMembers,
@@ -497,9 +375,9 @@ export default function ContributionsScreen() {
   // ---------------------------------------------------------------------------
   // Goal progress
   //
-  // - target        → personal goal (single member's target for the period)
-  // - groupTarget   → target × active member count (matches collectionStats)
-  // - percentage    → my progress vs my target
+  // - target          → personal goal (single member's target for the period)
+  // - groupTarget     → target × active member count (matches collectionStats)
+  // - percentage      → my progress vs my target
   // - groupPercentage → group progress vs groupTarget
   //
   // Both figures are always computed regardless of isGroupView, so the goal
@@ -510,103 +388,38 @@ export default function ContributionsScreen() {
     if (!goalPeriod) return null;
 
     const now = new Date();
+    const periodStart = new Date(goalPeriod.periodStart);
+    const periodEnd = new Date(goalPeriod.periodEnd);
+    const target = goalPeriod.targetAmount;
 
-    const periodStart = new Date(
-      goalPeriod.periodStart
-    );
+    const isApprovedInPeriod = (c: Contribution) => {
+      const cDate = new Date(c.date);
+      return cDate >= periodStart && cDate <= periodEnd && c.status === "approved";
+    };
 
-    const periodEnd = new Date(
-      goalPeriod.periodEnd
-    );
+    const totalContributed = allContributions
+      .filter(
+        (c) => isApprovedInPeriod(c) && (isGroupView || c.memberId === currentMember?.id)
+      )
+      .reduce((sum, c) => sum + (c.amount || 0), 0);
 
-    const periodContributions =
-      allContributions.filter((c) => {
-        const cDate = new Date(c.date);
-
-        if (
-          cDate < periodStart ||
-          cDate > periodEnd ||
-          c.status !== "approved"
-        ) {
-          return false;
-        }
-
-        if (
-          !isGroupView &&
-          c.memberId !==
-            currentMember?.id
-        ) {
-          return false;
-        }
-
-        return true;
-      });
-
-    const totalContributed =
-      periodContributions.reduce(
-        (sum, c) =>
-          sum + (c.amount || 0),
-        0
-      );
-
-    const groupTotalContributed =
-      allContributions
-        .filter((c) => {
-          const cDate = new Date(c.date);
-
-          return (
-            cDate >= periodStart &&
-            cDate <= periodEnd &&
-            c.status === "approved"
-          );
-        })
-        .reduce(
-          (sum, c) =>
-            sum + (c.amount || 0),
-          0
-        );
-
-    const target =
-      goalPeriod.targetAmount;
+    const groupTotalContributed = allContributions
+      .filter(isApprovedInPeriod)
+      .reduce((sum, c) => sum + (c.amount || 0), 0);
 
     // Group target = personal target × active members — matches
     // collectionStats.totalExpected exactly.
-    const activeMemberCount = allMembers.filter(
-      (m) => m.status === "active"
-    ).length;
-
+    const activeMemberCount = allMembers.filter((m) => m.status === "active").length;
     const groupTarget = target * activeMemberCount;
 
-    const percentage =
-      target > 0
-        ? Math.round(
-            (totalContributed /
-              target) *
-              100
-          )
-        : 0;
-
+    const percentage = target > 0 ? Math.round((totalContributed / target) * 100) : 0;
     const groupPercentage =
-      groupTarget > 0
-        ? Math.round(
-            (groupTotalContributed /
-              groupTarget) *
-              100
-          )
-        : 0;
+      groupTarget > 0 ? Math.round((groupTotalContributed / groupTarget) * 100) : 0;
 
-    const remaining = Math.max(
-      0,
-      target - totalContributed
-    );
-
+    const remaining = Math.max(0, target - totalContributed);
     const daysLeft = Math.max(
       0,
-      Math.ceil(
-        (periodEnd.getTime() -
-          now.getTime()) /
-          (1000 * 60 * 60 * 24)
-      )
+      Math.ceil((periodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
     );
 
     return {
@@ -618,472 +431,198 @@ export default function ContributionsScreen() {
       percentage,
       groupPercentage,
       daysLeft,
-      isCompleted:
-        totalContributed >= target,
+      isCompleted: totalContributed >= target,
       isGroupScoped: isGroupView,
     };
-  }, [
-    goalPeriod,
-    allContributions,
-    allMembers,
-    isGroupView,
-    currentMember?.id,
-  ]);
+  }, [goalPeriod, allContributions, allMembers, isGroupView, currentMember?.id]);
 
   // ---------------------------------------------------------------------------
-  // Apply late fee
+  // Apply / clear late fee
   // ---------------------------------------------------------------------------
 
-  const handleApplyContributionFee =
-    async (item: any) => {
-      setApplyingFeeId(
-        item.feeTxId
-      );
+  const handleApplyContributionFee = async (item: any) => {
+    setApplyingFeeId(item.feeTxId);
 
-      try {
-        await applyContributionLateFee(
-          item
-        );
+    try {
+      await applyContributionLateFee(item);
+      show(`Late fee of ${fmtCurrency(item.feeAmount)} applied to ${item.memberName}`);
+      recalcTotals();
+    } catch (e: any) {
+      show(e?.message || "Failed to apply late fee", "error");
+    } finally {
+      setApplyingFeeId(null);
+    }
+  };
 
-        show(
-          `Late fee of ${fmtCurrency(
-            item.feeAmount
-          )} applied to ${
-            item.memberName
-          }`
-        );
-
-        recalcTotals();
-      } catch (e: any) {
-        show(
-          e?.message ||
-            "Failed to apply late fee",
-          "error"
-        );
-      } finally {
-        setApplyingFeeId(null);
-      }
-    };
-
-  // ---------------------------------------------------------------------------
-  // Clear standalone late fee
-  //
-  // IMPORTANT:
   // This only marks the individual late-fee transaction as paid.
   // It does NOT mark the underlying contribution as paid.
-  // ---------------------------------------------------------------------------
+  const handleClearContributionFee = async (item: any) => {
+    setApplyingFeeId(item.feeTxId);
 
-  const handleClearContributionFee =
-    async (item: any) => {
-      setApplyingFeeId(
-        item.feeTxId
-      );
-
-      try {
-        await useStore
-          .getState()
-          .clearStandaloneLateFee(
-            item.feeTxId
-          );
-
-        show(
-          `Late fee of ${fmtCurrency(
-            item.feeAmount
-          )} cleared`
-        );
-
-        recalcTotals();
-      } catch (e: any) {
-        show(
-          e?.message ||
-            "Failed to clear late fee",
-          "error"
-        );
-      } finally {
-        setApplyingFeeId(null);
-      }
-    };
-
-  const getMemberName = (
-    id: string
-  ) =>
-    allMembers.find(
-      (m) => m.id === id
-    )?.fullName ?? "Unknown";
+    try {
+      await useStore.getState().clearStandaloneLateFee(item.feeTxId);
+      show(`Late fee of ${fmtCurrency(item.feeAmount)} cleared`);
+      recalcTotals();
+    } catch (e: any) {
+      show(e?.message || "Failed to clear late fee", "error");
+    } finally {
+      setApplyingFeeId(null);
+    }
+  };
 
   // ---------------------------------------------------------------------------
   // Filter + sort + pagination
   // ---------------------------------------------------------------------------
 
+  const SORT_COMPARATORS: Record<string, (a: Contribution, b: Contribution) => number> = {
+    date_asc: (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+    date_desc: (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+    month: (a, b) => {
+      const monthIndex = (d: Contribution) => {
+        const date = new Date(d.date);
+        return date.getFullYear() * 12 + date.getMonth();
+      };
+      return monthIndex(b) - monthIndex(a);
+    },
+    year: (a, b) => new Date(b.date).getFullYear() - new Date(a.date).getFullYear(),
+  };
+
   const filtered = useMemo(() => {
-    let list = [
-      ...contributions,
-    ];
+    let list = [...contributions];
 
     if (statusFilter !== "all") {
-      if (
-        statusFilter === "approved"
-      ) {
-        list = list.filter(
-          (c) =>
-            c.status ===
-            "approved"
-        );
-      } else if (
-        statusFilter === "pending"
-      ) {
-        list = list.filter(
-          (c) =>
-            c.status ===
-            "pending"
-        );
-      } else if (
-        statusFilter === "rejected"
-      ) {
-        list = list.filter(
-          (c) =>
-            c.status ===
-            "rejected"
-        );
-      }
+      list = list.filter((c) => c.status === statusFilter);
     }
 
-    if (
-      typeFilter !== "all"
-    ) {
-      list = list.filter(
-        (c) =>
-          c.contributionType ===
-          typeFilter
-      );
+    if (typeFilter !== "all") {
+      list = list.filter((c) => c.contributionType === typeFilter);
     }
 
     if (dateRangeStart) {
-      const startDate =
-        new Date(
-          dateRangeStart
-        );
-
-      list = list.filter(
-        (c) =>
-          new Date(c.date) >=
-          startDate
-      );
+      const startDate = new Date(dateRangeStart);
+      list = list.filter((c) => new Date(c.date) >= startDate);
     }
 
     if (dateRangeEnd) {
-      const endDate =
-        new Date(dateRangeEnd);
-
-      endDate.setHours(
-        23,
-        59,
-        59,
-        999
-      );
-
-      list = list.filter(
-        (c) =>
-          new Date(c.date) <=
-          endDate
-      );
+      const endDate = new Date(dateRangeEnd);
+      endDate.setHours(23, 59, 59, 999);
+      list = list.filter((c) => new Date(c.date) <= endDate);
     }
 
     if (search) {
-      const term =
-        search.toLowerCase();
-
+      const term = search.toLowerCase();
       list = list.filter(
         (c) =>
-          getMemberName(
-            c.memberId
-          )
-            .toLowerCase()
-            .includes(term) ||
-          c.description
-            ?.toLowerCase()
-            .includes(term) ||
-          c.contributionType
-            ?.toLowerCase()
-            .includes(term)
+          getMemberName(c.memberId).toLowerCase().includes(term) ||
+          c.description?.toLowerCase().includes(term) ||
+          c.contributionType?.toLowerCase().includes(term)
       );
     }
 
-    if (
-      sort === "date_asc"
-    ) {
-      list.sort(
-        (a, b) =>
-          new Date(
-            a.date
-          ).getTime() -
-          new Date(
-            b.date
-          ).getTime()
-      );
-    } else if (
-      sort === "date_desc"
-    ) {
-      list.sort(
-        (a, b) =>
-          new Date(
-            b.date
-          ).getTime() -
-          new Date(
-            a.date
-          ).getTime()
-      );
-    } else if (
-      sort === "month"
-    ) {
-      list.sort((a, b) => {
-        const da =
-          new Date(a.date);
-
-        const db =
-          new Date(b.date);
-
-        const ma =
-          da.getFullYear() *
-            12 +
-          da.getMonth();
-
-        const mb =
-          db.getFullYear() *
-            12 +
-          db.getMonth();
-
-        return mb - ma;
-      });
-    } else if (
-      sort === "year"
-    ) {
-      list.sort(
-        (a, b) =>
-          new Date(
-            b.date
-          ).getFullYear() -
-          new Date(
-            a.date
-          ).getFullYear()
-      );
-    }
+    const comparator = SORT_COMPARATORS[sort];
+    if (comparator) list.sort(comparator);
 
     return list;
-  }, [
-    contributions,
-    statusFilter,
-    typeFilter,
-    search,
-    sort,
-    allMembers,
-    dateRangeStart,
-    dateRangeEnd,
-  ]);
+  }, [contributions, statusFilter, typeFilter, search, sort, allMembers, dateRangeStart, dateRangeEnd]);
 
-  const totalPages = useMemo(
-    () =>
-      Math.ceil(
-        filtered.length /
-          PAGE_SIZE
-      ),
-    [filtered]
-  );
+  const totalPages = useMemo(() => Math.ceil(filtered.length / PAGE_SIZE), [filtered]);
 
   const paginated = useMemo(
-    () =>
-      filtered.slice(
-        (page - 1) *
-          PAGE_SIZE,
-        page * PAGE_SIZE
-      ),
+    () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
     [filtered, page]
   );
 
   const totalAmount = useMemo(
     () =>
-      statusFilter ===
-      "late_fee"
-        ? visibleLateFees.reduce(
-            (sum, item) =>
-              sum +
-              (item.feeAmount ||
-                0),
-            0
-          )
-        : filtered.reduce(
-            (sum, c) =>
-              sum +
-              (c.amount || 0),
-            0
-          ),
-    [
-      statusFilter,
-      visibleLateFees,
-      filtered,
-    ]
+      statusFilter === "late_fee"
+        ? visibleLateFees.reduce((sum, item) => sum + (item.feeAmount || 0), 0)
+        : filtered.reduce((sum, c) => sum + (c.amount || 0), 0),
+    [statusFilter, visibleLateFees, filtered]
   );
 
-  const pendingCount =
-    useMemo(
-      () =>
-        filtered.filter(
-          (c) =>
-            c.status ===
-            "pending"
-        ).length,
-      [filtered]
-    );
+  const pendingCount = useMemo(
+    () => filtered.filter((c) => c.status === "pending").length,
+    [filtered]
+  );
 
-  const approvedCount =
-    useMemo(
-      () =>
-        filtered.filter(
-          (c) =>
-            c.status ===
-            "approved"
-        ).length,
-      [filtered]
-    );
+  const approvedCount = useMemo(
+    () => filtered.filter((c) => c.status === "approved").length,
+    [filtered]
+  );
 
-  const handleTabChange = (
-    t: string
-  ) => {
-    setStatusFilter(
-      t === "Late Fee"
-        ? "late_fee"
-        : t.toLowerCase()
-    );
-
+  const handleTabChange = (t: string) => {
+    setStatusFilter(t === "Late Fee" ? "late_fee" : t.toLowerCase());
     setPage(1);
   };
 
-  const handleSearch = (
-    v: string
-  ) => {
+  const handleSearch = (v: string) => {
     setSearch(v);
     setPage(1);
   };
 
-  const handleSort = (
-    v: string
-  ) => {
+  const handleSort = (v: string) => {
     setSort(v);
     setPage(1);
   };
 
   // ---------------------------------------------------------------------------
-  // Approve contribution
+  // Approve / reject contribution
   // ---------------------------------------------------------------------------
 
-  const handleApprove =
-    async (id: string) => {
-      setApprovingId(id);
+  const handleApprove = async (id: string) => {
+    setApprovingId(id);
+    try {
+      await approveContribution(id);
+      show("Contribution approved");
+      setSelectedContrib(null);
+    } catch (e: any) {
+      show(e.message || "Failed to approve", "error");
+    } finally {
+      setApprovingId(null);
+    }
+  };
 
-      try {
-        await approveContribution(
-          id
-        );
-
-        show(
-          "Contribution approved"
-        );
-
-        setSelectedContrib(
-          null
-        );
-      } catch (e: any) {
-        show(
-          e.message ||
-            "Failed to approve",
-          "error"
-        );
-      } finally {
-        setApprovingId(null);
-      }
-    };
-
-  // ---------------------------------------------------------------------------
-  // Reject contribution
-  // ---------------------------------------------------------------------------
-
-  const handleReject =
-    async (id: string) => {
-      setApprovingId(id);
-
-      try {
-        await rejectContribution(
-          id,
-          "Rejected by admin/officer"
-        );
-
-        show(
-          "Contribution rejected"
-        );
-
-        setSelectedContrib(
-          null
-        );
-      } catch (e: any) {
-        show(
-          e.message ||
-            "Failed to reject",
-          "error"
-        );
-      } finally {
-        setApprovingId(null);
-      }
-    };
+  const handleReject = async (id: string) => {
+    setApprovingId(id);
+    try {
+      await rejectContribution(id, "Rejected by admin/officer");
+      show("Contribution rejected");
+      setSelectedContrib(null);
+    } catch (e: any) {
+      show(e.message || "Failed to reject", "error");
+    } finally {
+      setApprovingId(null);
+    }
+  };
 
   // ---------------------------------------------------------------------------
   // Export / Import — Excel (.xlsx) only. CSV has been removed.
   // ---------------------------------------------------------------------------
 
-  const handleExport =
-    async () => {
-      const headers = [
-        "Date",
-        "Member",
-        "Type",
-        "Amount",
-        "Status",
-        "Description",
-      ];
+  const handleExport = async () => {
+    const headers = ["Date", "Member", "Type", "Amount", "Status", "Description"];
 
-      const rows =
-        filtered.map((c) => [
-          fmtDate(c.date),
-          getMemberName(
-            c.memberId
-          ),
-          TYPE_LABELS[
-            c.contributionType
-          ] ??
-            c.contributionType,
-          c.amount,
-          c.status,
-          c.description ?? "",
-        ]);
+    const rows = filtered.map((c) => [
+      fmtDate(c.date),
+      getMemberName(c.memberId),
+      typeLabel(c.contributionType),
+      c.amount,
+      c.status,
+      c.description ?? "",
+    ]);
 
-      const fileName =
-        dateRangeStart ||
-        dateRangeEnd
-          ? `Contributions_Report_${
-              dateRangeStart ||
-              "start"
-            }_to_${
-              dateRangeEnd ||
-              "end"
-            }`
-          : "Contributions_Report";
+    const fileName =
+      dateRangeStart || dateRangeEnd
+        ? `Contributions_Report_${dateRangeStart || "start"}_to_${dateRangeEnd || "end"}`
+        : "Contributions_Report";
 
-      try {
-        await exportXlsx(fileName, headers, rows);
-        show("Exported as Excel");
-      } catch (e: any) {
-        show(e?.message || "Failed to export", "error");
-      }
-    };
+    try {
+      await exportXlsx(fileName, headers, rows);
+      show("Exported as Excel");
+    } catch (e: any) {
+      show(e?.message || "Failed to export", "error");
+    }
+  };
 
   const handleImport = async () => {
     if (!activeGroupId) {
@@ -1101,8 +640,7 @@ export default function ContributionsScreen() {
         return;
       }
 
-      const bulkImport = (useStore.getState() as any)
-        .bulkImportContributions;
+      const bulkImport = (useStore.getState() as any).bulkImportContributions;
 
       if (typeof bulkImport !== "function") {
         show(
@@ -1125,751 +663,132 @@ export default function ContributionsScreen() {
   };
 
   // ---------------------------------------------------------------------------
+  // "+ Add" — always routes to the add-contribution modal fresh, with no
+  // contribution id in the URL, so the modal can't mistake this for an edit.
+  // ---------------------------------------------------------------------------
+
+  const handleAddPress = () => {
+    setSelectedContrib(null);
+    router.push("/modals/add-contribution");
+  };
+
+  // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
 
+  const cardWide = wideCardStyle(isWide);
+  const activeTab =
+    statusFilter === "all" ? "All" : statusFilter === "late_fee" ? "Late Fee" : statusFilter;
+
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: C.bg,
-      }}
-    >
-      {/* Page action bar */}
-
-      <View
-        style={[
-          st.topBar,
-          isWide && {
-            maxWidth: 900,
-            alignSelf:
-              "center" as any,
-            width:
-              "100%" as any,
-          },
-        ]}
-      >
-        <View>
-          <Text
-            style={
-              st.pageSummaryLabel
-            }
-          >
-            {isGroupView
-              ? "Group"
-              : "Personal"}
-          </Text>
-
-          <Text
-            style={
-              st.pageSummaryTitle
-            }
-          >
-            {statusFilter ===
-            "late_fee"
-              ? "Late Fees Record"
-              : "History"}
-          </Text>
-        </View>
-
-        <View
-          style={{
-            flexDirection:
-              "row",
-            gap: 8,
-            alignItems:
-              "center",
-          }}
-        >
-          {canExport && (
-            <TouchableOpacity
-              style={
-                st.iconBtn
-              }
-              onPress={handleExport}
-              activeOpacity={0.8}
-            >
-              <Text
-                style={
-                  st.iconBtnText
-                }
-              >
-                Export
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {canExport && (
-            <TouchableOpacity
-              style={
-                st.iconBtn
-              }
-              onPress={handleImport}
-              activeOpacity={0.8}
-              disabled={importing}
-            >
-              <Text
-                style={
-                  st.iconBtnText
-                }
-              >
-                {importing ? "Importing…" : "Import"}
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {canAdd && (
-            <TouchableOpacity
-              style={
-                st.primaryBtn
-              }
-              onPress={() =>
-                router.push(
-                  "/modals/add-contribution"
-                )
-              }
-              activeOpacity={0.8}
-            >
-              <Text
-                style={
-                  st.primaryBtnText
-                }
-              >
-                + Add
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <TopBar
+        isWide={isWide}
+        isGroupView={isGroupView}
+        isLateFeeView={statusFilter === "late_fee"}
+        canExport={canExport}
+        canAdd={canAdd}
+        importing={importing}
+        onExport={handleExport}
+        onImport={handleImport}
+        onAdd={handleAddPress}
+      />
 
       <ScrollView
-        contentContainerStyle={[
-          {
-            paddingBottom: 100,
-          },
-          isWide && {
-            paddingHorizontal: 24,
-          },
-        ]}
-        showsVerticalScrollIndicator={
-          false
-        }
+        contentContainerStyle={[{ paddingBottom: 100 }, isWide && { paddingHorizontal: 24 }]}
+        showsVerticalScrollIndicator={false}
       >
-        {/* Contribution Goals Card — shows BOTH personal and group goal */}
-
         {goalProgress && (
-          <View
-            style={[
-              st.goalCard,
-              isWide && {
-                marginHorizontal: 0,
-                maxWidth: 900,
-                alignSelf:
-                  "center" as any,
-                width:
-                  "100%" as any,
-              },
-            ]}
-          >
-            <View
-              style={
-                st.cardAccentDot
-              }
-            />
-
-            {/* ── Personal goal ── */}
-            <View
-              style={{
-                flexDirection:
-                  "row",
-                justifyContent:
-                  "space-between",
-                alignItems:
-                  "flex-start",
-                marginBottom: 12,
-              }}
-            >
-              <View
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                }}
-              >
-                <Text
-                  style={
-                    st.goalLabel
-                  }
-                  numberOfLines={
-                    1
-                  }
-                >
-                  {goalProgress.isCompleted
-                    ? "✓ MY GOAL ACHIEVED"
-                    : "MY CONTRIBUTION GOAL"}
-                </Text>
-
-                <Text
-                  style={
-                    st.goalAmount
-                  }
-                  numberOfLines={
-                    1
-                  }
-                  adjustsFontSizeToFit
-                  minimumFontScale={
-                    0.8
-                  }
-                >
-                  <Text
-                    style={
-                      st.balanceCurrency
-                    }
-                  >
-                    {group?.currency ??
-                      "RWF"}{" "}
-                  </Text>
-
-                  {fmtCurrency(
-                    goalProgress.totalContributed,
-                    group?.currency ??
-                      "RWF"
-                  ).replace(
-                    `${
-                      group?.currency ??
-                      "RWF"
-                    } `,
-                    ""
-                  )}
-                </Text>
-              </View>
-
-              <View
-                style={{
-                  alignItems:
-                    "flex-end",
-                  flexShrink: 0,
-                  marginLeft: 8,
-                }}
-              >
-                <Text
-                  style={[
-                    st.goalPercentage,
-                    goalProgress.isCompleted && {
-                      color:
-                        Colors.green,
-                    },
-                  ]}
-                  numberOfLines={
-                    1
-                  }
-                >
-                  {
-                    goalProgress.percentage
-                  }
-                  %
-                </Text>
-
-                <Text
-                  style={
-                    st.goalDaysLeft
-                  }
-                  numberOfLines={
-                    1
-                  }
-                >
-                  {goalProgress.daysLeft >
-                  0
-                    ? `${goalProgress.daysLeft}d left`
-                    : "Period ended"}
-                </Text>
-              </View>
-            </View>
-
-            {/* Personal progress bar */}
-
-            <View
-              style={
-                st.progressBarContainer
-              }
-            >
-              <View
-                style={[
-                  st.progressBar,
-                  {
-                    width: `${
-                      Math.min(
-                        100,
-                        goalProgress.percentage
-                      )
-                    }%`,
-                    backgroundColor:
-                      goalProgress.isCompleted
-                        ? Colors.green
-                        : Colors.primary,
-                  },
-                ]}
-              />
-            </View>
-
-            {/* ── Group goal — always shown, not just in one view ── */}
-
-            <View style={st.goalDividerLine} />
-
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                marginTop: 12,
-              }}
-            >
-              <View
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                }}
-              >
-                <Text
-                  style={st.goalLabel}
-                  numberOfLines={1}
-                >
-                  {goalProgress.groupPercentage >= 100
-                    ? "✓ GROUP GOAL ACHIEVED"
-                    : "GROUP CONTRIBUTION GOAL"}
-                </Text>
-
-                <Text
-                  style={[st.goalAmount, { fontSize: 20 }]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.8}
-                >
-                  <Text style={st.balanceCurrency}>
-                    {group?.currency ?? "RWF"}{" "}
-                  </Text>
-
-                  {fmtCurrency(
-                    goalProgress.groupTotalContributed,
-                    group?.currency ?? "RWF"
-                  ).replace(`${group?.currency ?? "RWF"} `, "")}
-                </Text>
-              </View>
-
-              <View
-                style={{
-                  alignItems: "flex-end",
-                  flexShrink: 0,
-                  marginLeft: 8,
-                }}
-              >
-                <Text
-                  style={[
-                    st.goalPercentage,
-                    { fontSize: 16 },
-                    goalProgress.groupPercentage >= 100 && {
-                      color: Colors.green,
-                    },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {goalProgress.groupPercentage}%
-                </Text>
-              </View>
-            </View>
-
-            <View style={st.progressBarContainer}>
-              <View
-                style={[
-                  st.progressBar,
-                  {
-                    width: `${Math.min(100, goalProgress.groupPercentage)}%`,
-                    backgroundColor:
-                      goalProgress.groupPercentage >= 100
-                        ? Colors.green
-                        : Colors.accent,
-                  },
-                ]}
-              />
-            </View>
-
-            <View
-              style={{
-                marginTop: 12,
-                flexDirection:
-                  "row",
-                gap: 12,
-              }}
-            >
-              <View
-                style={
-                  st.goalStat
-                }
-              >
-                <Text
-                  style={
-                    st.goalStatLabel
-                  }
-                  numberOfLines={
-                    1
-                  }
-                  adjustsFontSizeToFit
-                  minimumFontScale={
-                    0.85
-                  }
-                >
-                  Target
-                </Text>
-
-                <Text
-                  style={
-                    st.goalStatValue
-                  }
-                  numberOfLines={
-                    1
-                  }
-                  adjustsFontSizeToFit
-                  minimumFontScale={
-                    0.75
-                  }
-                >
-                  {fmtCurrency(
-                    isGroupView
-                      ? goalProgress.groupTarget
-                      : goalProgress.target
-                  )}
-                </Text>
-              </View>
-
-              <View
-                style={
-                  st.goalStat
-                }
-              >
-                <Text
-                  style={
-                    st.goalStatLabel
-                  }
-                  numberOfLines={
-                    1
-                  }
-                  adjustsFontSizeToFit
-                  minimumFontScale={
-                    0.85
-                  }
-                >
-                  Remaining
-                </Text>
-
-                <Text
-                  style={[
-                    st.goalStatValue,
-                    goalProgress.isCompleted && {
-                      color:
-                        Colors.bgWhite,
-                    },
-                  ]}
-                  numberOfLines={
-                    1
-                  }
-                  adjustsFontSizeToFit
-                  minimumFontScale={
-                    0.75
-                  }
-                >
-                  {fmtCurrency(
-                    goalProgress.remaining
-                  )}
-                </Text>
-              </View>
-
-              <View
-                style={
-                  st.goalStat
-                }
-              >
-                <Text
-                  style={
-                    st.goalStatLabel
-                  }
-                  numberOfLines={
-                    1
-                  }
-                  adjustsFontSizeToFit
-                  minimumFontScale={
-                    0.85
-                  }
-                >
-                  Min Contribution
-                </Text>
-
-                <Text
-                  style={
-                    st.goalStatValue
-                  }
-                  numberOfLines={
-                    1
-                  }
-                  adjustsFontSizeToFit
-                  minimumFontScale={
-                    0.75
-                  }
-                >
-                  {fmtCurrency(
-                    goalPeriod?.minimumContribution ??
-                      0
-                  )}
-                </Text>
-              </View>
-            </View>
-          </View>
+          <GoalCard
+            isWide={isWide}
+            isGroupView={isGroupView}
+            currency={group?.currency ?? "RWF"}
+            goalProgress={goalProgress}
+            minimumContribution={goalPeriod?.minimumContribution ?? 0}
+          />
         )}
 
-        {/* KPI Cards */}
-
-        <View
-          style={[
-            st.block,
-            isWide && {
-              maxWidth: 900,
-              alignSelf:
-                "center" as any,
-              width:
-                "100%" as any,
-            },
-          ]}
-        >
-          <View
-            style={
-              st.kpiGrid
-            }
-          >
+        <View style={[st.block, cardWide]}>
+          <View style={st.kpiGrid}>
             <KpiCard
               label="Total Expected"
-              value={
-                collectionStats
-                  ? fmtCurrency(
-                      collectionStats.totalExpected
-                    )
-                  : "—"
-              }
+              value={collectionStats ? fmtCurrency(collectionStats.totalExpected) : "—"}
               icon="📋"
-              subtext={
-                isGroupView
-                  ? "Goal target × active members"
-                  : "Your goal target"
-              }
-              accentColor={
-                C.accent
-              }
+              subtext={isGroupView ? "Goal target × active members" : "Your goal target"}
+              accentColor={C.accent}
               onPress={() => {}}
             />
 
             <KpiCard
               label="Total Collected"
-              value={
-                collectionStats
-                  ? fmtCurrency(
-                      collectionStats.totalCollected
-                    )
-                  : "—"
-              }
+              value={collectionStats ? fmtCurrency(collectionStats.totalCollected) : "—"}
               icon="💰"
               subtext="Collected contributions"
-              accentColor={
-                C.success
-              }
-              onPress={() =>
-                setStatusFilter(
-                  "approved"
-                )
-              }
+              accentColor={C.success}
+              onPress={() => setStatusFilter("approved")}
             />
 
             <KpiCard
               label="Collection Rate"
-              value={
-                collectionStats
-                  ? `${collectionStats.collectionRate.toFixed(
-                      1
-                    )}%`
-                  : "—"
-              }
+              value={collectionStats ? `${collectionStats.collectionRate.toFixed(1)}%` : "—"}
               icon="📊"
               subtext="Collection efficiency"
-              accentColor={
-                C.primary
-              }
+              accentColor={C.primary}
               onPress={() => {}}
             />
 
             <KpiCard
               label="Late Fees Due"
               value={
-                collectionStats
-                  ? fmtCurrency(
-                      collectionStats.totalLateFeesRemaining
-                    )
-                  : "—"
+                collectionStats ? fmtCurrency(collectionStats.totalLateFeesRemaining) : "—"
               }
               icon="⚠️"
               subtext="Unpaid late fees"
-              accentColor={
-                C.gold
-              }
-              onPress={() =>
-                setStatusFilter(
-                  "late_fee"
-                )
-              }
+              accentColor={C.gold}
+              onPress={() => setStatusFilter("late_fee")}
             />
           </View>
         </View>
 
-        {/* Controls */}
-
-        <View
-          style={[
-            st.controls,
-            isWide && {
-              maxWidth: 900,
-              alignSelf:
-                "center" as any,
-              width:
-                "100%" as any,
-            },
-          ]}
-        >
-          <View
-            style={
-              st.controlsTop
-            }
-          >
-            <View
-              style={{
-                flex: 2,
-              }}
-            >
-              <SearchBar
-                value={search}
-                onChange={
-                  handleSearch
-                }
-                placeholder="Search contributions…"
-              />
+        <View style={[st.controls, cardWide]}>
+          <View style={st.controlsTop}>
+            <View style={{ flex: 2 }}>
+              <SearchBar value={search} onChange={handleSearch} placeholder="Search contributions…" />
             </View>
           </View>
 
-          {/* View mode toggle */}
-
-          <View
-            style={
-              st.viewModeRow
-            }
-          >
-            <TouchableOpacity
-              style={[
-                st.viewModeBtn,
-                viewMode ===
-                  "list" &&
-                  st.viewModeBtnActive,
-              ]}
-              onPress={() =>
-                setViewMode(
-                  "list"
-                )
-              }
-              activeOpacity={
-                0.7
-              }
-            >
-              <Text
-                style={[
-                  st.viewModeBtnText,
-                  viewMode ===
-                    "list" &&
-                    st.viewModeBtnTextActive,
-                ]}
-              >
-                List View
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                st.viewModeBtn,
-                viewMode ===
-                  "monthly" &&
-                  st.viewModeBtnActive,
-              ]}
-              onPress={() =>
-                setViewMode(
-                  "monthly"
-                )
-              }
-              activeOpacity={
-                0.7
-              }
-            >
-              <Text
-                style={[
-                  st.viewModeBtnText,
-                  viewMode ===
-                    "monthly" &&
-                    st.viewModeBtnTextActive,
-                ]}
-              >
-                Goal Progress
-              </Text>
-            </TouchableOpacity>
+          <View style={st.viewModeRow}>
+            <ViewModeButton
+              label="List View"
+              active={viewMode === "list"}
+              onPress={() => setViewMode("list")}
+            />
+            <ViewModeButton
+              label="Goal Progress"
+              active={viewMode === "monthly"}
+              onPress={() => setViewMode("monthly")}
+            />
           </View>
 
-          {/* Date filters */}
-
-          <View
-            style={
-              st.dateFilterRow
-            }
-          >
-            <View
-              style={{
-                flex: 1,
-                marginRight: 8,
-              }}
-            >
+          <View style={st.dateFilterRow}>
+            <View style={{ flex: 1, marginRight: 8 }}>
               <DatePicker
                 label="From Date"
-                value={
-                  dateRangeStart
-                }
-                onChange={(
-                  value
-                ) => {
-                  setDateRangeStart(
-                    value
-                  );
+                value={dateRangeStart}
+                onChange={(value) => {
+                  setDateRangeStart(value);
                   setPage(1);
                 }}
                 placeholder="Start date"
               />
             </View>
 
-            <View
-              style={{
-                flex: 1,
-                marginLeft: 8,
-              }}
-            >
+            <View style={{ flex: 1, marginLeft: 8 }}>
               <DatePicker
                 label="To Date"
-                value={
-                  dateRangeEnd
-                }
-                onChange={(
-                  value
-                ) => {
-                  setDateRangeEnd(
-                    value
-                  );
+                value={dateRangeEnd}
+                onChange={(value) => {
+                  setDateRangeEnd(value);
                   setPage(1);
                 }}
                 placeholder="End date"
@@ -1877,1006 +796,617 @@ export default function ContributionsScreen() {
             </View>
           </View>
 
-          {/* Status tabs */}
-
-          <View
-            style={
-              st.statusRow
-            }
-          >
-            <TabRow
-              tabs={[
-                "All",
-                "Approved",
-                "Pending",
-                "Late Fee",
-              ]}
-              active={
-                statusFilter ===
-                "all"
-                  ? "All"
-                  : statusFilter ===
-                    "late_fee"
-                  ? "Late Fee"
-                  : statusFilter
-              }
-              onChange={
-                handleTabChange
-              }
-            />
+          <View style={st.statusRow}>
+            <TabRow tabs={[...STATUS_TABS]} active={activeTab} onChange={handleTabChange} />
           </View>
         </View>
 
-        {/* Contribution / late fee list */}
-
-        <View
-          style={[
-            {
-              marginTop: 8,
-            },
-            isWide && {
-              maxWidth: 900,
-              alignSelf:
-                "center" as any,
-              width:
-                "100%" as any,
-            },
-          ]}
-        >
-          {viewMode ===
-          "monthly" ? (
-            !goalPeriod ? (
-              <View
-                style={
-                  st.empty
-                }
-              >
-                <Text
-                  style={
-                    st.emptyIcon
-                  }
-                >
-                  🎯
-                </Text>
-
-                <Text
-                  style={
-                    st.emptyText
-                  }
-                >
-                  No contribution
-                  goal is set up
-                  for this group
-                </Text>
-              </View>
-            ) : memberGoalRows.length ===
-              0 ? (
-              <View
-                style={
-                  st.empty
-                }
-              >
-                <Text
-                  style={
-                    st.emptyIcon
-                  }
-                >
-                  👥
-                </Text>
-
-                <Text
-                  style={
-                    st.emptyText
-                  }
-                >
-                  No active
-                  members to show
-                </Text>
-              </View>
-            ) : isWide ? (
-              <View
-                style={
-                  st.table
-                }
-              >
-                <View
-                  style={[
-                    st.tableRow,
-                    st.tableHeadRow,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      st.tableHeadCell,
-                      {
-                        flex: 2,
-                      },
-                    ]}
-                  >
-                    MEMBER
-                  </Text>
-
-                  <Text
-                    style={[
-                      st.tableHeadCell,
-                      {
-                        width: 130,
-                        textAlign:
-                          "right",
-                      },
-                    ]}
-                  >
-                    PAID
-                  </Text>
-
-                  <Text
-                    style={[
-                      st.tableHeadCell,
-                      {
-                        width: 130,
-                        textAlign:
-                          "right",
-                      },
-                    ]}
-                  >
-                    REMAINING
-                  </Text>
-
-                  <Text
-                    style={[
-                      st.tableHeadCell,
-                      {
-                        width: 90,
-                        textAlign:
-                          "right",
-                      },
-                    ]}
-                  >
-                    PROGRESS
-                  </Text>
-
-                  <Text
-                    style={[
-                      st.tableHeadCell,
-                      {
-                        width: 110,
-                        textAlign:
-                          "right",
-                      },
-                    ]}
-                  >
-                    LATE FEES
-                  </Text>
-
-                  <Text
-                    style={[
-                      st.tableHeadCell,
-                      {
-                        width: 90,
-                        textAlign:
-                          "center",
-                      },
-                    ]}
-                  >
-                    STATUS
-                  </Text>
-                </View>
-
-                {memberGoalRows.map(
-                  (row) => (
-                    <View
-                      key={
-                        row.memberId
-                      }
-                      style={[
-                        st.tableRow,
-                        {
-                          borderBottomWidth: 1,
-                          borderBottomColor:
-                            C.border,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          st.tableCell,
-                          {
-                            flex: 2,
-                          },
-                        ]}
-                        numberOfLines={
-                          1
-                        }
-                      >
-                        {
-                          row.memberName
-                        }
-                      </Text>
-
-                      <Text
-                        style={[
-                          st.tableCell,
-                          {
-                            width: 130,
-                            textAlign:
-                              "right",
-                            fontWeight:
-                              "700",
-                            color:
-                              C.accent,
-                          },
-                        ]}
-                      >
-                        {fmtCurrency(
-                          row.paid
-                        )}
-                      </Text>
-
-                      <Text
-                        style={[
-                          st.tableCell,
-                          {
-                            width: 130,
-                            textAlign:
-                              "right",
-                          },
-                        ]}
-                      >
-                        {row.isCompleted
-                          ? "—"
-                          : fmtCurrency(
-                              row.remaining
-                            )}
-                      </Text>
-
-                      <Text
-                        style={[
-                          st.tableCell,
-                          {
-                            width: 90,
-                            textAlign:
-                              "right",
-                            fontWeight:
-                              "600",
-                          },
-                        ]}
-                      >
-                        {
-                          row.percentage
-                        }
-                        %
-                      </Text>
-
-                      <Text
-                        style={[
-                          st.tableCell,
-                          {
-                            width: 110,
-                            textAlign:
-                              "right",
-                            color:
-                              row.lateFees >
-                              0
-                                ? C.gold
-                                : C.text3,
-                          },
-                        ]}
-                      >
-                        {row.lateFees >
-                        0
-                          ? fmtCurrency(
-                              row.lateFees
-                            )
-                          : "—"}
-                      </Text>
-
-                      <View
-                        style={{
-                          width: 90,
-                          alignItems:
-                            "center",
-                        }}
-                      >
-                        <Badge
-                          label={
-                            row.isCompleted
-                              ? "Done"
-                              : "In progress"
-                          }
-                          color={
-                            row.isCompleted
-                              ? "green"
-                              : "gold"
-                          }
-                        />
-                      </View>
-                    </View>
-                  )
-                )}
-              </View>
-            ) : (
-              <View
-                style={
-                  st.card
-                }
-              >
-                {memberGoalRows.map(
-                  (
-                    row,
-                    i
-                  ) => (
-                    <React.Fragment
-                      key={
-                        row.memberId
-                      }
-                    >
-                      <View
-                        style={
-                          st.txRow
-                        }
-                      >
-                        <View
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                          }}
-                        >
-                          <Text
-                            style={
-                              st.txDesc
-                            }
-                            numberOfLines={
-                              1
-                            }
-                          >
-                            {
-                              row.memberName
-                            }
-                          </Text>
-
-                          <Text
-                            style={
-                              st.txMeta
-                            }
-                            numberOfLines={
-                              1
-                            }
-                          >
-                            {fmtCurrency(
-                              row.paid
-                            )}{" "}
-                            paid ·{" "}
-                            {
-                              row.percentage
-                            }
-                            % of goal
-                            {row.lateFees >
-                            0
-                              ? ` · ${fmtCurrency(
-                                  row.lateFees
-                                )} late fees`
-                              : ""}
-                          </Text>
-                        </View>
-
-                        <View
-                          style={{
-                            alignItems:
-                              "flex-end",
-                            flexShrink: 0,
-                            marginLeft: 8,
-                          }}
-                        >
-                          <Text
-                            style={[
-                              st.txAmount,
-                              {
-                                color:
-                                  row.isCompleted
-                                    ? C.success
-                                    : C.accent,
-                              },
-                            ]}
-                            numberOfLines={
-                              1
-                            }
-                          >
-                            {row.isCompleted
-                              ? "Done"
-                              : fmtCurrency(
-                                  row.remaining
-                                )}
-                          </Text>
-
-                          {!row.isCompleted && (
-                            <Text
-                              style={{
-                                fontSize: 10,
-                                color:
-                                  C.text3,
-                                marginTop: 2,
-                              }}
-                            >
-                              remaining
-                            </Text>
-                          )}
-                        </View>
-                      </View>
-
-                      {i < memberGoalRows.length -
-                          1 && (
-                        <Divider />
-                      )}
-                    </React.Fragment>
-                  )
-                )}
-              </View>
-            )
-          ) : statusFilter ===
-            "late_fee" ? (
-            visibleLateFees.length ===
-            0 ? (
-              <View
-                style={
-                  st.empty
-                }
-              >
-                <Text
-                  style={
-                    st.emptyIcon
-                  }
-                >
-                  ✓
-                </Text>
-
-                <Text
-                  style={
-                    st.emptyText
-                  }
-                >
-                  No late fees owed
-                </Text>
-              </View>
-            ) : (
-              <View
-                style={
-                  st.block
-                }
-              >
-                {visibleLateFees.map(
-                  (
-                    item,
-                    index
-                  ) => (
-                    <React.Fragment
-                      key={
-                        item.feeTxId
-                      }
-                    >
-                      <View
-                        style={
-                          st.lateFeeRow
-                        }
-                      >
-                        <View
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                          }}
-                        >
-                          <Text
-                            style={
-                              st.lateFeeMemberName
-                            }
-                            numberOfLines={
-                              1
-                            }
-                          >
-                            {isGroupView
-                              ? item.memberName
-                              : item.periodLabel}
-                          </Text>
-
-                          <Text
-                            style={
-                              st.lateFeeDetail
-                            }
-                            numberOfLines={
-                              2
-                            }
-                          >
-                            {item.applied
-                              ? `${item.periodLabel} · Unpaid late fee`
-                              : `${
-                                  isGroupView
-                                    ? `${item.periodLabel} · `
-                                    : ""
-                                }${
-                                  item.daysNewlyOwed
-                                }d @ ${
-                                  group?.contributionLateFeeRatePct ??
-                                  0
-                                }%/day · ${
-                                  item.daysLate
-                                }d late`}
-                          </Text>
-                        </View>
-
-                        <View
-                          style={
-                            st.lateFeeAmountWrap
-                          }
-                        >
-                          <Text
-                            style={
-                              st.lateFeeAmount
-                            }
-                          >
-                            {fmtCurrency(
-                              item.feeAmount
-                            )}
-                          </Text>
-
-                          {/*
-                            Apply/Clear action is restricted to
-                            admin, accountant, and loan_officer.
-                            Everyone else can still see the fee
-                            amount and detail above — this button
-                            is the only thing gated.
-                          */}
-                          {canManageFees && (
-                            <TouchableOpacity
-                              style={
-                                st.lateFeeApplyBtn
-                              }
-                              onPress={() =>
-                                item.applied
-                                  ? handleClearContributionFee(
-                                      item
-                                    )
-                                  : handleApplyContributionFee(
-                                      item
-                                    )
-                              }
-                              disabled={
-                                applyingFeeId ===
-                                item.feeTxId
-                              }
-                              activeOpacity={
-                                0.8
-                              }
-                            >
-                              <Text
-                                style={
-                                  st.lateFeeApplyBtnText
-                                }
-                              >
-                                {applyingFeeId ===
-                                item.feeTxId
-                                  ? "Saving…"
-                                  : item.applied
-                                  ? "Clear"
-                                  : "Apply"}
-                              </Text>
-                            </TouchableOpacity>
-                          )}
-                        </View>
-                      </View>
-
-                      {index < visibleLateFees.length -
-                          1 && (
-                        <Divider />
-                      )}
-                    </React.Fragment>
-                  )
-                )}
-              </View>
-            )
-          ) : paginated.length ===
-            0 ? (
-            <View
-              style={
-                st.empty
-              }
-            >
-              <Text
-                style={
-                  st.emptyIcon
-                }
-              >
-                💰
-              </Text>
-
-              <Text
-                style={
-                  st.emptyText
-                }
-              >
-                No contributions found
-              </Text>
-            </View>
+        <View style={[{ marginTop: 8 }, cardWide]}>
+          {viewMode === "monthly" ? (
+            <GoalProgressList
+              isWide={isWide}
+              goalPeriod={goalPeriod}
+              rows={memberGoalRows}
+            />
+          ) : statusFilter === "late_fee" ? (
+            <LateFeeList
+              items={visibleLateFees}
+              isGroupView={isGroupView}
+              group={group}
+              canManageFees={canManageFees}
+              applyingFeeId={applyingFeeId}
+              onApply={handleApplyContributionFee}
+              onClear={handleClearContributionFee}
+            />
+          ) : paginated.length === 0 ? (
+            <EmptyState icon="💰" text="No contributions found" />
           ) : isWide ? (
-            <View
-              style={
-                st.table
-              }
-            >
-              <View
-                style={[
-                  st.tableRow,
-                  st.tableHeadRow,
-                ]}
-              >
-                <View
-                  style={{
-                    width: 40,
-                  }}
-                />
-
-                <Text
-                  style={[
-                    st.tableHeadCell,
-                    {
-                      flex: 2,
-                    },
-                  ]}
-                >
-                  DESCRIPTION
-                </Text>
-
-                <Text
-                  style={[
-                    st.tableHeadCell,
-                    {
-                      width: 160,
-                    },
-                  ]}
-                >
-                  TYPE
-                </Text>
-
-                {isGroupView && (
-                  <Text
-                    style={[
-                      st.tableHeadCell,
-                      {
-                        width: 150,
-                      },
-                    ]}
-                  >
-                    MEMBER
-                  </Text>
-                )}
-
-                <Text
-                  style={[
-                    st.tableHeadCell,
-                    {
-                      width: 120,
-                    },
-                  ]}
-                >
-                  DATE
-                </Text>
-
-                <Text
-                  style={[
-                    st.tableHeadCell,
-                    {
-                      width: 120,
-                      textAlign:
-                        "right",
-                    },
-                  ]}
-                >
-                  AMOUNT
-                </Text>
-
-                {canApprove && (
-                  <View
-                    style={{
-                      width: 60,
-                    }}
-                  />
-                )}
-              </View>
-
-              {paginated.map(
-                (c) => (
-                  <React.Fragment
-                    key={c.id}
-                  >
-                    <TableRow
-                      contribution={
-                        c
-                      }
-                      showMember={
-                        isGroupView
-                      }
-                    />
-                  </React.Fragment>
-                )
-              )}
-            </View>
+            <ContributionTable
+              rows={paginated}
+              isGroupView={isGroupView}
+              canApprove={canApprove}
+              canEdit={canEditContribution}
+              onEdit={handleEditPress}
+            />
           ) : (
-            <View
-              style={
-                st.card
-              }
-            >
-              {paginated.map(
-                (c, i) => (
-                  <React.Fragment
-                    key={c.id}
-                  >
-                    <ContributionRow
-                      contribution={
-                        c
-                      }
-                      memberName={
-                        isGroupView
-                          ? getMemberName(
-                              c.memberId
-                            )
-                          : ""
-                      }
-                      canApprove={
-                        canApprove
-                      }
-                      onApprove={() =>
-                        handleApprove(
-                          c.id
-                        )
-                      }
-                      onReject={() =>
-                        handleReject(
-                          c.id
-                        )
-                      }
-                      onView={() =>
-                        setSelectedContrib(
-                          c
-                        )
-                      }
-                    />
-
-                    {i < paginated.length -
-                        1 && (
-                      <Divider />
-                    )}
-                  </React.Fragment>
-                )
-              )}
+            <View style={st.card}>
+              {paginated.map((c, i) => (
+                <React.Fragment key={c.id}>
+                  <ContributionRow
+                    contribution={c}
+                    memberName={isGroupView ? getMemberName(c.memberId) : ""}
+                    canApprove={canApprove}
+                    canEdit={canEditContribution}
+                    onApprove={() => handleApprove(c.id)}
+                    onReject={() => handleReject(c.id)}
+                    onView={() => setSelectedContrib(c)}
+                    onEdit={() => handleEditPress(c.id)}
+                  />
+                  {i < paginated.length - 1 && <Divider />}
+                </React.Fragment>
+              ))}
             </View>
           )}
 
-          {viewMode !==
-            "monthly" && (
-            <Pagination
-              page={page}
-              totalPages={
-                totalPages
-              }
-              setPage={setPage}
-              filtered={
-                filtered
-              }
-            />
+          {viewMode !== "monthly" && (
+            <Pagination page={page} totalPages={totalPages} setPage={setPage} filtered={filtered} />
           )}
         </View>
       </ScrollView>
 
-      <Toast
-        visible={visible}
-        msg={msg}
-        type={type}
-      />
+      <Toast visible={visible} msg={msg} type={type} />
     </View>
   );
 }
 
 // -----------------------------------------------------------------------------
-// Desktop table row
+// Top action bar
 // -----------------------------------------------------------------------------
 
-const TableRow = ({
-  contribution,
-  showMember,
+function TopBar({
+  isWide,
+  isGroupView,
+  isLateFeeView,
+  canExport,
+  canAdd,
+  importing,
+  onExport,
+  onImport,
+  onAdd,
 }: {
-  contribution: Contribution;
-  showMember: boolean;
-}) => {
-  const role =
-    useCurrentUserRole();
+  isWide: boolean;
+  isGroupView: boolean;
+  isLateFeeView: boolean;
+  canExport: boolean;
+  canAdd: boolean;
+  importing: boolean;
+  onExport: () => void;
+  onImport: () => void;
+  onAdd: () => void;
+}) {
+  return (
+    <View style={[st.topBar, wideCardStyle(isWide)]}>
+      <View>
+        <Text style={st.pageSummaryLabel}>{isGroupView ? "Group" : "Personal"}</Text>
+        <Text style={st.pageSummaryTitle}>
+          {isLateFeeView ? "Late Fees Record" : "History"}
+        </Text>
+      </View>
 
-  const canApprove = [
-    "admin",
-    "loan_officer",
-    "accountant",
-  ].includes(role);
+      <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+        {canExport && (
+          <TouchableOpacity style={st.iconBtn} onPress={onExport} activeOpacity={0.8}>
+            <Text style={st.iconBtnText}>Export</Text>
+          </TouchableOpacity>
+        )}
 
-  const allMembers =
-    useGroupMembers();
+        {canExport && (
+          <TouchableOpacity
+            style={st.iconBtn}
+            onPress={onImport}
+            activeOpacity={0.8}
+            disabled={importing}
+          >
+            <Text style={st.iconBtnText}>{importing ? "Importing…" : "Import"}</Text>
+          </TouchableOpacity>
+        )}
 
-  const getMemberName = (
-    id: string
-  ) =>
-    allMembers.find(
-      (m) => m.id === id
-    )?.fullName ?? "Unknown";
+        {canAdd && (
+          <TouchableOpacity style={st.primaryBtn} onPress={onAdd} activeOpacity={0.8}>
+            <Text style={st.primaryBtnText}>+ Add</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+}
 
-  const memberName =
-    getMemberName(
-      contribution.memberId
-    );
+function ViewModeButton({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[st.viewModeBtn, active && st.viewModeBtnActive]}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      <Text style={[st.viewModeBtnText, active && st.viewModeBtnTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function EmptyState({ icon, text }: { icon: string; text: string }) {
+  return (
+    <View style={st.empty}>
+      <Text style={st.emptyIcon}>{icon}</Text>
+      <Text style={st.emptyText}>{text}</Text>
+    </View>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Goal card — shows BOTH personal and group goal, always
+// -----------------------------------------------------------------------------
+
+function GoalCard({
+  isWide,
+  isGroupView,
+  currency,
+  goalProgress,
+  minimumContribution,
+}: {
+  isWide: boolean;
+  isGroupView: boolean;
+  currency: string;
+  goalProgress: NonNullable<ReturnType<typeof useGoalProgressType>>;
+  minimumContribution: number;
+}) {
+  const amountText = (value: number) =>
+    fmtCurrency(value, currency).replace(`${currency} `, "");
 
   return (
-    <View
-      style={[
-        st.tableRow,
-        {
-          borderBottomWidth: 1,
-          borderBottomColor:
-            C.border,
-        },
-      ]}
-    >
-      <View
-        style={[
-          st.tableCell,
-          {
-            width: 40,
-          },
-        ]}
-      >
-        <View
-          style={[
-            st.txIconSm,
-            {
-              backgroundColor:
-                contribution.status ===
-                "approved"
-                  ? C.greenBg
-                  : contribution.status ===
-                    "pending"
-                  ? C.goldBg
-                  : C.redBg,
-            },
-          ]}
-        >
+    <View style={[st.goalCard, wideCardStyle(isWide) && { ...wideCardStyle(isWide), marginHorizontal: 0 }]}>
+      <View style={st.cardAccentDot} />
+
+      {/* Personal goal */}
+      <View style={st.goalHeaderRow}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={st.goalLabel} numberOfLines={1}>
+            {goalProgress.isCompleted ? "✓ MY GOAL ACHIEVED" : "MY CONTRIBUTION GOAL"}
+          </Text>
+
+          <Text style={st.goalAmount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+            <Text style={st.balanceCurrency}>{currency} </Text>
+            {amountText(goalProgress.totalContributed)}
+          </Text>
+        </View>
+
+        <View style={st.goalHeaderRight}>
           <Text
-            style={{
-              fontSize: 9,
-              fontWeight: "800",
-              color:
-                contribution.status ===
-                "approved"
-                  ? C.greenText
-                  : contribution.status ===
-                    "pending"
-                  ? C.goldText
-                  : C.redText,
-            }}
+            style={[st.goalPercentage, goalProgress.isCompleted && { color: Colors.green }]}
+            numberOfLines={1}
           >
-            {contribution.status ===
-            "approved"
-              ? "✓"
-              : contribution.status ===
-                "pending"
-              ? "⏳"
-              : "✗"}
+            {goalProgress.percentage}%
+          </Text>
+          <Text style={st.goalDaysLeft} numberOfLines={1}>
+            {goalProgress.daysLeft > 0 ? `${goalProgress.daysLeft}d left` : "Period ended"}
           </Text>
         </View>
       </View>
 
+      <ProgressBar
+        percentage={goalProgress.percentage}
+        color={goalProgress.isCompleted ? Colors.green : Colors.primary}
+      />
+
+      {/* Group goal — always shown, not just in one view */}
+      <View style={st.goalDividerLine} />
+
+      <View style={[st.goalHeaderRow, { marginTop: 12, marginBottom: 0 }]}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={st.goalLabel} numberOfLines={1}>
+            {goalProgress.groupPercentage >= 100
+              ? "✓ GROUP GOAL ACHIEVED"
+              : "GROUP CONTRIBUTION GOAL"}
+          </Text>
+
+          <Text
+            style={[st.goalAmount, { fontSize: 20 }]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.8}
+          >
+            <Text style={st.balanceCurrency}>{currency} </Text>
+            {amountText(goalProgress.groupTotalContributed)}
+          </Text>
+        </View>
+
+        <View style={st.goalHeaderRight}>
+          <Text
+            style={[
+              st.goalPercentage,
+              { fontSize: 16 },
+              goalProgress.groupPercentage >= 100 && { color: Colors.green },
+            ]}
+            numberOfLines={1}
+          >
+            {goalProgress.groupPercentage}%
+          </Text>
+        </View>
+      </View>
+
+      <ProgressBar
+        percentage={goalProgress.groupPercentage}
+        color={goalProgress.groupPercentage >= 100 ? Colors.green : Colors.accent}
+      />
+
+      <View style={st.goalStatsRow}>
+        <GoalStat
+          label="Target"
+          value={fmtCurrency(isGroupView ? goalProgress.groupTarget : goalProgress.target)}
+        />
+        <GoalStat
+          label="Remaining"
+          value={fmtCurrency(goalProgress.remaining)}
+          dimWhenComplete={goalProgress.isCompleted}
+        />
+        <GoalStat label="Min Contribution" value={fmtCurrency(minimumContribution)} />
+      </View>
+    </View>
+  );
+}
+
+// Type-only helper so GoalCard's prop type can reference the shape produced
+// by the goalProgress useMemo above without re-declaring it by hand.
+function useGoalProgressType() {
+  return null as unknown as {
+    totalContributed: number;
+    groupTotalContributed: number;
+    target: number;
+    groupTarget: number;
+    remaining: number;
+    percentage: number;
+    groupPercentage: number;
+    daysLeft: number;
+    isCompleted: boolean;
+    isGroupScoped: boolean;
+  } | null;
+}
+
+function ProgressBar({ percentage, color }: { percentage: number; color: string }) {
+  return (
+    <View style={st.progressBarContainer}>
+      <View
+        style={[st.progressBar, { width: `${Math.min(100, percentage)}%`, backgroundColor: color }]}
+      />
+    </View>
+  );
+}
+
+function GoalStat({
+  label,
+  value,
+  dimWhenComplete,
+}: {
+  label: string;
+  value: string;
+  dimWhenComplete?: boolean;
+}) {
+  return (
+    <View style={st.goalStat}>
       <Text
-        style={[
-          st.tableCell,
-          {
-            flex: 2,
-          },
-        ]}
-        numberOfLines={
-          1
-        }
+        style={st.goalStatLabel}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.85}
       >
-        {contribution.description ||
-          TYPE_LABELS[
-            contribution
-              .contributionType
-          ]}
+        {label}
       </Text>
-
       <Text
-        style={[
-          st.tableCell,
-          {
-            width: 160,
-          },
-        ]}
+        style={[st.goalStatValue, dimWhenComplete && { color: Colors.bgWhite }]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.75}
       >
-        {TYPE_LABELS[
-          contribution
-            .contributionType
-        ] ??
-          contribution.contributionType}
+        {value}
       </Text>
+    </View>
+  );
+}
 
-      {showMember && (
-        <Text
-          style={[
-            st.tableCell,
-            {
-              width: 150,
-            },
-          ]}
-        >
-          {memberName}
-        </Text>
-      )}
+// -----------------------------------------------------------------------------
+// Goal progress (per member) — table on wide layouts, card list on mobile
+// -----------------------------------------------------------------------------
 
-      <Text
-        style={[
-          st.tableCell,
-          {
-            width: 120,
-          },
-        ]}
-      >
-        {fmtDate(
-          contribution.date
-        )}
-      </Text>
+function GoalProgressList({
+  isWide,
+  goalPeriod,
+  rows,
+}: {
+  isWide: boolean;
+  goalPeriod: ContributionGoalPeriod | null;
+  rows: {
+    memberId: string;
+    memberName: string;
+    paid: number;
+    remaining: number;
+    percentage: number;
+    lateFees: number;
+    isCompleted: boolean;
+  }[];
+}) {
+  if (!goalPeriod) {
+    return <EmptyState icon="🎯" text="No contribution goal is set up for this group" />;
+  }
 
-      <Text
-        style={[
-          st.tableCell,
-          {
-            width: 120,
-            textAlign:
-              "right",
-            fontWeight: "700",
-            color: C.accent,
-          },
-        ]}
-      >
-        {fmtCurrency(
-          contribution.amount
-        )}
-      </Text>
+  if (rows.length === 0) {
+    return <EmptyState icon="👥" text="No active members to show" />;
+  }
 
-      {canApprove &&
-        contribution.status ===
-          "pending" && (
-          <View
+  if (!isWide) {
+    return (
+      <View style={st.card}>
+        {rows.map((row, i) => (
+          <React.Fragment key={row.memberId}>
+            <View style={st.txRow}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={st.txDesc} numberOfLines={1}>
+                  {row.memberName}
+                </Text>
+                <Text style={st.txMeta} numberOfLines={1}>
+                  {fmtCurrency(row.paid)} paid · {row.percentage}% of goal
+                  {row.lateFees > 0 ? ` · ${fmtCurrency(row.lateFees)} late fees` : ""}
+                </Text>
+              </View>
+
+              <View style={{ alignItems: "flex-end", flexShrink: 0, marginLeft: 8 }}>
+                <Text
+                  style={[st.txAmount, { color: row.isCompleted ? C.success : C.accent }]}
+                  numberOfLines={1}
+                >
+                  {row.isCompleted ? "Done" : fmtCurrency(row.remaining)}
+                </Text>
+                {!row.isCompleted && (
+                  <Text style={st.remainingLabel}>remaining</Text>
+                )}
+              </View>
+            </View>
+
+            {i < rows.length - 1 && <Divider />}
+          </React.Fragment>
+        ))}
+      </View>
+    );
+  }
+
+  return (
+    <View style={st.table}>
+      <View style={[st.tableRow, st.tableHeadRow]}>
+        <Text style={[st.tableHeadCell, { flex: 2 }]}>MEMBER</Text>
+        <Text style={[st.tableHeadCell, { width: 130, textAlign: "right" }]}>PAID</Text>
+        <Text style={[st.tableHeadCell, { width: 130, textAlign: "right" }]}>REMAINING</Text>
+        <Text style={[st.tableHeadCell, { width: 90, textAlign: "right" }]}>PROGRESS</Text>
+        <Text style={[st.tableHeadCell, { width: 110, textAlign: "right" }]}>LATE FEES</Text>
+        <Text style={[st.tableHeadCell, { width: 90, textAlign: "center" }]}>STATUS</Text>
+      </View>
+
+      {rows.map((row) => (
+        <View key={row.memberId} style={[st.tableRow, st.tableRowBordered]}>
+          <Text style={[st.tableCell, { flex: 2 }]} numberOfLines={1}>
+            {row.memberName}
+          </Text>
+
+          <Text style={[st.tableCell, st.tableCellPaid]}>{fmtCurrency(row.paid)}</Text>
+
+          <Text style={[st.tableCell, { width: 130, textAlign: "right" }]}>
+            {row.isCompleted ? "—" : fmtCurrency(row.remaining)}
+          </Text>
+
+          <Text style={[st.tableCell, { width: 90, textAlign: "right", fontWeight: "600" }]}>
+            {row.percentage}%
+          </Text>
+
+          <Text
             style={[
               st.tableCell,
-              {
-                width: 60,
-                alignItems:
-                  "center",
-              },
+              { width: 110, textAlign: "right", color: row.lateFees > 0 ? C.gold : C.text3 },
             ]}
           >
-            <TouchableOpacity
-              onPress={() => {
-                // Existing desktop behavior.
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: 11,
-                  color:
-                    C.success,
-                  fontWeight:
-                    "600",
-                }}
-              >
-                Approve
-              </Text>
-            </TouchableOpacity>
+            {row.lateFees > 0 ? fmtCurrency(row.lateFees) : "—"}
+          </Text>
+
+          <View style={{ width: 90, alignItems: "center" }}>
+            <Badge label={row.isCompleted ? "Done" : "In progress"} color={row.isCompleted ? "green" : "gold"} />
           </View>
-        )}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Late fee list
+// -----------------------------------------------------------------------------
+
+function LateFeeList({
+  items,
+  isGroupView,
+  group,
+  canManageFees,
+  applyingFeeId,
+  onApply,
+  onClear,
+}: {
+  items: any[];
+  isGroupView: boolean;
+  group: any;
+  canManageFees: boolean;
+  applyingFeeId: string | null;
+  onApply: (item: any) => void;
+  onClear: (item: any) => void;
+}) {
+  if (items.length === 0) {
+    return <EmptyState icon="✓" text="No late fees owed" />;
+  }
+
+  return (
+    <View style={st.block}>
+      {items.map((item, index) => {
+        const detail = item.applied
+          ? `${item.periodLabel} · Unpaid late fee`
+          : `${isGroupView ? `${item.periodLabel} · ` : ""}${item.daysNewlyOwed}d @ ${
+              group?.contributionLateFeeRatePct ?? 0
+            }%/day · ${item.daysLate}d late`;
+
+        const isSaving = applyingFeeId === item.feeTxId;
+
+        return (
+          <React.Fragment key={item.feeTxId}>
+            <View style={st.lateFeeRow}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={st.lateFeeMemberName} numberOfLines={1}>
+                  {isGroupView ? item.memberName : item.periodLabel}
+                </Text>
+                <Text style={st.lateFeeDetail} numberOfLines={2}>
+                  {detail}
+                </Text>
+              </View>
+
+              <View style={st.lateFeeAmountWrap}>
+                <Text style={st.lateFeeAmount}>{fmtCurrency(item.feeAmount)}</Text>
+
+                {/*
+                  Apply/Clear action is restricted to admin, accountant, and
+                  loan_officer. Everyone else can still see the fee amount
+                  and detail above — this button is the only thing gated.
+                */}
+                {canManageFees && (
+                  <TouchableOpacity
+                    style={st.lateFeeApplyBtn}
+                    onPress={() => (item.applied ? onClear(item) : onApply(item))}
+                    disabled={isSaving}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={st.lateFeeApplyBtnText}>
+                      {isSaving ? "Saving…" : item.applied ? "Clear" : "Apply"}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {index < items.length - 1 && <Divider />}
+          </React.Fragment>
+        );
+      })}
+    </View>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Desktop table
+// -----------------------------------------------------------------------------
+
+function ContributionTable({
+  rows,
+  isGroupView,
+  canApprove,
+  canEdit,
+  onEdit,
+}: {
+  rows: Contribution[];
+  isGroupView: boolean;
+  canApprove: boolean;
+  canEdit: boolean;
+  onEdit: (id: string) => void;
+}) {
+  return (
+    <View style={st.table}>
+      <View style={[st.tableRow, st.tableHeadRow]}>
+        <View style={{ width: 40 }} />
+        <Text style={[st.tableHeadCell, { flex: 2 }]}>DESCRIPTION</Text>
+        <Text style={[st.tableHeadCell, { width: 160 }]}>TYPE</Text>
+        {isGroupView && <Text style={[st.tableHeadCell, { width: 150 }]}>MEMBER</Text>}
+        <Text style={[st.tableHeadCell, { width: 120 }]}>DATE</Text>
+        <Text style={[st.tableHeadCell, { width: 120, textAlign: "right" }]}>AMOUNT</Text>
+        {canApprove && <View style={{ width: 60 }} />}
+        {canEdit && <View style={{ width: 50 }} />}
+      </View>
+
+      {rows.map((c) => (
+        <TableRow
+          key={c.id}
+          contribution={c}
+          showMember={isGroupView}
+          canEdit={canEdit}
+          onEdit={() => onEdit(c.id)}
+        />
+      ))}
+    </View>
+  );
+}
+
+const TableRow = ({
+  contribution,
+  showMember,
+  canEdit,
+  onEdit,
+}: {
+  contribution: Contribution;
+  showMember: boolean;
+  canEdit: boolean;
+  onEdit: () => void;
+}) => {
+  const role = useCurrentUserRole();
+  const canApprove = ["admin", "loan_officer", "accountant"].includes(role);
+
+  const allMembers = useGroupMembers();
+  const memberName =
+    allMembers.find((m) => m.id === contribution.memberId)?.fullName ?? "Unknown";
+
+  const { icon, bg, color } = statusBadge(contribution.status);
+
+  return (
+    <View style={[st.tableRow, st.tableRowBordered]}>
+      <View style={[st.tableCell, { width: 40 }]}>
+        <View style={[st.txIconSm, { backgroundColor: bg }]}>
+          <Text style={{ fontSize: 9, fontWeight: "800", color }}>{icon}</Text>
+        </View>
+      </View>
+
+      <Text style={[st.tableCell, { flex: 2 }]} numberOfLines={1}>
+        {contribution.description || typeLabel(contribution.contributionType)}
+      </Text>
+
+      <Text style={[st.tableCell, { width: 160 }]}>{typeLabel(contribution.contributionType)}</Text>
+
+      {showMember && <Text style={[st.tableCell, { width: 150 }]}>{memberName}</Text>}
+
+      <Text style={[st.tableCell, { width: 120 }]}>{fmtDate(contribution.date)}</Text>
+
+      <Text style={[st.tableCell, st.tableCellAmount]}>{fmtCurrency(contribution.amount)}</Text>
+
+      {canApprove && contribution.status === "pending" && (
+        <View style={[st.tableCell, { width: 60, alignItems: "center" }]}>
+          <TouchableOpacity onPress={() => {/* Existing desktop behavior. */}}>
+            <Text style={st.tableApproveText}>Approve</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {canEdit && (
+        <View style={[st.tableCell, { width: 50, alignItems: "center" }]}>
+          <TouchableOpacity onPress={onEdit}>
+            <Text style={st.tableEditText}>Edit</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 };
@@ -2885,198 +1415,78 @@ const TableRow = ({
 // Mobile contribution row
 // -----------------------------------------------------------------------------
 
+function statusBadge(status: string) {
+  if (status === "approved") return { icon: "✓", bg: C.greenBg, color: C.greenText };
+  if (status === "pending") return { icon: "⏳", bg: C.goldBg, color: C.goldText };
+  return { icon: "✗", bg: C.redBg, color: C.redText };
+}
+
 function ContributionRow({
   contribution,
   memberName,
   canApprove,
+  canEdit,
   onApprove,
   onReject,
   onView,
+  onEdit,
 }: any) {
-  const isApproved =
-    contribution.status ===
-    "approved";
+  const { icon, bg, color } = statusBadge(contribution.status);
 
-  const abbr =
-    isApproved
-      ? "✓"
-      : contribution.status ===
-        "pending"
-      ? "⏳"
-      : "✗";
+  const metaParts = [
+    fmtDate(contribution.date),
+    memberName || null,
+    typeLabel(contribution.contributionType),
+  ].filter(Boolean);
+
+  const showApproveReject = canApprove && contribution.status === "pending";
 
   return (
-    <View
-      style={
-        st.txRow
-      }
-    >
-      <View
-        style={[
-          st.txIcon,
-          {
-            backgroundColor:
-              isApproved
-                ? C.greenBg
-                : contribution.status ===
-                  "pending"
-                ? C.goldBg
-                : C.redBg,
-          },
-        ]}
-      >
-        <Text
-          style={{
-            fontSize: 11,
-            fontWeight: "800",
-            color:
-              isApproved
-                ? C.greenText
-                : contribution.status ===
-                  "pending"
-                ? C.goldText
-                : C.redText,
-            letterSpacing: 0.3,
-          }}
-        >
-          {abbr}
+    <View style={st.txRow}>
+      <View style={[st.txIcon, { backgroundColor: bg }]}>
+        <Text style={{ fontSize: 11, fontWeight: "800", color, letterSpacing: 0.3 }}>{icon}</Text>
+      </View>
+
+      <View style={st.txMid}>
+        <Text style={st.txDesc} numberOfLines={1}>
+          {contribution.description || typeLabel(contribution.contributionType)}
+        </Text>
+        <Text style={st.txMeta} numberOfLines={1}>
+          {metaParts.join(" · ")}
         </Text>
       </View>
 
-      <View
-        style={
-          st.txMid
-        }
-      >
+      <View style={{ alignItems: "flex-end", flexShrink: 0, marginLeft: 8 }}>
         <Text
-          style={
-            st.txDesc
-          }
-          numberOfLines={
-            1
-          }
-        >
-          {contribution.description ||
-            TYPE_LABELS[
-              contribution
-                .contributionType
-            ]}
-        </Text>
-
-        <Text
-          style={
-            st.txMeta
-          }
-          numberOfLines={
-            1
-          }
-        >
-          {fmtDate(
-            contribution.date
-          )}
-          {memberName
-            ? ` · ${memberName}`
-            : ""}
-          {" · "}
-          {TYPE_LABELS[
-            contribution
-              .contributionType
-          ] ??
-            contribution.contributionType}
-        </Text>
-      </View>
-
-      <View
-        style={{
-          alignItems:
-            "flex-end",
-          flexShrink: 0,
-          marginLeft: 8,
-        }}
-      >
-        <Text
-          style={[
-            st.txAmount,
-            {
-              color:
-                C.accent,
-            },
-          ]}
-          numberOfLines={
-            1
-          }
+          style={[st.txAmount, { color: C.accent }]}
+          numberOfLines={1}
           adjustsFontSizeToFit
-          minimumFontScale={
-            0.8
-          }
+          minimumFontScale={0.8}
         >
-          {fmtCurrency(
-            contribution.amount
-          )}
+          {fmtCurrency(contribution.amount)}
         </Text>
 
-        {canApprove &&
-          contribution.status ===
-            "pending" && (
-            <View
-              style={{
-                flexDirection:
-                  "row",
-                gap: 8,
-                marginTop: 3,
-              }}
-            >
-              <TouchableOpacity
-                onPress={
-                  onApprove
-                }
-                style={{
-                  backgroundColor:
-                    C.greenBg,
-                  paddingHorizontal: 8,
-                  paddingVertical: 4,
-                  borderRadius: 4,
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 10,
-                    color:
-                      C.success,
-                    fontWeight:
-                      "600",
-                  }}
-                >
-                  Approve
-                </Text>
-              </TouchableOpacity>
+        {(showApproveReject || canEdit) && (
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 3 }}>
+            {showApproveReject && (
+              <>
+                <TouchableOpacity onPress={onApprove} style={st.rowApproveBtn}>
+                  <Text style={st.rowApproveText}>Approve</Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                onPress={
-                  onReject
-                }
-                style={{
-                  backgroundColor:
-                    C.redBg,
-                  paddingHorizontal: 8,
-                  paddingVertical: 4,
-                  borderRadius: 4,
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 10,
-                    color:
-                      C.error,
-                    fontWeight:
-                      "600",
-                  }}
-                >
-                  Reject
-                </Text>
+                <TouchableOpacity onPress={onReject} style={st.rowRejectBtn}>
+                  <Text style={st.rowRejectText}>Reject</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {canEdit && (
+              <TouchableOpacity onPress={onEdit} style={st.rowEditBtn}>
+                <Text style={st.rowEditText}>Edit</Text>
               </TouchableOpacity>
-            </View>
-          )}
+            )}
+          </View>
+        )}
       </View>
     </View>
   );
@@ -3097,88 +1507,33 @@ const Pagination = ({
   setPage: (p: number) => void;
   filtered: any[];
 }) => {
-  if (totalPages <= 1)
-    return null;
+  if (totalPages <= 1) return null;
+
+  const isFirst = page === 1;
+  const isLast = page >= totalPages;
+  const rangeStart = (page - 1) * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(page * PAGE_SIZE, filtered.length);
 
   return (
-    <View
-      style={
-        st.pagination
-      }
-    >
+    <View style={st.pagination}>
       <TouchableOpacity
-        style={[
-          st.pageBtn,
-          page === 1 &&
-            st.pageBtnDisabled,
-        ]}
-        onPress={() =>
-          page > 1 &&
-          setPage(page - 1)
-        }
-        disabled={
-          page === 1
-        }
+        style={[st.pageBtn, isFirst && st.pageBtnDisabled]}
+        onPress={() => !isFirst && setPage(page - 1)}
+        disabled={isFirst}
       >
-        <Text
-          style={[
-            st.pageBtnText,
-            page === 1 && {
-              color:
-                C.text3,
-            },
-          ]}
-        >
-          ← Prev
-        </Text>
+        <Text style={[st.pageBtnText, isFirst && { color: C.text3 }]}>← Prev</Text>
       </TouchableOpacity>
 
-      <Text
-        style={
-          st.pageInfo
-        }
-      >
-        {(page - 1) *
-          PAGE_SIZE +
-          1}
-        –
-        {Math.min(
-          page *
-            PAGE_SIZE,
-          filtered.length
-        )}{" "}
-        of{" "}
-        {filtered.length}
+      <Text style={st.pageInfo}>
+        {rangeStart}–{rangeEnd} of {filtered.length}
       </Text>
 
       <TouchableOpacity
-        style={[
-          st.pageBtn,
-          page >=
-            totalPages &&
-            st.pageBtnDisabled,
-        ]}
-        onPress={() =>
-          page < totalPages &&
-          setPage(page + 1)
-        }
-        disabled={
-          page >=
-          totalPages
-        }
+        style={[st.pageBtn, isLast && st.pageBtnDisabled]}
+        onPress={() => !isLast && setPage(page + 1)}
+        disabled={isLast}
       >
-        <Text
-          style={[
-            st.pageBtnText,
-            page >=
-              totalPages && {
-              color:
-                C.text3,
-            },
-          ]}
-        >
-          Next →
-        </Text>
+        <Text style={[st.pageBtnText, isLast && { color: C.text3 }]}>Next →</Text>
       </TouchableOpacity>
     </View>
   );
@@ -3190,12 +1545,9 @@ const Pagination = ({
 
 const st = StyleSheet.create({
   topBar: {
-    flexDirection:
-      "row",
-    alignItems:
-      "center",
-    justifyContent:
-      "space-between",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 6,
@@ -3205,8 +1557,7 @@ const st = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
     color: C.primary,
-    textTransform:
-      "uppercase",
+    textTransform: "uppercase",
     letterSpacing: 0.6,
   },
 
@@ -3218,202 +1569,75 @@ const st = StyleSheet.create({
   },
 
   primaryBtn: {
-    backgroundColor:
-      C.primary,
+    backgroundColor: C.primary,
     borderRadius: 10,
     paddingVertical: 8,
     paddingHorizontal: 14,
   },
 
-  primaryBtnText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "700",
-  },
+  primaryBtnText: { color: "#fff", fontSize: 12, fontWeight: "700" },
 
   iconBtn: {
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor:
-      C.border,
-    backgroundColor:
-      Colors.surface,
+    borderColor: C.border,
+    backgroundColor: Colors.surface,
   },
 
-  iconBtnText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: C.text2,
-  },
+  iconBtnText: { fontSize: 12, fontWeight: "700", color: C.text2 },
 
-  toggleBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor:
-      C.border,
-    backgroundColor:
-      Colors.surface,
-  },
+  block: { marginHorizontal: 16, marginBottom: 14 },
 
-  toggleBtnActive: {
-    backgroundColor:
-      C.primary,
-    borderColor:
-      C.primary,
-  },
-
-  toggleBtnText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: C.text2,
-  },
-
-  toggleBtnTextActive: {
-    color: "#fff",
-  },
-
-  block: {
-    marginHorizontal: 16,
-    marginBottom: 14,
-  },
-
-  kpiGrid: {
-    flexDirection:
-      "row",
-    flexWrap:
-      "wrap",
-    gap: 10,
-  },
-
-  balanceCard: {
-    margin: 16,
-    borderRadius: 20,
-    backgroundColor:
-      C.card,
-    padding: 24,
-    overflow:
-      "hidden",
-  },
+  kpiGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
 
   cardAccentDot: {
-    position:
-      "absolute",
+    position: "absolute",
     top: -50,
     right: -30,
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor:
-      "rgba(26,86,219,0.15)",
+    backgroundColor: "rgba(26,86,219,0.15)",
   },
 
-  balanceLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color:
-      "rgba(255,255,255,0.45)",
-    letterSpacing: 1.2,
-    textTransform:
-      "uppercase",
-  },
-
-  balanceAmount: {
-    fontSize: 34,
-    fontWeight: "800",
-    color: "#fff",
-    letterSpacing: -1.2,
-    marginTop: 6,
-  },
-
-  balanceCurrency: {
-    fontSize: 14,
-    fontWeight: "600",
-    color:
-      "rgba(255,255,255,0.45)",
-  },
-
-  balancePills: {
-    flexDirection:
-      "row",
-    marginTop: 20,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor:
-      "rgba(255,255,255,0.1)",
-  },
-
-  balancePill: {
-    flex: 1,
-    alignItems:
-      "center",
-  },
-
-  balancePillLabel: {
-    fontSize: 9,
-    fontWeight: "700",
-    color:
-      "rgba(255,255,255,0.4)",
-    letterSpacing: 0.8,
-    textTransform:
-      "uppercase",
-  },
-
-  balancePillValue: {
-    fontSize: 12,
-    fontWeight: "700",
-    marginTop: 3,
-  },
-
-  balancePillDivider: {
-    width: 1,
-    backgroundColor:
-      "rgba(255,255,255,0.1)",
-  },
+  balanceCurrency: { fontSize: 14, fontWeight: "600", color: "rgba(255,255,255,0.45)" },
 
   goalCard: {
     margin: 16,
     borderRadius: 20,
-    backgroundColor:
-      C.card,
+    backgroundColor: C.card,
     padding: 24,
-    overflow:
-      "hidden",
+    overflow: "hidden",
     marginTop: 8,
   },
+
+  goalHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 12,
+  },
+
+  goalHeaderRight: { alignItems: "flex-end", flexShrink: 0, marginLeft: 8 },
 
   goalLabel: {
     fontSize: 10,
     fontWeight: "700",
-    color:
-      "rgba(255,255,255,0.45)",
+    color: "rgba(255,255,255,0.45)",
     letterSpacing: 1.2,
-    textTransform:
-      "uppercase",
+    textTransform: "uppercase",
   },
 
-  goalAmount: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#fff",
-    letterSpacing: -1,
-    marginTop: 4,
-  },
+  goalAmount: { fontSize: 24, fontWeight: "800", color: "#fff", letterSpacing: -1, marginTop: 4 },
 
-  goalPercentage: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: C.primary,
-  },
+  goalPercentage: { fontSize: 20, fontWeight: "800", color: C.primary },
 
   goalDaysLeft: {
     fontSize: 10,
     fontWeight: "600",
-    color:
-      "rgba(255,255,255,0.5)",
+    color: "rgba(255,255,255,0.5)",
     marginTop: 2,
   },
 
@@ -3425,265 +1649,160 @@ const st = StyleSheet.create({
 
   progressBarContainer: {
     height: 8,
-    backgroundColor:
-      "rgba(255,255,255,0.1)",
+    backgroundColor: "rgba(255,255,255,0.1)",
     borderRadius: 4,
-    overflow:
-      "hidden",
+    overflow: "hidden",
     marginTop: 12,
   },
 
-  progressBar: {
-    height: "100%",
-    backgroundColor:
-      C.primary,
-    borderRadius: 4,
-  },
+  progressBar: { height: "100%", borderRadius: 4 },
 
-  goalStat: {
-    flex: 1,
-    minWidth: 0,
-    alignItems:
-      "center",
-  },
+  goalStatsRow: { marginTop: 12, flexDirection: "row", gap: 12 },
+
+  goalStat: { flex: 1, minWidth: 0, alignItems: "center" },
 
   goalStatLabel: {
     fontSize: 9,
     fontWeight: "700",
-    color:
-      "rgba(255,255,255,0.4)",
+    color: "rgba(255,255,255,0.4)",
     letterSpacing: 0.8,
-    textTransform:
-      "uppercase",
+    textTransform: "uppercase",
     marginBottom: 4,
-    textAlign:
-      "center",
+    textAlign: "center",
   },
 
-  goalStatValue: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#fff",
-  },
+  goalStatValue: { fontSize: 11, fontWeight: "700", color: "#fff" },
 
-  controls: {
-    paddingHorizontal: 16,
-    marginTop: 8,
-  },
+  controls: { paddingHorizontal: 16, marginTop: 8 },
 
   controlsTop: {
-    flexDirection:
-      "row",
-    alignItems:
-      "flex-start",
+    flexDirection: "row",
+    alignItems: "flex-start",
     gap: 10,
     marginBottom: 8,
-    flexWrap:
-      "wrap",
+    flexWrap: "wrap",
   },
 
-  filterSelect: {
-    width: 150,
-    marginBottom: -16,
-  },
-
-  viewModeRow: {
-    flexDirection:
-      "row",
-    alignItems:
-      "center",
-    gap: 8,
-    marginBottom: 8,
-  },
+  viewModeRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
 
   viewModeBtn: {
     flex: 1,
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 8,
-    backgroundColor:
-      C.elevated,
+    backgroundColor: C.elevated,
     borderWidth: 1,
-    borderColor:
-      C.border,
-    alignItems:
-      "center",
+    borderColor: C.border,
+    alignItems: "center",
   },
 
-  viewModeBtnActive: {
-    backgroundColor:
-      C.primary,
-    borderColor:
-      C.primary,
-  },
+  viewModeBtnActive: { backgroundColor: C.primary, borderColor: C.primary },
 
-  viewModeBtnText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: C.text3,
-  },
+  viewModeBtnText: { fontSize: 12, fontWeight: "600", color: C.text3 },
 
-  viewModeBtnTextActive: {
-    color: "#fff",
-  },
+  viewModeBtnTextActive: { color: "#fff" },
 
   dateFilterRow: {
-    flexDirection:
-      "row",
-    alignItems:
-      "flex-start",
+    flexDirection: "row",
+    alignItems: "flex-start",
     gap: 10,
     marginBottom: 8,
-    flexWrap:
-      "wrap",
+    flexWrap: "wrap",
   },
 
-  statusRow: {
-    flexDirection:
-      "row",
-    alignItems:
-      "center",
-    gap: 8,
-  },
-
-  addTabBtn: {
-    backgroundColor:
-      C.primary,
-    borderRadius: 10,
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-  },
-
-  sortRow: {
-    flexDirection:
-      "row",
-    flexWrap:
-      "wrap",
-    gap: 6,
-  },
-
-  sortChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor:
-      C.border,
-    backgroundColor:
-      C.elevated,
-  },
-
-  sortChipActive: {
-    backgroundColor:
-      C.primary,
-    borderColor:
-      C.primary,
-  },
-
-  sortChipText: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: C.text3,
-  },
-
-  sortChipTextActive: {
-    color: "#fff",
-  },
+  statusRow: { flexDirection: "row", alignItems: "center", gap: 8 },
 
   card: {
-    backgroundColor:
-      C.surface,
+    backgroundColor: C.surface,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor:
-      C.border,
+    borderColor: C.border,
     marginHorizontal: 16,
-    overflow:
-      "hidden",
+    overflow: "hidden",
   },
 
-  txRow: {
-    flexDirection:
-      "row",
-    alignItems:
-      "center",
-    padding: 14,
-    gap: 12,
-  },
+  divider: { height: 1, backgroundColor: C.border, marginHorizontal: 16 },
+
+  txRow: { flexDirection: "row", alignItems: "center", padding: 14, gap: 12 },
 
   txIcon: {
     width: 38,
     height: 38,
     borderRadius: 10,
-    alignItems:
-      "center",
-    justifyContent:
-      "center",
+    alignItems: "center",
+    justifyContent: "center",
     flexShrink: 0,
   },
 
-  txMid: {
-    flex: 1,
-    minWidth: 0,
-  },
+  txMid: { flex: 1, minWidth: 0 },
 
-  txDesc: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: C.text,
-    marginBottom: 2,
-  },
+  txDesc: { fontSize: 13, fontWeight: "600", color: C.text, marginBottom: 2 },
 
-  txMeta: {
-    fontSize: 11,
-    color: C.text3,
-  },
+  txMeta: { fontSize: 11, color: C.text3 },
 
-  txAmount: {
-    fontSize: 14,
-    fontWeight: "700",
+  txAmount: { fontSize: 14, fontWeight: "700" },
+
+  remainingLabel: { fontSize: 10, color: C.text3, marginTop: 2 },
+
+  rowApproveBtn: {
+    backgroundColor: C.greenBg,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
   },
+  rowApproveText: { fontSize: 10, color: C.success, fontWeight: "600" },
+
+  rowRejectBtn: {
+    backgroundColor: C.redBg,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  rowRejectText: { fontSize: 10, color: C.error, fontWeight: "600" },
+
+  rowEditBtn: {
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.border,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  rowEditText: { fontSize: 10, color: C.text2, fontWeight: "600" },
 
   table: {
-    backgroundColor:
-      C.surface,
+    backgroundColor: C.surface,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor:
-      C.border,
-    overflow:
-      "hidden",
+    borderColor: C.border,
+    overflow: "hidden",
   },
 
-  tableRow: {
-    flexDirection:
-      "row",
-    alignItems:
-      "center",
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-  },
+  tableRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12, paddingHorizontal: 12 },
+
+  tableRowBordered: { borderBottomWidth: 1, borderBottomColor: C.border },
 
   tableHeadRow: {
-    backgroundColor:
-      C.elevated,
+    backgroundColor: C.elevated,
     borderBottomWidth: 1,
-    borderBottomColor:
-      C.border,
+    borderBottomColor: C.border,
   },
 
-  tableCell: {
-    fontSize: 12,
-    color: C.text2,
-    paddingHorizontal: 6,
-  },
+  tableCell: { fontSize: 12, color: C.text2, paddingHorizontal: 6 },
+
+  tableCellPaid: { width: 130, textAlign: "right", fontWeight: "700", color: C.accent },
+
+  tableCellAmount: { width: 120, textAlign: "right", fontWeight: "700", color: C.accent },
+
+  tableApproveText: { fontSize: 11, color: C.success, fontWeight: "600" },
+
+  tableEditText: { fontSize: 11, color: C.text2, fontWeight: "600" },
 
   tableHeadCell: {
     fontSize: 10,
     fontWeight: "700",
     color: C.text3,
-    textTransform:
-      "uppercase",
+    textTransform: "uppercase",
     letterSpacing: 0.6,
     paddingHorizontal: 6,
   },
@@ -3692,35 +1811,20 @@ const st = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 6,
-    alignItems:
-      "center",
-    justifyContent:
-      "center",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
-  empty: {
-    alignItems:
-      "center",
-    paddingVertical: 48,
-  },
+  empty: { alignItems: "center", paddingVertical: 48 },
 
-  emptyIcon: {
-    fontSize: 36,
-    marginBottom: 10,
-  },
+  emptyIcon: { fontSize: 36, marginBottom: 10 },
 
-  emptyText: {
-    fontSize: 14,
-    color: C.text3,
-  },
+  emptyText: { fontSize: 14, color: C.text3 },
 
   pagination: {
-    flexDirection:
-      "row",
-    alignItems:
-      "center",
-    justifyContent:
-      "center",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     paddingVertical: 16,
     gap: 16,
   },
@@ -3730,105 +1834,42 @@ const st = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor:
-      C.border,
-    backgroundColor:
-      C.elevated,
+    borderColor: C.border,
+    backgroundColor: C.elevated,
   },
 
-  pageBtnDisabled: {
-    opacity: 0.4,
-  },
+  pageBtnDisabled: { opacity: 0.4 },
 
-  pageBtnText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: C.text,
-  },
+  pageBtnText: { fontSize: 13, fontWeight: "600", color: C.text },
 
-  pageInfo: {
-    fontSize: 12,
-    color: C.text3,
-  },
-
-  lateFeeCard: {
-    backgroundColor:
-      C.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor:
-      "#fca5a5",
-    padding: 16,
-    marginBottom: 16,
-  },
-
-  lateFeeTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#b91c1c",
-    marginBottom: 2,
-  },
-
-  lateFeeSubtitle: {
-    fontSize: 11,
-    color: C.text3,
-    marginTop: 2,
-    marginBottom: 12,
-  },
+  pageInfo: { fontSize: 12, color: C.text3 },
 
   lateFeeRow: {
-    flexDirection:
-      "row",
-    alignItems:
-      "center",
-    justifyContent:
-      "space-between",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor:
-      "#fee2e2",
+    borderBottomColor: "#fee2e2",
   },
 
-  lateFeeMemberName: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: C.text,
-  },
+  lateFeeMemberName: { fontSize: 13, fontWeight: "600", color: C.text },
 
-  lateFeeDetail: {
-    fontSize: 11,
-    color: C.text3,
-    marginTop: 2,
-  },
+  lateFeeDetail: { fontSize: 11, color: C.text3, marginTop: 2 },
 
   lateFeeApplyBtn: {
-    backgroundColor:
-      "#fef2f2",
+    backgroundColor: "#fef2f2",
     borderWidth: 1,
-    borderColor:
-      "#fca5a5",
+    borderColor: "#fca5a5",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 7,
     marginLeft: 10,
   },
 
-  lateFeeApplyBtnText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#b91c1c",
-  },
+  lateFeeApplyBtnText: { fontSize: 12, fontWeight: "700", color: "#b91c1c" },
 
-  lateFeeAmountWrap: {
-    alignItems:
-      "flex-end",
-    marginLeft: 10,
-  },
+  lateFeeAmountWrap: { alignItems: "flex-end", marginLeft: 10 },
 
-  lateFeeAmount: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#b91c1c",
-    marginBottom: 5,
-  },
+  lateFeeAmount: { fontSize: 13, fontWeight: "800", color: "#b91c1c", marginBottom: 5 },
 });
