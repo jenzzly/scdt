@@ -4,12 +4,9 @@
 // 1. Route registration: same expo-router file-based assumption as the
 //    other modals — if app/modals/_layout.tsx lists screens explicitly,
 //    add "modals/add-contribution" there too.
-// 2. Store action: addContribution(patch) — a NEW contribution is created
-//    with contributionId omitted/undefined. If your store slice uses a
-//    different name (e.g. createContribution, addContributionAndSync),
-//    rename the call in handleSave. I could not find this action in the
-//    files I've seen so far, so I'm inferring the shape from
-//    updateContributionAndSync in edit-contribution.tsx.
+// 2. Store action: recordContribution(data, autoApprove) — a NEW contribution is created
+//    with autoApprove=false to set status to "pending". This matches the
+//    actual store action in contributionSlice.ts.
 // 3. Member picker: assumed to be the same <Select> component used for
 //    MANUAL_TYPES in edit-transaction.tsx, fed from useGroupMembers().
 //    In personal view (non-group), the current member is used directly
@@ -85,7 +82,7 @@ export default function AddContributionModal() {
   const isGroupView = useIsGroupView();
   const permissions = useCurrentMemberPermissions();
 
-  const { addContribution, recalcTotals } = useStore();
+  const { recordContribution, recalcTotals } = useStore();
   const { show, visible, msg, type } = useToast();
 
   const isAdmin = role === "admin";
@@ -150,14 +147,14 @@ export default function AddContributionModal() {
 
     setLoading(true);
     try {
-      await addContribution({
+      await recordContribution({
         memberId,
         contributionType,
         amount: parsedAmount,
         date,
         description: description.trim(),
-        status: "pending",
-      } as Partial<Contribution>);
+        groupId: group?.id || "",
+      }, false); // Don't auto-approve, set status to pending
 
       recalcTotals();
       show("Contribution added");

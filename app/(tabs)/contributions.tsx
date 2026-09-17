@@ -827,6 +827,8 @@ export default function ContributionsScreen() {
               canApprove={canApprove}
               canEdit={canEditContribution}
               onEdit={handleEditPress}
+              onApprove={handleApprove}
+              onReject={handleReject}
             />
           ) : (
             <View style={st.card}>
@@ -1319,12 +1321,16 @@ function ContributionTable({
   canApprove,
   canEdit,
   onEdit,
+  onApprove,
+  onReject,
 }: {
   rows: Contribution[];
   isGroupView: boolean;
   canApprove: boolean;
   canEdit: boolean;
   onEdit: (id: string) => void;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
 }) {
   return (
     <View style={st.table}>
@@ -1335,7 +1341,7 @@ function ContributionTable({
         {isGroupView && <Text style={[st.tableHeadCell, { width: 150 }]}>MEMBER</Text>}
         <Text style={[st.tableHeadCell, { width: 120 }]}>DATE</Text>
         <Text style={[st.tableHeadCell, { width: 120, textAlign: "right" }]}>AMOUNT</Text>
-        {canApprove && <View style={{ width: 60 }} />}
+        {canApprove && <View style={{ width: 100 }} />}
         {canEdit && <View style={{ width: 50 }} />}
       </View>
 
@@ -1345,7 +1351,10 @@ function ContributionTable({
           contribution={c}
           showMember={isGroupView}
           canEdit={canEdit}
+          canApprove={canApprove}
           onEdit={() => onEdit(c.id)}
+          onApprove={() => onApprove(c.id)}
+          onReject={() => onReject(c.id)}
         />
       ))}
     </View>
@@ -1356,21 +1365,25 @@ const TableRow = ({
   contribution,
   showMember,
   canEdit,
+  canApprove,
   onEdit,
+  onApprove,
+  onReject,
 }: {
   contribution: Contribution;
   showMember: boolean;
   canEdit: boolean;
+  canApprove: boolean;
   onEdit: () => void;
+  onApprove: () => void;
+  onReject: () => void;
 }) => {
-  const role = useCurrentUserRole();
-  const canApprove = ["admin", "loan_officer", "accountant"].includes(role);
-
   const allMembers = useGroupMembers();
   const memberName =
     allMembers.find((m) => m.id === contribution.memberId)?.fullName ?? "Unknown";
 
   const { icon, bg, color } = statusBadge(contribution.status);
+  const showApproveReject = canApprove && contribution.status === "pending";
 
   return (
     <View style={[st.tableRow, st.tableRowBordered]}>
@@ -1392,10 +1405,13 @@ const TableRow = ({
 
       <Text style={[st.tableCell, st.tableCellAmount]}>{fmtCurrency(contribution.amount)}</Text>
 
-      {canApprove && contribution.status === "pending" && (
-        <View style={[st.tableCell, { width: 60, alignItems: "center" }]}>
-          <TouchableOpacity onPress={() => {/* Existing desktop behavior. */}}>
+      {showApproveReject && (
+        <View style={[st.tableCell, { width: 100, alignItems: "center", flexDirection: "row", gap: 4, justifyContent: "center" }]}>
+          <TouchableOpacity onPress={onApprove} style={st.tableApproveBtn}>
             <Text style={st.tableApproveText}>Approve</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onReject} style={st.tableRejectBtn}>
+            <Text style={st.tableRejectText}>Reject</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1745,7 +1761,9 @@ const st = StyleSheet.create({
   remainingLabel: { fontSize: 10, color: C.text3, marginTop: 2 },
 
   rowApproveBtn: {
-    backgroundColor: C.greenBg,
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.success,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
@@ -1753,7 +1771,9 @@ const st = StyleSheet.create({
   rowApproveText: { fontSize: 10, color: C.success, fontWeight: "600" },
 
   rowRejectBtn: {
-    backgroundColor: C.redBg,
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.error,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
@@ -1794,7 +1814,25 @@ const st = StyleSheet.create({
 
   tableCellAmount: { width: 120, textAlign: "right", fontWeight: "700", color: C.accent },
 
+  tableApproveBtn: {
+    backgroundColor: C.greenBg,
+    borderWidth: 1,
+    borderColor: C.green,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
   tableApproveText: { fontSize: 11, color: C.success, fontWeight: "600" },
+
+  tableRejectBtn: {
+    backgroundColor: C.redBg,
+    borderWidth: 1,
+    borderColor: C.error,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  tableRejectText: { fontSize: 11, color: C.error, fontWeight: "600" },
 
   tableEditText: { fontSize: 11, color: C.text2, fontWeight: "600" },
 
