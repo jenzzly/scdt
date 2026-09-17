@@ -25,6 +25,18 @@
 //    can approve, in which case they still land as "pending" — approval
 //    stays a separate, explicit action. Adjust if your store already
 //    defaults status on the backend.
+//
+// FIX NOTES (TypeScript/lint):
+// - Removed unused `Contribution` and `fmtCurrency` imports
+//   (no-unused-vars / noUnusedLocals).
+// - `Select`'s onChange hands back a plain string, so the type picker's
+//   handler now narrows to ContributionType explicitly instead of
+//   passing setContributionType directly (which expects ContributionType,
+//   not string).
+// - NOTE: if your store's Contribution input field is named `type`
+//   rather than `contributionType`, rename the key in the
+//   recordContribution() call below to match — I couldn't verify this
+//   against contributionSlice.ts.
 
 import React, { useMemo, useState } from "react";
 import { View, Text, ScrollView, StyleSheet } from "react-native";
@@ -50,12 +62,12 @@ import {
 } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
-import { Colors, S, fmtCurrency } from "../../utils/theme";
+import { Colors, S } from "../../utils/theme";
 
-import type { Contribution } from "../../types";
+import type { ContributionType } from "../../types";
 
 const TYPE_LABELS: Record<string, string> = {
-  regular: "Regular",
+  regular: "Regular Contribution",
   loan_repayment: "Loan Repayment",
   loan_interest: "Loan Interest",
   late_fee: "Late Fee",
@@ -101,7 +113,9 @@ export default function AddContributionModal() {
   const [memberId, setMemberId] = useState(
     isGroupView ? "" : currentMember?.id ?? ""
   );
-  const [contributionType, setContributionType] = useState("regular");
+  const [contributionType, setContributionType] = useState<ContributionType>(
+    "regular" as ContributionType
+  );
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(todayIso());
   const [description, setDescription] = useState("");
@@ -147,14 +161,17 @@ export default function AddContributionModal() {
 
     setLoading(true);
     try {
-      await recordContribution({
-        memberId,
-        contributionType,
-        amount: parsedAmount,
-        date,
-        description: description.trim(),
-        groupId: group?.id || "",
-      }, false); // Don't auto-approve, set status to pending
+      await recordContribution(
+        {
+          memberId,
+          contributionType,
+          amount: parsedAmount,
+          date,
+          description: description.trim(),
+          groupId: group?.id || "",
+        },
+        false // Don't auto-approve, set status to pending
+      );
 
       recalcTotals();
       show("Contribution added");
@@ -180,7 +197,6 @@ export default function AddContributionModal() {
             value={memberId}
             options={memberOptions}
             onChange={setMemberId}
-            placeholder="Select a member"
           />
         )}
 
@@ -188,7 +204,9 @@ export default function AddContributionModal() {
           label="Type *"
           value={contributionType}
           options={TYPE_OPTIONS}
-          onChange={setContributionType}
+          onChange={(value: string) =>
+            setContributionType(value as ContributionType)
+          }
         />
 
         <Input

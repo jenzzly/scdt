@@ -469,9 +469,9 @@ export default function MoreScreen() {
           <>
             <Text style={st.sectionLabel}>Administration</Text>
             {[
-                  { label: "Loan Rules", icon: "🏦", activeSection: "settings" },
-                  { label: "Permissions", icon: "🔐", activeSection: "permissions" },
-                  { label: "Audit Log", icon: "📋", activeSection: "audit" },
+                  { label: "Group Settings", icon: "🏦", activeSection: "settings" },
+                  // { label: "Permissions", icon: "🔐", activeSection: "permissions" },
+                  // { label: "Audit Log", icon: "📋", activeSection: "audit" },
             ].map((item) => (
               <TouchableOpacity
                 key={item.activeSection + item.label}

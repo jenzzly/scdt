@@ -1,7 +1,7 @@
 import React from "react";
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, Platform, useWindowDimensions} from "react-native";
+  StyleSheet, Platform, useWindowDimensions, Alert} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore } from "../stores/useStore";
 import { Card, CardRow, Empty } from "../components/ui";
@@ -22,7 +22,7 @@ export default function NotificationsScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { notifications, markNotifReadLocal } = useStore();
+  const { notifications, markNotifReadLocal, clearNotification, clearAllNotifications } = useStore();
 
   const sorted = [...notifications].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -47,6 +47,92 @@ export default function NotificationsScreen() {
     }
   };
 
+  const handleClearNotification = (notificationId: string) => {
+    const clear = async () => {
+      try {
+        await clearNotification(notificationId);
+      } catch (error) {
+        console.error(
+          "Failed to clear notification:",
+          error
+        );
+      }
+    };
+
+    if (Platform.OS === "web") {
+      const confirmed = window.confirm(
+        "Are you sure you want to clear this notification?"
+      );
+
+      if (confirmed) {
+        void clear();
+      }
+
+      return;
+    }
+
+    Alert.alert(
+      "Clear Notification",
+      "Are you sure you want to clear this notification?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: () => {
+            void clear();
+          },
+        },
+      ]
+    );
+  };
+
+  const handleClearAll = () => {
+    const clearAll = async () => {
+      try {
+        await clearAllNotifications();
+      } catch (error) {
+        console.error(
+          "Failed to clear all notifications:",
+          error
+        );
+      }
+    };
+
+    if (Platform.OS === "web") {
+      const confirmed = window.confirm(
+        "Are you sure you want to clear all notifications?"
+      );
+
+      if (confirmed) {
+        void clearAll();
+      }
+
+      return;
+    }
+
+    Alert.alert(
+      "Clear All Notifications",
+      "Are you sure you want to clear all notifications?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Clear All",
+          style: "destructive",
+          onPress: () => {
+            void clearAll();
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: Colors.bg }}>
       <View style={styles.header}>
@@ -54,7 +140,11 @@ export default function NotificationsScreen() {
           <Text style={styles.back}>✕</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Notifications</Text>
-        <View style={{ width: 32 }} />
+        {notifications.length > 0 && (
+          <TouchableOpacity onPress={handleClearAll}>
+            <Text style={styles.clearAllText}>Clear All</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <ScrollView
@@ -85,7 +175,18 @@ export default function NotificationsScreen() {
                     title={n.title}
                     subtitle={n.message}
                     right={
-                      <Text style={styles.time}>{fmtDate(n.createdAt)}</Text>
+                      <View style={styles.notificationRight}>
+                        <Text style={styles.time}>{fmtDate(n.createdAt)}</Text>
+                        <TouchableOpacity
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            handleClearNotification(n.id);
+                          }}
+                          style={styles.clearBtn}
+                        >
+                          <Text style={styles.clearBtnText}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
                     }
                     showBorder={i < unread.length - 1}
                   />
@@ -109,7 +210,20 @@ export default function NotificationsScreen() {
                     }
                     title={n.title}
                     subtitle={n.message}
-                    right={<Text style={styles.time}>{fmtDate(n.createdAt)}</Text>}
+                    right={
+                      <View style={styles.notificationRight}>
+                        <Text style={styles.time}>{fmtDate(n.createdAt)}</Text>
+                        <TouchableOpacity
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            handleClearNotification(n.id);
+                          }}
+                          style={styles.clearBtn}
+                        >
+                          <Text style={styles.clearBtnText}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                    }
                     showBorder={i < read.length - 1}
                   />
                 </TouchableOpacity>
@@ -135,6 +249,11 @@ const styles = StyleSheet.create({
   },
   back: { fontSize: 18, color: Colors.text2, width: 32, textAlign: "center" },
   title: { fontSize: 17, fontWeight: "700", color: Colors.text },
+  clearAllText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.text2,
+  },
   groupLabel: {
     fontSize: 11, fontWeight: "700", color: Colors.text3,
     textTransform: "uppercase", letterSpacing: 0.8,
@@ -147,5 +266,22 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.teal,
     borderWidth: 1.5, borderColor: Colors.bg,
   },
+  notificationRight: {
+    alignItems: "flex-end",
+    gap: 4,
+  },
   time: { fontSize: 11, color: Colors.text3 },
+  clearBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: Colors.elevated,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clearBtnText: {
+    fontSize: 12,
+    color: Colors.text3,
+    fontWeight: "600",
+  },
 });
