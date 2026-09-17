@@ -857,7 +857,8 @@ export const createWalletSlice = (
   // ===========================================================================
 
   applyContributionLateFee: async (
-    overdue: OverdueContribution
+    overdue: OverdueContribution,
+    customAmount?: number,
   ) => {
     const {
       activeGroupId,
@@ -870,30 +871,52 @@ export const createWalletSlice = (
       );
     }
 
-    const existing =
-      get().walletTransactions.find(
-        (t) =>
-          t.id ===
-          overdue.feeTxId
-      );
+    // Determine the amount to charge — either a custom partial amount or the
+    // full accrued fee. If a partial payment already exists for this feeTxId,
+    // we generate a new unique ID so the partial tx doesn't block future charges.
+    const chargeAmount =
+      customAmount != null && customAmount > 0
+        ? round2(customAmount)
+        : overdue.feeAmount;
 
-    if (existing) {
-      return;
+    // For full-amount applications, block duplicates using the canonical feeTxId.
+    // For partial payments, append a timestamp so multiple partials can coexist.
+    const isPartial =
+      customAmount != null &&
+      Math.abs(customAmount - overdue.feeAmount) > 0.01;
+
+    const txId = isPartial
+      ? `${overdue.feeTxId}-partial-${Date.now()}`
+      : overdue.feeTxId;
+
+    if (!isPartial) {
+      const existing =
+        get().walletTransactions.find(
+          (t) =>
+            t.id ===
+            overdue.feeTxId
+        );
+
+      if (existing) {
+        return;
+      }
     }
 
     const now =
       new Date().toISOString();
 
     const tx: WalletTransaction = {
-      id: overdue.feeTxId,
+      id: txId,
       groupId: activeGroupId,
       type: "late_fee",
       sourceType: "manual",
       sourceId: overdue.memberId,
-      amount: overdue.feeAmount,
+      amount: chargeAmount,
       description:
         `Late contribution fee — ${overdue.periodLabel} ` +
-        `(${overdue.daysLate}d late)`,
+        `(${overdue.daysLate}d late` +
+        (isPartial ? ` · partial payment of ${chargeAmount}` : "") +
+        `)`,
       date: now,
       memberId:
         overdue.memberId,
@@ -949,7 +972,7 @@ export const createWalletSlice = (
                 1
                   ? "s"
                   : ""
-              } late — a fee of ${overdue.feeAmount} RWF has been applied`,
+              } late — a fee of ${chargeAmount} RWF has been applied`,
             read: false,
             metadata: {
               periodLabel:
@@ -957,7 +980,7 @@ export const createWalletSlice = (
               daysLate:
                 overdue.daysLate,
               feeAmount:
-                overdue.feeAmount,
+                chargeAmount,
             },
             createdAt:
               now,
@@ -967,7 +990,7 @@ export const createWalletSlice = (
       }
     } catch (e) {
       get().deleteWalletTxLocal(
-        overdue.feeTxId
+        txId
       );
 
       get().recalcTotals();
@@ -983,12 +1006,14 @@ export const createWalletSlice = (
     }
   },
 
+
   // ===========================================================================
   // LOAN LATE FEE
   // ===========================================================================
 
   applyLoanLateFee: async (
-    overdue: OverdueInstallment
+    overdue: OverdueInstallment,
+    customAmount?: number,
   ) => {
     const {
       activeGroupId,
@@ -1000,17 +1025,6 @@ export const createWalletSlice = (
       throw new Error(
         "No active group"
       );
-    }
-
-    const existing =
-      get().walletTransactions.find(
-        (t) =>
-          t.id ===
-          overdue.feeTxId
-      );
-
-    if (existing) {
-      return;
     }
 
     const loan = loans.find(
@@ -1025,23 +1039,52 @@ export const createWalletSlice = (
       );
     }
 
+    // Determine charge amount — partial or full.
+    const chargeAmount =
+      customAmount != null && customAmount > 0
+        ? round2(customAmount)
+        : overdue.feeAmount;
+
+    const isPartial =
+      customAmount != null &&
+      Math.abs(customAmount - overdue.feeAmount) > 0.01;
+
+    // Partial payments get unique tx IDs so they can stack.
+    // Full payments use the canonical feeTxId to block duplicates.
+    const txId = isPartial
+      ? `${overdue.feeTxId}-partial-${Date.now()}`
+      : overdue.feeTxId;
+
+    if (!isPartial) {
+      const existing =
+        get().walletTransactions.find(
+          (t) =>
+            t.id ===
+            overdue.feeTxId
+        );
+
+      if (existing) {
+        return;
+      }
+    }
+
     const now =
       new Date().toISOString();
 
     const tx: WalletTransaction = {
-      id: overdue.feeTxId,
+      id: txId,
       groupId: activeGroupId,
       type: "late_fee",
       sourceType: "loan",
       sourceId:
         overdue.loanId,
       amount:
-        overdue.feeAmount,
+        chargeAmount,
       description:
         `Late repayment fee — installment #${
           overdue.installmentIndex +
           1
-        } (${overdue.daysLate}d late)`,
+        } (${overdue.daysLate}d late${isPartial ? ` · partial ${chargeAmount}` : ""})`,
       date: now,
       memberId:
         overdue.memberId,
@@ -1050,12 +1093,13 @@ export const createWalletSlice = (
       createdAt: now,
       createdBy:
         authUid ?? undefined,
+      feePaid: false,
     };
 
     const newLateFees =
       round2(
         (loan.lateFees || 0) +
-          overdue.feeAmount
+          chargeAmount
       );
 
     get().addWalletTxLocal(tx);
@@ -1124,7 +1168,7 @@ export const createWalletSlice = (
                 1
                   ? "s"
                   : ""
-              } late — a fee of ${overdue.feeAmount} RWF has been applied`,
+              } late — a fee of ${chargeAmount} RWF has been applied`,
             read: false,
             metadata: {
               loanId:
@@ -1134,7 +1178,7 @@ export const createWalletSlice = (
               daysLate:
                 overdue.daysLate,
               feeAmount:
-                overdue.feeAmount,
+                chargeAmount,
             },
             createdAt:
               now,
@@ -1144,7 +1188,7 @@ export const createWalletSlice = (
       }
     } catch (e) {
       get().deleteWalletTxLocal(
-        overdue.feeTxId
+        txId
       );
 
       get().updateLoanLocal(
@@ -1167,6 +1211,7 @@ export const createWalletSlice = (
       throw e;
     }
   },
+
 
   // ===========================================================================
   // CLEAR STANDALONE LATE FEE

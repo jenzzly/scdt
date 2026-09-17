@@ -5,8 +5,18 @@
 // Contribution late fee:
 //   missedContributionAmount × (ratePct / 100) × newlyOwedDays
 //
-// Loan late fee:
-//   overdueInstallmentAmount × (ratePct / 100) × newlyOwedDays
+// Loan late fee (corrected formula):
+//   monthlyInterestBase  = loan.amount × (loan.interestRate / 100)
+//   dailyLateFee         = monthlyInterestBase × (lateFeeRatePct / 100)
+//   feeAmount            = dailyLateFee × daysNewlyOwed
+//
+//   Example: 8 000 000 loan @ 1.5% monthly, 10% lateFeeRatePct, 78 days late
+//     monthlyInterestBase = 8 000 000 × 1.5% = 120 000
+//     dailyLateFee        = 120 000 × 10%    = 12 000 / day
+//     feeAmount           = 12 000 × 78      = 936 000
+//
+//   NOTE: interestRatePeriod is intentionally ignored — the base is always
+//   loan.amount × interestRate% without any period conversion.
 //
 // IMPORTANT:
 //   `lateFeeStartDate` is a GLOBAL activation date.
@@ -730,12 +740,16 @@ export interface OverdueInstallment {
   dueDate: string;
   amountDue: number;
 
+  /** loan.amount × (interestRate / 100) — the monthly interest used as the fee base */
+  monthlyInterestBase: number;
+
   daysLate: number;
   daysPastGrace: number;
   daysNewlyOwed: number;
   feeAmount: number;
   feeTxId: string;
 }
+
 
 function loanFeeIdPrefix(
   loanId: string,
@@ -1022,9 +1036,24 @@ export function findOverdueInstallments(
             ),
           );
 
+        /**
+         * Late-fee formula:
+         *   monthlyInterestBase = loan.amount × (interestRate / 100)
+         *   dailyLateFee        = monthlyInterestBase × (lateFeeRatePct / 100)
+         *   feeAmount           = dailyLateFee × daysNewlyOwed
+         *
+         * interestRatePeriod is intentionally not used — the base is always
+         * loan.amount × interestRate% with no period conversion.
+         */
+        const monthlyInterestBase =
+          round2(
+            loan.amount *
+              (loan.interestRate / 100),
+          );
+
         const feeAmount =
           round2(
-            item.total *
+            monthlyInterestBase *
               (ratePct / 100) *
               daysNewlyOwed,
           );
@@ -1052,6 +1081,8 @@ export function findOverdueInstallments(
           amountDue:
             item.total,
 
+          monthlyInterestBase,
+
           daysLate,
 
           daysPastGrace,
@@ -1062,6 +1093,7 @@ export function findOverdueInstallments(
 
           feeTxId,
         });
+
       },
     );
   }

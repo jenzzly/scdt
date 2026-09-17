@@ -1233,6 +1233,29 @@ export default function ReportsScreen() {
     [overdueLoans]
   );
 
+  const loanLateFeesList = useMemo(() => {
+    return overdueLoans
+      .map((item: any) => {
+        const tx = allWallet.find((t) => t.id === item.feeTxId && t.type === "late_fee");
+        return {
+          ...item,
+          type: "loan" as const,
+          periodStart: item.dueDate,
+          periodLabel: `Loan Inst #${item.installmentIndex + 1}`,
+          isPaid: !!tx?.feePaid,
+        };
+      })
+      .filter((item: any) => (isPersonalView ? item.memberId === currentMember?.id : true));
+  }, [overdueLoans, allWallet, isPersonalView, currentMember?.id]);
+
+  const allLateFeesCombined = useMemo(() => {
+    const taggedContribFees = lateFees.map((f: any) => ({
+      ...f,
+      type: "contribution" as const,
+    }));
+    return [...taggedContribFees, ...loanLateFeesList];
+  }, [lateFees, loanLateFeesList]);
+
   // ───────────────────────────────────────────────────────────────────────
   // Member-status derived sets — computed once per render from full
   // (unfiltered-by-category) group data, then intersected into each
@@ -1240,9 +1263,10 @@ export default function ReportsScreen() {
   // ───────────────────────────────────────────────────────────────────────
 
   const unpaidFeeMemberIds = useMemo(
-    () => new Set(lateFees.filter((f: any) => !f.isPaid).map((f: any) => f.memberId)),
-    [lateFees]
+    () => new Set(allLateFeesCombined.filter((f: any) => !f.isPaid).map((f: any) => f.memberId)),
+    [allLateFeesCombined]
   );
+
 
   const lateContributionFeeMemberIds = useMemo(
     () =>
@@ -1669,7 +1693,7 @@ export default function ReportsScreen() {
         source = loans;
         break;
       case "latefees":
-        source = lateFees;
+        source = allLateFeesCombined;
         break;
       case "members":
         source = members;
@@ -1698,7 +1722,8 @@ export default function ReportsScreen() {
       { label: "All Months", value: "all" },
       ...sorted.map((k) => ({ label: monthLabel(k), value: k })),
     ];
-  }, [category, contributions, loans, lateFees, members, wallet, investments]);
+  }, [category, contributions, loans, allLateFeesCombined, members, wallet, investments]);
+
 
   // ───────────────────────────────────────────────────────────────────────
   // Member options
@@ -1844,7 +1869,7 @@ export default function ReportsScreen() {
     }
 
     if (category === "latefees") {
-      let list = lateFees.filter(
+      let list = allLateFeesCombined.filter(
         (f: any) =>
           inDateRange(f.periodStart) &&
           inMember(f.memberId) &&
@@ -1855,11 +1880,26 @@ export default function ReportsScreen() {
 
       const chart = monthlyTotals(list, "periodStart", "feeAmount");
 
+      const totalContribLateFees = round2(
+        list
+          .filter((f: any) => f.type === "contribution" && !f.isPaid)
+          .reduce((s: number, f: any) => s + (f.feeAmount || 0), 0)
+      );
+
+      const totalLoanLateFees = round2(
+        list
+          .filter((f: any) => f.type === "loan" && !f.isPaid)
+          .reduce((s: number, f: any) => s + (f.feeAmount || 0), 0)
+      );
+
+      const totalOwed = round2(totalContribLateFees + totalLoanLateFees);
+
       return {
         rows: list,
-        headers: ["Member", "Period", "Days Late", "Fee Amount", "Status"],
+        headers: ["Member", "Type", "Reference", "Days Late", "Fee Amount", "Status"],
         toRow: (f: any) => [
           getMemberName(f.memberId),
+          f.type === "loan" ? "Loan" : "Contribution",
           f.periodLabel ?? "—",
           f.daysLate ?? 0,
           fmtCurrency(f.feeAmount || 0),
@@ -1869,17 +1909,22 @@ export default function ReportsScreen() {
         chartColor: C.error,
         kpis: [
           {
-            label: "Total Owed",
-            value: fmtCurrency(
-              list
-                .filter((f: any) => !f.isPaid)
-                .reduce((s: number, f: any) => s + (f.feeAmount || 0), 0)
-            ),
+            label: "Total Late Fees",
+            value: fmtCurrency(totalOwed),
+          },
+          {
+            label: "Loan Late Fees",
+            value: fmtCurrency(totalLoanLateFees),
+          },
+          {
+            label: "Contrib Late Fees",
+            value: fmtCurrency(totalContribLateFees),
           },
           { label: "Records", value: String(list.length) },
         ],
       };
     }
+
 
     if (category === "members") {
       const list = members
@@ -2174,9 +2219,10 @@ export default function ReportsScreen() {
     category,
     contributions,
     loans,
-    lateFees,
+    allLateFeesCombined,
     members,
     wallet,
+
     investments,
     selectedFromDate,
     selectedToDate,

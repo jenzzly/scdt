@@ -137,8 +137,8 @@ export interface StoreState {
 
   // Wallet actions
   deleteWalletTransaction: (transactionId: ID, reason: string) => Promise<void>;
-  applyContributionLateFee: (overdue: OverdueContribution) => Promise<void>;
-  applyLoanLateFee: (overdue: OverdueInstallment) => Promise<void>;
+  applyContributionLateFee: (overdue: OverdueContribution, customAmount?: number) => Promise<void>;
+  applyLoanLateFee: (overdue: OverdueInstallment, customAmount?: number) => Promise<void>;
   clearStandaloneLateFee: (transactionId: ID) => Promise<void>;
   updateWalletTransaction: (transactionId: ID, data: Partial<WalletTransaction>, reason?: string) => Promise<void>;
 

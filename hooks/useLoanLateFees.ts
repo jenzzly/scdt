@@ -31,6 +31,16 @@ export interface LoanLateFeeRow {
   label: string;
   sublabel?: string;
   amount: number;
+  /** Monthly interest base used in the fee formula (accrued rows only) */
+  monthlyInterestBase?: number;
+  /** The overdue installment index (accrued rows only, for apply actions) */
+  installmentIndex?: number;
+  /** The full accrued fee amount before any partial payment (accrued rows only) */
+  fullFeeAmount?: number;
+  /** The feeTxId for applying this fee (accrued rows only) */
+  feeTxId?: string;
+  /** The raw overdue installment (accrued rows only) */
+  overdueInstallment?: any;
 }
 
 export interface LoanLateFees {
@@ -76,6 +86,7 @@ export function useLoanLateFees(loanId?: string): LoanLateFees {
       label: t.description || "Late repayment fee",
       sublabel: `Applied ${new Date(t.date).toLocaleDateString()}`,
       amount: round2(Math.abs(t.amount || 0)),
+      feeTxId: t.id,
     }));
 
     // ── 2. Accrued but not-yet-applied late fees ──────────────────────
@@ -92,6 +103,8 @@ export function useLoanLateFees(loanId?: string): LoanLateFees {
               lateDays !== 1 ? "s" : ""
             } late`;
 
+            // Show the formula breakdown clearly:
+            // "Monthly interest base: RWF 120,000 · X% fee · Y new days"
             const parts: string[] = [
               `Due ${new Date(o.dueDate).toLocaleDateString()}`,
             ];
@@ -108,6 +121,11 @@ export function useLoanLateFees(loanId?: string): LoanLateFees {
               label,
               sublabel: parts.join(" · "),
               amount: round2(o.feeAmount || 0),
+              monthlyInterestBase: o.monthlyInterestBase,
+              installmentIndex: o.installmentIndex,
+              fullFeeAmount: round2(o.feeAmount || 0),
+              feeTxId: o.feeTxId,
+              overdueInstallment: o,
             };
           });
       } catch (e) {

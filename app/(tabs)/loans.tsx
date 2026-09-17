@@ -10,6 +10,7 @@ import {
   Platform,
   StatusBar,
   useWindowDimensions,
+  TextInput,
 } from "react-native";
 import { useRouter } from "expo-router";
 import {
@@ -19,7 +20,10 @@ import {
   useCurrentUserRole,
   useCurrentMember,
   useIsGroupView,
+  useActiveGroup,
 } from "../../stores/useStore";
+import { findOverdueInstallments } from "../../utils/lateFees";
+
 import {
   useGroupWallet,
   useCurrentMemberPermissions,
@@ -189,6 +193,7 @@ function LoanDetailModal({
   isPending,
   actableStep,
   canDisburse,
+  canManageFees,
 }: {
   visible: boolean;
   loan: Loan | null;
@@ -207,7 +212,39 @@ function LoanDetailModal({
   isPending: boolean;
   actableStep: string | null;
   canDisburse: boolean;
+  canManageFees?: boolean;
 }) {
+  const [applyingFeeId, setApplyingFeeId] = useState<string | null>(null);
+  const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
+
+  const handleApplyFee = async (row: any) => {
+    if (!row.overdueInstallment) return;
+    const feeId = row.feeTxId || `inst-${row.installmentIndex}`;
+    const customStr = customAmounts[feeId]?.trim();
+    const customNum = customStr ? Number(customStr) : undefined;
+    setApplyingFeeId(feeId);
+    try {
+      await useStore.getState().applyLoanLateFee(row.overdueInstallment, customNum);
+      useStore.getState().recalcTotals();
+    } catch (e: any) {
+      console.error("Failed to apply loan late fee:", e);
+    } finally {
+      setApplyingFeeId(null);
+    }
+  };
+
+  const handleClearFee = async (txId: string) => {
+    setApplyingFeeId(txId);
+    try {
+      await useStore.getState().clearStandaloneLateFee(txId);
+      useStore.getState().recalcTotals();
+    } catch (e: any) {
+      console.error("Failed to clear loan late fee:", e);
+    } finally {
+      setApplyingFeeId(null);
+    }
+  };
+
   const paymentTxs = React.useMemo(() => {
     if (!loan) return [];
     const intTxs = walletTxs
@@ -239,6 +276,7 @@ function LoanDetailModal({
   const lateFees = useLoanLateFees(loan?.id);
 
   if (!loan) return null;
+
 
   const pct =
     loan.status === "repaid"
@@ -349,60 +387,140 @@ function LoanDetailModal({
               already recorded but not yet paid.
             </Text>
 
-            {lateFees.rows.map((row, i) => (
-              <View
-                key={`${row.kind}-${i}`}
-                style={[
-                  styles.lateFeeRow,
-                  i === 0 && { borderTopWidth: 0, paddingTop: 4 },
-                ]}
-              >
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 6,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <Text style={styles.lateFeeLabel} numberOfLines={1}>
-                      {row.label}
-                    </Text>
+            {lateFees.rows.map((row, i) => {
+              const feeId = row.feeTxId || `inst-${row.installmentIndex ?? i}`;
+              const isSaving = applyingFeeId === feeId;
+              const customVal = customAmounts[feeId] ?? "";
+              return (
+                <View
+                  key={`${row.kind}-${i}`}
+                  style={[
+                    styles.lateFeeRow,
+                    i === 0 && { borderTopWidth: 0, paddingTop: 4 },
+                  ]}
+                >
+                  <View style={{ flex: 1, minWidth: 0 }}>
                     <View
-                      style={[
-                        styles.lateFeeKind,
-                        row.kind === "applied"
-                          ? { backgroundColor: C.infoBg }
-                          : { backgroundColor: C.goldBg },
-                      ]}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                        flexWrap: "wrap",
+                      }}
                     >
-                      <Text
+                      <Text style={styles.lateFeeLabel} numberOfLines={1}>
+                        {row.label}
+                      </Text>
+                      <View
                         style={[
-                          styles.lateFeeKindText,
-                          {
-                            color:
-                              row.kind === "applied"
-                                ? C.infoText
-                                : C.gold,
-                          },
+                          styles.lateFeeKind,
+                          row.kind === "applied"
+                            ? { backgroundColor: C.infoBg }
+                            : { backgroundColor: C.goldBg },
                         ]}
                       >
-                        {row.kind === "applied" ? "RECORDED" : "ACCRUED"}
-                      </Text>
+                        <Text
+                          style={[
+                            styles.lateFeeKindText,
+                            {
+                              color:
+                                row.kind === "applied"
+                                  ? C.infoText
+                                  : C.gold,
+                            },
+                          ]}
+                        >
+                          {row.kind === "applied" ? "RECORDED" : "ACCRUED"}
+                        </Text>
+                      </View>
                     </View>
+                    {row.sublabel ? (
+                      <Text style={styles.lateFeeSublabel} numberOfLines={2}>
+                        {row.sublabel}
+                      </Text>
+                    ) : null}
+                    {row.monthlyInterestBase != null && (
+                      <Text
+                        style={[
+                          styles.lateFeeSublabel,
+                          { color: C.text2, marginTop: 2, fontWeight: "600" },
+                        ]}
+                      >
+                        Monthly interest: {fmtCurrency(row.monthlyInterestBase)}
+                      </Text>
+                    )}
                   </View>
-                  {row.sublabel ? (
-                    <Text style={styles.lateFeeSublabel} numberOfLines={2}>
-                      {row.sublabel}
+
+                  <View style={{ alignItems: "flex-end", gap: 6 }}>
+                    <Text style={styles.lateFeeAmount}>
+                      {fmtCurrency(row.amount)}
                     </Text>
-                  ) : null}
+
+                    {canManageFees && row.kind === "accrued" && (
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 6,
+                          marginTop: 4,
+                        }}
+                      >
+                        <TextInput
+                          style={styles.lateFeeInput}
+                          placeholder={String(row.amount)}
+                          placeholderTextColor={C.text3}
+                          keyboardType="numeric"
+                          value={customVal}
+                          onChangeText={(v) =>
+                            setCustomAmounts((prev) => ({
+                              ...prev,
+                              [feeId]: v,
+                            }))
+                          }
+                        />
+                        <TouchableOpacity
+                          style={styles.lateFeeActionBtn}
+                          onPress={() => handleApplyFee(row)}
+                          disabled={isSaving}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.lateFeeActionBtnText}>
+                            {isSaving ? "…" : "Apply"}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
+                    {canManageFees && row.kind === "applied" && row.feeTxId && (
+                      <TouchableOpacity
+                        style={[
+                          styles.lateFeeActionBtn,
+                          {
+                            backgroundColor: C.mutedBg,
+                            borderWidth: 1,
+                            borderColor: C.border,
+                            marginTop: 4,
+                          },
+                        ]}
+                        onPress={() => handleClearFee(row.feeTxId!)}
+                        disabled={isSaving}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.lateFeeActionBtnText,
+                            { color: C.text },
+                          ]}
+                        >
+                          {isSaving ? "…" : "Clear"}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
-                <Text style={styles.lateFeeAmount}>
-                  {fmtCurrency(row.amount)}
-                </Text>
-              </View>
-            ))}
+              );
+            })}
+
 
             <View style={styles.lateFeeTotalRow}>
               <Text style={styles.lateFeeTotalLabel}>
@@ -1080,6 +1198,31 @@ export default function LoansScreen() {
     [visibleLoans],
   );
 
+  const activeGroup = useActiveGroup();
+  const totalLateFeesOwed = useMemo(() => {
+    if (!activeGroup) return 0;
+    const overdue = findOverdueInstallments(
+      activeGroup,
+      groupMembers,
+      visibleLoans,
+      walletTxs,
+    );
+    const accruedTotal = overdue.reduce((sum, o) => sum + (o.feeAmount || 0), 0);
+    const visibleLoanIds = new Set(visibleLoans.map((l) => l.id));
+    const appliedTotal = walletTxs
+      .filter(
+        (t) =>
+          t.type === "late_fee" &&
+          t.loanId &&
+          visibleLoanIds.has(t.loanId) &&
+          !(t as any).feePaid &&
+          !(t as any).deletedAt,
+      )
+      .reduce((sum, t) => sum + Math.abs(t.amount || 0), 0);
+    return round2(accruedTotal + appliedTotal);
+  }, [activeGroup, groupMembers, visibleLoans, walletTxs]);
+
+
   const handleApproval = async () => {
     if (!pendingAction) return;
     try {
@@ -1274,8 +1417,17 @@ export default function LoansScreen() {
                 setPage(1);
               }}
             />
+            <KpiCard
+              label="Late Fees"
+              value={fmtCurrency(totalLateFeesOwed)}
+              icon="⚠️"
+              subtext="Unpaid late fees"
+              accentColor={C.error}
+              onPress={() => {}}
+            />
           </View>
         </View>
+
 
         <View style={styles.controlsBlock}>
           <View style={styles.controlsTop}>
@@ -1906,7 +2058,11 @@ export default function LoansScreen() {
             : false
         }
         canDisburse={canDisburseRole(role)}
+        canManageFees={
+          ["admin", "accountant", "loan_officer"].includes(role) || isAdmin
+        }
       />
+
       <Toast visible={visible} msg={msg} type={type} />
     </View>
   );
@@ -2422,6 +2578,32 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: C.error,
   },
+  lateFeeInput: {
+    height: 28,
+    width: 80,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    fontSize: 11,
+    color: C.text,
+    textAlign: "right",
+  },
+  lateFeeActionBtn: {
+    backgroundColor: C.primary,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    height: 28,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  lateFeeActionBtnText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+
 
   stepsContainer: {
     backgroundColor: C.elevated,

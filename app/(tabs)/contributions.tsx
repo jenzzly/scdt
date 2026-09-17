@@ -7,7 +7,9 @@ import {
   TouchableOpacity,
   StyleSheet,
   useWindowDimensions,
+  TextInput,
 } from "react-native";
+
 import { useRouter } from "expo-router";
 
 import {
@@ -440,12 +442,14 @@ export default function ContributionsScreen() {
   // Apply / clear late fee
   // ---------------------------------------------------------------------------
 
-  const handleApplyContributionFee = async (item: any) => {
+  const handleApplyContributionFee = async (item: any, customAmount?: number) => {
     setApplyingFeeId(item.feeTxId);
 
     try {
-      await applyContributionLateFee(item);
-      show(`Late fee of ${fmtCurrency(item.feeAmount)} applied to ${item.memberName}`);
+      await applyContributionLateFee(item, customAmount);
+      const appliedAmount =
+        customAmount != null && customAmount > 0 ? customAmount : item.feeAmount;
+      show(`Late fee of ${fmtCurrency(appliedAmount)} applied to ${item.memberName}`);
       recalcTotals();
     } catch (e: any) {
       show(e?.message || "Failed to apply late fee", "error");
@@ -453,6 +457,7 @@ export default function ContributionsScreen() {
       setApplyingFeeId(null);
     }
   };
+
 
   // This only marks the individual late-fee transaction as paid.
   // It does NOT mark the underlying contribution as paid.
@@ -1250,9 +1255,11 @@ function LateFeeList({
   group: any;
   canManageFees: boolean;
   applyingFeeId: string | null;
-  onApply: (item: any) => void;
+  onApply: (item: any, customAmount?: number) => void;
   onClear: (item: any) => void;
 }) {
+  const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
+
   if (items.length === 0) {
     return <EmptyState icon="✓" text="No late fees owed" />;
   }
@@ -1267,6 +1274,7 @@ function LateFeeList({
             }%/day · ${item.daysLate}d late`;
 
         const isSaving = applyingFeeId === item.feeTxId;
+        const customVal = customAmounts[item.feeTxId] ?? "";
 
         return (
           <React.Fragment key={item.feeTxId}>
@@ -1289,16 +1297,55 @@ function LateFeeList({
                   and detail above — this button is the only thing gated.
                 */}
                 {canManageFees && (
-                  <TouchableOpacity
-                    style={st.lateFeeApplyBtn}
-                    onPress={() => (item.applied ? onClear(item) : onApply(item))}
-                    disabled={isSaving}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={st.lateFeeApplyBtnText}>
-                      {isSaving ? "Saving…" : item.applied ? "Clear" : "Apply"}
-                    </Text>
-                  </TouchableOpacity>
+                  item.applied ? (
+                    <TouchableOpacity
+                      style={st.lateFeeApplyBtn}
+                      onPress={() => onClear(item)}
+                      disabled={isSaving}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={st.lateFeeApplyBtnText}>
+                        {isSaving ? "Saving…" : "Clear"}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                        marginTop: 4,
+                      }}
+                    >
+                      <TextInput
+                        style={st.lateFeeInput}
+                        placeholder={String(item.feeAmount)}
+                        placeholderTextColor={C.text3}
+                        keyboardType="numeric"
+                        value={customVal}
+                        onChangeText={(v) =>
+                          setCustomAmounts((prev) => ({
+                            ...prev,
+                            [item.feeTxId]: v,
+                          }))
+                        }
+                      />
+                      <TouchableOpacity
+                        style={st.lateFeeApplyBtn}
+                        onPress={() => {
+                          const valStr = customAmounts[item.feeTxId]?.trim();
+                          const customNum = valStr ? Number(valStr) : undefined;
+                          onApply(item, customNum);
+                        }}
+                        disabled={isSaving}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={st.lateFeeApplyBtnText}>
+                          {isSaving ? "Saving…" : "Apply"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )
                 )}
               </View>
             </View>
@@ -1310,6 +1357,7 @@ function LateFeeList({
     </View>
   );
 }
+
 
 // -----------------------------------------------------------------------------
 // Desktop table
@@ -1902,10 +1950,24 @@ const st = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    marginLeft: 10,
+    marginLeft: 6,
   },
 
   lateFeeApplyBtnText: { fontSize: 12, fontWeight: "700", color: "#b91c1c" },
+
+  lateFeeInput: {
+    height: 32,
+    width: 80,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    fontSize: 12,
+    color: C.text,
+    textAlign: "right",
+  },
+
 
   lateFeeAmountWrap: { alignItems: "flex-end", marginLeft: 10 },
 
