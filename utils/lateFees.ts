@@ -5,18 +5,21 @@
 // Contribution late fee:
 //   missedContributionAmount × (ratePct / 100) × newlyOwedDays
 //
-// Loan late fee (corrected formula):
+// Loan late fee:
 //   monthlyInterestBase  = loan.amount × (loan.interestRate / 100)
 //   dailyLateFee         = monthlyInterestBase × (lateFeeRatePct / 100)
-//   feeAmount            = dailyLateFee × daysNewlyOwed
+//   totalFee             = dailyLateFee × daysLate
+//   feeAmount (to apply) = dailyLateFee × daysNewlyOwed
 //
-//   Example: 8 000 000 loan @ 1.5% monthly, 10% lateFeeRatePct, 78 days late
+//   Once the grace period has elapsed, daysLate is counted from the
+//   installment due date through today (or the installment payment date).
+//   The global activation date only turns the policy on; it does not
+//   drop days that were already late.
+//
+//   Example: 8 000 000 loan @ 1.5% monthly, 2% lateFeeRatePct, 78 days late
 //     monthlyInterestBase = 8 000 000 × 1.5% = 120 000
-//     dailyLateFee        = 120 000 × 10%    = 12 000 / day
-//     feeAmount           = 12 000 × 78      = 936 000
-//
-//   NOTE: interestRatePeriod is intentionally ignored — the base is always
-//   loan.amount × interestRate% without any period conversion.
+//     dailyLateFee        = 120 000 × 2%     = 2 400 / day
+//     totalFee            = 2 400 × 78       = 187 200
 //
 // IMPORTANT:
 //   `lateFeeStartDate` is a GLOBAL activation date.
@@ -743,10 +746,16 @@ export interface OverdueInstallment {
   /** loan.amount × (interestRate / 100) — the monthly interest used as the fee base */
   monthlyInterestBase: number;
 
+  /** Late fee rate used in the daily formula (percent) */
+  ratePct: number;
+
   daysLate: number;
   daysPastGrace: number;
   daysNewlyOwed: number;
+  /** Unapplied slice: dailyLateFee × daysNewlyOwed */
   feeAmount: number;
+  /** Full outstanding fee for this installment: dailyLateFee × daysLate */
+  totalFeeAmount: number;
   feeTxId: string;
 }
 
@@ -808,8 +817,11 @@ export function findOverdueInstallments(
   }
 
   for (const loan of loans) {
+    // Keep showing unpaid late fees after the loan is repaid until the
+    // person actually pays the fee (feePaid on the wallet tx).
     if (
-      loan.status !== "disbursed"
+      loan.status !== "disbursed" &&
+      loan.status !== "repaid"
     ) {
       continue;
     }
@@ -843,12 +855,16 @@ export function findOverdueInstallments(
           m.id === loan.memberId,
       );
 
+    let loanClosedAt: Date | null = null;
+    if (typeof (loan as any).completionDate === "string") {
+      const closed = new Date((loan as any).completionDate);
+      if (!Number.isNaN(closed.getTime())) {
+        loanClosedAt = closed;
+      }
+    }
+
     loan.schedule.forEach(
       (item, index) => {
-        if (item.paid) {
-          return;
-        }
-
         const dueDate =
           new Date(
             item.dueDate,
@@ -862,15 +878,6 @@ export function findOverdueInstallments(
           return;
         }
 
-        /**
-         * If the installment's grace period ended
-         * before the global activation date, we do not
-         * charge anything for the pre-activation days.
-         *
-         * If the installment remains overdue when the
-         * policy activates, calculation begins from
-         * the activation date.
-         */
         const graceDate =
           new Date(dueDate);
 
@@ -880,51 +887,9 @@ export function findOverdueInstallments(
         );
 
         /**
-         * First fee day is the day after the grace date.
-         *
-         * Example:
-         *
-         * Due: September 5
-         * Grace: 0
-         *
-         * September 5 => 0 fee-days
-         * September 6 => 1 fee-day
-         * September 7 => 2 fee-days
-         *
-         * If the global activation date is September 10,
-         * fee calculation starts on September 10 instead.
-         */
-        const activationBoundary =
-          new Date(loanStartDate);
-
-        activationBoundary.setDate(
-          activationBoundary.getDate() - 1,
-        );
-
-        const feeStartBoundary =
-          maxDate(
-            graceDate,
-            activationBoundary,
-          );
-
-        /**
-         * If the installment's grace period has not
-         * ended by the activation date, it still needs
-         * to wait for the grace period.
-         *
-         * If the installment itself is entirely before
-         * the activation date, there is no fee.
-         *
-         * For example:
-         *
-         * Due: August 5
-         * Grace: 5
-         * Start: September 1
-         *
-         * Grace ends: August 10
-         * The installment is already overdue when the
-         * policy activates, so calculation begins
-         * September 1.
+         * No fee until the grace period has elapsed. After that, days
+         * are counted from the due date (not from grace-end or the
+         * global activation date).
          */
         if (
           graceDate > asOf
@@ -933,74 +898,56 @@ export function findOverdueInstallments(
         }
 
         /**
-         * If the schedule item has a payment date,
-         * use it as the accrual endpoint.
-         *
-         * Otherwise, accrue through asOf.
-         *
-         * We support paidDate and paymentDate here
-         * without changing the existing Loan type.
+         * Stop accruing new days once the installment (or the whole
+         * loan) is actually paid. Unpaid fees for those days still
+         * surface via applied wallet txs + any unapplied remainder.
          */
         let accrualAsOf = asOf;
 
         if (
-          typeof (item as any).paidDate ===
-          "string"
+          loanClosedAt &&
+          loanClosedAt < accrualAsOf
         ) {
-          const paymentDate =
-            new Date(
-              (item as any).paidDate,
-            );
+          accrualAsOf = loanClosedAt;
+        }
+
+        const paidDateRaw =
+          typeof (item as any).paidDate === "string"
+            ? (item as any).paidDate
+            : typeof (item as any).paymentDate === "string"
+              ? (item as any).paymentDate
+              : null;
+
+        if (paidDateRaw) {
+          const paymentDate = new Date(paidDateRaw);
 
           if (
-            !Number.isNaN(
-              paymentDate.getTime(),
-            ) &&
-            paymentDate < asOf
+            !Number.isNaN(paymentDate.getTime()) &&
+            paymentDate < accrualAsOf
           ) {
-            accrualAsOf =
-              paymentDate;
-          }
-        } else if (
-          typeof (item as any).paymentDate ===
-          "string"
-        ) {
-          const paymentDate =
-            new Date(
-              (item as any).paymentDate,
-            );
-
-          if (
-            !Number.isNaN(
-              paymentDate.getTime(),
-            ) &&
-            paymentDate < asOf
-          ) {
-            accrualAsOf =
-              paymentDate;
+            accrualAsOf = paymentDate;
           }
         }
 
-        /**
-         * Calculate complete fee-days after both:
-         *
-         * 1. grace period
-         * 2. global activation date
-         *
-         * The activation date is inclusive.
-         */
-        const daysPastGrace =
+        const daysLate =
           Math.max(
             0,
             wholeDaysBetween(
-              feeStartBoundary,
+              dueDate,
               accrualAsOf,
             ),
           );
 
-        if (
-          daysPastGrace <= 0
-        ) {
+        const daysPastGrace =
+          Math.max(
+            0,
+            wholeDaysBetween(
+              graceDate,
+              accrualAsOf,
+            ),
+          );
+
+        if (daysLate <= 0) {
           return;
         }
 
@@ -1017,33 +964,22 @@ export function findOverdueInstallments(
           );
 
         if (
-          daysPastGrace <=
+          daysLate <=
           chargedSoFar
         ) {
           return;
         }
 
         const daysNewlyOwed =
-          daysPastGrace -
+          daysLate -
           chargedSoFar;
-
-        const daysLate =
-          Math.max(
-            0,
-            wholeDaysBetween(
-              dueDate,
-              accrualAsOf,
-            ),
-          );
 
         /**
          * Late-fee formula:
          *   monthlyInterestBase = loan.amount × (interestRate / 100)
          *   dailyLateFee        = monthlyInterestBase × (lateFeeRatePct / 100)
+         *   totalFee            = dailyLateFee × daysLate
          *   feeAmount           = dailyLateFee × daysNewlyOwed
-         *
-         * interestRatePeriod is intentionally not used — the base is always
-         * loan.amount × interestRate% with no period conversion.
          */
         const monthlyInterestBase =
           round2(
@@ -1051,15 +987,24 @@ export function findOverdueInstallments(
               (loan.interestRate / 100),
           );
 
+        const dailyLateFee =
+          monthlyInterestBase *
+          (ratePct / 100);
+
         const feeAmount =
           round2(
-            monthlyInterestBase *
-              (ratePct / 100) *
+            dailyLateFee *
               daysNewlyOwed,
           );
 
+        const totalFeeAmount =
+          round2(
+            dailyLateFee *
+              daysLate,
+          );
+
         const feeTxId =
-          `${prefix}-d${daysPastGrace}`;
+          `${prefix}-d${daysLate}`;
 
         results.push({
           loanId:
@@ -1083,6 +1028,8 @@ export function findOverdueInstallments(
 
           monthlyInterestBase,
 
+          ratePct,
+
           daysLate,
 
           daysPastGrace,
@@ -1090,6 +1037,8 @@ export function findOverdueInstallments(
           daysNewlyOwed,
 
           feeAmount,
+
+          totalFeeAmount,
 
           feeTxId,
         });
@@ -1099,6 +1048,43 @@ export function findOverdueInstallments(
   }
 
   return results;
+}
+
+/**
+ * Unpaid loan late fees: unapplied accrued amounts plus recorded
+ * `late_fee` wallet txs that have not been marked feePaid.
+ */
+export function outstandingLoanLateFeeTotal(
+  group: Group,
+  members: Member[],
+  loans: Loan[],
+  wallet: WalletTransaction[],
+  asOf: Date = new Date(),
+): number {
+  const overdue =
+    findOverdueInstallments(
+      group,
+      members,
+      loans,
+      wallet,
+      asOf,
+    ) || [];
+
+  const accrued = overdue.reduce(
+    (sum, item) => sum + (item.feeAmount || 0),
+    0,
+  );
+
+  const loanIds = new Set(loans.map((loan) => loan.id));
+
+  const appliedUnpaid = wallet.reduce((sum, tx) => {
+    if (tx.type !== "late_fee") return sum;
+    if (!tx.loanId || !loanIds.has(tx.loanId)) return sum;
+    if ((tx as any).feePaid || (tx as any).deletedAt) return sum;
+    return sum + Math.abs(tx.amount || 0);
+  }, 0);
+
+  return round2(accrued + appliedUnpaid);
 }
 
 // -----------------------------------------------------------------------------

@@ -24,7 +24,7 @@ import {
   useGroupWallet,
 } from "../stores/useStore";
 import { findOverdueInstallments } from "../utils/lateFees";
-import { round2 } from "../utils/theme";
+import { fmtCurrency, round2 } from "../utils/theme";
 
 export interface LoanLateFeeRow {
   kind: "applied" | "accrued";
@@ -39,6 +39,7 @@ export interface LoanLateFeeRow {
   fullFeeAmount?: number;
   /** The feeTxId for applying this fee (accrued rows only) */
   feeTxId?: string;
+  unappliedFeeAmount?: number;
   /** The raw overdue installment (accrued rows only) */
   overdueInstallment?: any;
 }
@@ -103,16 +104,21 @@ export function useLoanLateFees(loanId?: string): LoanLateFees {
               lateDays !== 1 ? "s" : ""
             } late`;
 
-            // Show the formula breakdown clearly:
-            // "Monthly interest base: RWF 120,000 · X% fee · Y new days"
             const parts: string[] = [
               `Due ${new Date(o.dueDate).toLocaleDateString()}`,
             ];
-            if (o.daysNewlyOwed > 0) {
+            if (o.ratePct != null && o.monthlyInterestBase != null) {
+              parts.push(
+                `${fmtCurrency(o.monthlyInterestBase)} × ${o.ratePct}% × ${lateDays} day${
+                  lateDays !== 1 ? "s" : ""
+                }`,
+              );
+            }
+            if (o.daysNewlyOwed > 0 && o.daysNewlyOwed !== lateDays) {
               parts.push(
                 `${o.daysNewlyOwed} new day${
                   o.daysNewlyOwed !== 1 ? "s" : ""
-                }`,
+                } still to record`,
               );
             }
 
@@ -123,7 +129,8 @@ export function useLoanLateFees(loanId?: string): LoanLateFees {
               amount: round2(o.feeAmount || 0),
               monthlyInterestBase: o.monthlyInterestBase,
               installmentIndex: o.installmentIndex,
-              fullFeeAmount: round2(o.feeAmount || 0),
+              fullFeeAmount: round2(o.totalFeeAmount || o.feeAmount || 0),
+              unappliedFeeAmount: round2(o.feeAmount || 0),
               feeTxId: o.feeTxId,
               overdueInstallment: o,
             };
