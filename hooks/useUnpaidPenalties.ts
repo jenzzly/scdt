@@ -8,6 +8,7 @@ import {
   useGroupWallet,
   useGroupContributions,
   useGroupLoans,
+  useCurrentUserRole,
 } from "../stores/useStore";
 import {
   findOverdueContributions,
@@ -21,137 +22,167 @@ export function useUnpaidPenalties(memberId: string) {
   const wallet = useGroupWallet();
   const contributions = useGroupContributions();
   const loans = useGroupLoans();
+  const role = useCurrentUserRole();
+
+  // Wallet is only readable to admin/accountant under firestore.rules.
+  // Everyone else gets a fallback path that skips wallet entirely and
+  // uses only the collections that ARE list-readable (meetings,
+  // contributions, loans).
+  const canReadWallet = role === "admin" || role === "accountant";
 
   const unpaidPenalties = useMemo(() => {
-    // Find all meeting penalties for this member
-    const memberMeetingPenalties = meetings.flatMap(meeting => 
+    // ─────────────────────────────────────────────────────────────────────
+    // 1. Meeting penalties (readable by every role via `meetings`)
+    // ─────────────────────────────────────────────────────────────────────
+    const memberMeetingPenalties = meetings.flatMap((meeting) =>
       meeting.attendees
-        .filter(attendee => 
-          attendee.memberId === memberId && 
-          attendee.penaltyAmount && 
-          attendee.penaltyAmount > 0 &&
-          !attendee.penaltyPaid
+        .filter(
+          (attendee) =>
+            attendee.memberId === memberId &&
+            attendee.penaltyAmount &&
+            attendee.penaltyAmount > 0 &&
+            !attendee.penaltyPaid,
         )
-        .map(attendee => ({
+        .map((attendee) => ({
           meetingId: meeting.id,
           meetingTitle: meeting.title,
           meetingDate: meeting.date,
           penaltyAmount: attendee.penaltyAmount,
           status: attendee.status,
           type: "meeting_penalty",
-        }))
+        })),
     );
 
-    // recordAttendance() also writes a "late_fee" wallet transaction for
-    // every absence, as a permanent ledger record — using a deterministic
-    // id of `meeting-penalty-{meetingId}-{memberId}`. That wallet entry is
-    // never deleted (it's a historical ledger record, not a "still owed"
-    // flag), so whether it's still outstanding is governed entirely by the
-    // matching meeting attendee's `penaltyPaid` flag above — NOT by
-    // whether the wallet transaction still exists. Counting both was
-    // double-counting every absence penalty, and clicking "Clear" on the
-    // Meetings screen (which only flips `penaltyPaid`) could never make it
-    // disappear here, since the wallet half was never reconsidered.
+    // ─────────────────────────────────────────────────────────────────────
+    // 2. Applied-but-unpaid late fees (staff only — wallet-based)
     //
-    // Late fees added independently of meeting attendance (standalone
-    // contribution/loan late fees from utils/lateFees.ts, or manual wallet
-    // entries) don't have that id shape, so they're tracked via their own
-    // `feePaid` flag instead — set by clearStandaloneLateFee(), officer-gated
-    // the same way clearAllMemberPenalties() is.
+    // Members can't read walletTransactions, so this list is only
+    // populated for admin/accountant. The member-safe fallback is
+    // handled by the "live" lists below using their total-fee variant.
+    // ─────────────────────────────────────────────────────────────────────
     const meetingPenaltyTxIds = new Set(
-      meetings.map((meeting) => `meeting-penalty-${meeting.id}-${memberId}`)
+      meetings.map((meeting) => `meeting-penalty-${meeting.id}-${memberId}`),
     );
-    const unpaidWalletPenalties = wallet.filter(tx => 
-      tx.type === "late_fee" && 
-      tx.memberId === memberId &&
-      !tx.deletedAt && // Not soft-deleted
-      !tx.feePaid && // Not already cleared by an officer (see clearStandaloneLateFee)
-      !meetingPenaltyTxIds.has(tx.id) // not a meeting-attendance ledger mirror — those are tracked above
-    ).map(tx => ({
-      ...tx,
-      type: "late_fee",
-    }));
+    const unpaidWalletPenalties = canReadWallet
+      ? wallet
+          .filter(
+            (tx) =>
+              tx.type === "late_fee" &&
+              tx.memberId === memberId &&
+              !tx.deletedAt &&
+              !tx.feePaid &&
+              !meetingPenaltyTxIds.has(tx.id),
+          )
+          .map((tx) => ({
+            ...tx,
+            type: "late_fee",
+          }))
+      : [];
 
     // ─────────────────────────────────────────────────────────────────────
-    // Live, not-yet-applied late fees.
+    // 3. Live, not-yet-cleared late fees — computed from readable
+    //    collections only.
     //
-    // utils/lateFees.ts computes contribution/loan late fees ON DEMAND and
-    // never auto-charges them: "Nothing is automatically charged in the
-    // background... An officer/admin explicitly applies each newly accrued
-    // chunk." That means `unpaidWalletPenalties` above — which only looks
-    // at EXISTING wallet `late_fee` transactions — misses a member who is
-    // genuinely late right now but whose fee simply hasn't been applied
-    // yet by an officer. These two lists close that gap by running the
-    // exact same detection the Late Fees report uses, live, and matching
-    // it to this member, so a real-time overdue member is caught here too.
+    // findOverdueContributions / findOverdueInstallments compute what
+    // an officer COULD apply right now for each overdue period. For
+    // staff, `feeAmount` (the newly-accrued portion) is the right
+    // number because the applied portion is already counted in
+    // unpaidWalletPenalties above.
+    //
+    // For everyone else, we can't see the applied portion — so we use
+    // `totalFeeAmount` on installments (the full fee owed across all
+    // days of lateness, applied or not) and `feeAmount` on
+    // contributions (the only field the utility exposes). This makes
+    // the member's number a real, non-zero reflection of what they
+    // owe, at the cost of possibly including fees already cleared.
+    // Over-counting is the safe failure mode for a "what do I owe"
+    // display — under-counting hides money the member still owes.
     // ─────────────────────────────────────────────────────────────────────
-
     const liveLateContributions = group
       ? findOverdueContributions(group, members, contributions, wallet).filter(
-          (o) => o.memberId === memberId
+          (o) => o.memberId === memberId,
         )
       : [];
 
     const liveLateInstallments = group
       ? findOverdueInstallments(group, members, loans, wallet).filter(
-          (o) => o.memberId === memberId
+          (o) => o.memberId === memberId,
         )
       : [];
 
-    // Check for unpaid/pending contributions (submitted, awaiting
-    // approval — this is unrelated to lateness; a contribution can be
-    // pending and still be on time).
-    const unpaidContributions = contributions.filter(c => 
-      c.memberId === memberId && 
-      c.status === "pending" && // Only pending contributions count as unpaid
-      c.contributionType === "regular" // Only regular contributions, not loan repayments
-    ).map(c => ({
-      contributionId: c.id,
-      amount: c.amount,
-      date: c.date,
-      description: c.description || "Regular contribution",
-      type: "unpaid_contribution",
-    }));
+    // ─────────────────────────────────────────────────────────────────────
+    // 4. Pending contributions (submitted, awaiting approval)
+    // ─────────────────────────────────────────────────────────────────────
+    const unpaidContributions = contributions
+      .filter(
+        (c) =>
+          c.memberId === memberId &&
+          c.status === "pending" &&
+          c.contributionType === "regular",
+      )
+      .map((c) => ({
+        contributionId: c.id,
+        amount: c.amount,
+        date: c.date,
+        description: c.description || "Regular contribution",
+        type: "unpaid_contribution" as const,
+      }));
 
-    // Active loans with an outstanding balance.
-    const activeLoanBalances = loans.filter(loan => 
-      loan.memberId === memberId && 
-      loan.status === "disbursed" &&
-      loan.balance > 0 // Still has outstanding balance
-    ).map(loan => ({
-      loanId: loan.id,
-      amount: loan.balance,
-      applicationDate: loan.applicationDate,
-      totalRepayable: loan.totalRepayable,
-      amountRepaid: loan.amountRepaid,
-      type: "overdue_loan",
-    }));
+    // ─────────────────────────────────────────────────────────────────────
+    // 5. Genuinely overdue loans (not merely "has a balance")
+    // ─────────────────────────────────────────────────────────────────────
+    const activeLoanBalances = loans
+      .filter(
+        (loan) =>
+          loan.memberId === memberId &&
+          loan.status === "disbursed" &&
+          loan.balance > 0,
+      )
+      .map((loan) => ({
+        loanId: loan.id,
+        amount: loan.balance,
+        applicationDate: loan.applicationDate,
+        totalRepayable: loan.totalRepayable,
+        amountRepaid: loan.amountRepaid,
+        type: "overdue_loan" as const,
+      }));
 
-    // IMPORTANT: "overdue" now means genuinely overdue — the loan has at
-    // least one installment past its due date + grace period, per
-    // findOverdueInstallments — NOT merely "not yet fully repaid."
-    //
-    // The previous version flagged ANY active loan with balance > 0,
-    // which is true of every loan right up until its final installment —
-    // including one being paid exactly on schedule. That meant this was
-    // the only one of the four checks that reliably fired (it fires on
-    // almost any existing loan), while the genuinely-late checks stayed
-    // empty because they either require an officer to have already
-    // applied a fee (see liveLateContributions/liveLateInstallments
-    // above, which now cover that gap) or a real attendance/contribution
-    // record to exist.
     const overdueLoanIds = new Set(liveLateInstallments.map((i) => i.loanId));
     const overdueLoans = activeLoanBalances.filter((l) =>
-      overdueLoanIds.has(l.loanId)
+      overdueLoanIds.has(l.loanId),
+    );
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 6. Total
+    // ─────────────────────────────────────────────────────────────────────
+    const liveContribFeesTotal = liveLateContributions.reduce(
+      (sum, o) => sum + o.feeAmount,
+      0,
+    );
+    const liveInstallmentFeesTotal = liveLateInstallments.reduce(
+      (sum, o) =>
+        sum +
+        (canReadWallet
+          ? // Staff: only the newly-accrued slice — the applied
+            // portion is already counted via unpaidWalletPenalties.
+            o.feeAmount
+          : // Member: full fee owed across all days of lateness,
+            // because we have no readable source for the applied
+            // portion. Over-counts if some has been cleared.
+            o.totalFeeAmount ?? o.feeAmount),
+      0,
     );
 
     const totalUnpaid =
-      memberMeetingPenalties.reduce((sum, p) => sum + (p.penaltyAmount || 0), 0) +
+      memberMeetingPenalties.reduce(
+        (sum, p) => sum + (p.penaltyAmount || 0),
+        0,
+      ) +
       unpaidWalletPenalties.reduce((sum, p) => sum + p.amount, 0) +
       unpaidContributions.reduce((sum, c) => sum + c.amount, 0) +
       overdueLoans.reduce((sum, l) => sum + l.amount, 0) +
-      liveLateContributions.reduce((sum, o) => sum + o.feeAmount, 0) +
-      liveLateInstallments.reduce((sum, o) => sum + o.feeAmount, 0);
+      liveContribFeesTotal +
+      liveInstallmentFeesTotal;
 
     return {
       hasUnpaidPenalties: totalUnpaid > 0,
@@ -169,8 +200,21 @@ export function useUnpaidPenalties(memberId: string) {
         overdueLoans.length +
         liveLateContributions.length +
         liveLateInstallments.length,
+      // Signals to the UI whether the totals include the applied-but-
+      // unpaid ledger half (staff) or are a member-safe approximation.
+      // UIs can surface this in a "how is this calculated?" tooltip.
+      isCompleteView: canReadWallet,
     };
-  }, [group, members, meetings, wallet, contributions, loans, memberId]);
-  
+  }, [
+    group,
+    members,
+    meetings,
+    wallet,
+    contributions,
+    loans,
+    memberId,
+    canReadWallet,
+  ]);
+
   return unpaidPenalties;
 }

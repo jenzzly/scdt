@@ -155,6 +155,15 @@ export default function AddLoanModal() {
   const penaltyAmount =
     unpaidPenalties.totalAmount;
 
+  // isCompleteView is true only when the hook could read the wallet
+  // ledger (admin/accountant). For everyone else, the total is an
+  // accrued approximation — it may include fees that were waived
+  // after they were first applied, because the "feePaid" flag lives
+  // on an unreadable wallet row. All user-facing wording below keys
+  // off this flag so we don't overstate the accuracy of the number.
+  const isVerifiedView =
+    unpaidPenalties.isCompleteView === true;
+
   const hasMeetingPenalties =
     unpaidPenalties.penalties.length > 0;
 
@@ -327,9 +336,17 @@ export default function AddLoanModal() {
 
       const issuesList = issues.join(", ");
 
+      // Wording shifts based on whether the total is a verified
+      // ledger figure (staff) or an accrued approximation (member).
+      // Members see "accrued" so they understand the number may
+      // include fees that have since been waived.
+      const totalWord = isVerifiedView
+        ? "totaling"
+        : "with an accrued total of about";
+
       Alert.alert(
         "Outstanding Obligations",
-        `This member has ${unpaidPenalties.count} unpaid item(s) — ${issuesList} — totaling ${fmtCurrency(
+        `This member has ${unpaidPenalties.count} unpaid item(s) — ${issuesList} — ${totalWord} ${fmtCurrency(
           penaltyAmount
         )}.\n\nPlease resolve these before applying for a loan.`,
         [
@@ -549,6 +566,19 @@ export default function AddLoanModal() {
         <Text style={styles.penaltyModalSubtitle}>
           Member: {selectedMember?.fullName}
         </Text>
+
+        {/* When this is a member-facing (non-staff) view, the totals
+            below are accrued rather than verified — flag it up front
+            so the list that follows is read with the right caveat. */}
+        {!isVerifiedView && (
+          <View style={styles.approxBanner}>
+            <Text style={styles.approxBannerText}>
+              Accrued view — includes fees already applied. An officer
+              may have waived some of these; the group admin can
+              confirm the exact amount owed.
+            </Text>
+          </View>
+        )}
 
         <ScrollView
           style={styles.penaltyList}
@@ -776,59 +806,69 @@ export default function AddLoanModal() {
           {/* -------------------------------------------------- */}
 
           {unpaidPenalties.liveLateInstallments?.map(
-            (fee: any, index: number) => (
-              <View
-                key={`live-loan-${index}`}
-                style={styles.penaltyItem}
-              >
+            (fee: any, index: number) => {
+              // For members, the "amount" displayed is the full fee
+              // across all overdue days; for staff it's the newly-
+              // accrued slice that hasn't been applied yet. Label
+              // accordingly so the numbers aren't read as equivalent.
+              const amountToShow =
+                isVerifiedView
+                  ? fee.feeAmount
+                  : fee.totalFeeAmount ?? fee.feeAmount;
+              return (
                 <View
-                  style={
-                    styles.penaltyItemHeader
-                  }
+                  key={`live-loan-${index}`}
+                  style={styles.penaltyItem}
                 >
-                  <Text
+                  <View
                     style={
-                      styles.penaltyItemTitle
+                      styles.penaltyItemHeader
                     }
                   >
-                    🏦 Late Loan Installment
+                    <Text
+                      style={
+                        styles.penaltyItemTitle
+                      }
+                    >
+                      🏦 Late Loan Installment
+                    </Text>
+
+                    <Text
+                      style={
+                        styles.penaltyItemAmount
+                      }
+                    >
+                      {fmtCurrency(amountToShow)}
+                    </Text>
+                  </View>
+
+                  <Text
+                    style={styles.penaltyItemDate}
+                  >
+                    Due:{" "}
+                    {new Date(
+                      fee.dueDate
+                    ).toLocaleDateString()}
                   </Text>
 
                   <Text
                     style={
-                      styles.penaltyItemAmount
+                      styles.penaltyItemDescription
                     }
                   >
-                    {fmtCurrency(
-                      fee.feeAmount
-                    )}
+                    {fee.daysLate} day(s) late
+                  </Text>
+
+                  <Text
+                    style={styles.penaltyItemType}
+                  >
+                    {isVerifiedView
+                      ? "Accruing Late Fee (not yet applied)"
+                      : "Accrued Late Fee (full outstanding)"}
                   </Text>
                 </View>
-
-                <Text
-                  style={styles.penaltyItemDate}
-                >
-                  Due:{" "}
-                  {new Date(
-                    fee.dueDate
-                  ).toLocaleDateString()}
-                </Text>
-
-                <Text
-                  style={
-                    styles.penaltyItemDescription
-                  }
-                >
-                  {fee.daysLate} day(s) late
-                </Text>
-
-                <Text
-                  style={styles.penaltyItemType}
-                >
-                  Accruing Late Fee (not yet applied)
-                </Text>
-              </View>
-            )
+              );
+            }
           )}
 
           {/* -------------------------------------------------- */}
@@ -968,7 +1008,9 @@ export default function AddLoanModal() {
           <Text
             style={styles.totalPenaltyText}
           >
-            Total Outstanding:{" "}
+            {isVerifiedView
+              ? "Total Outstanding:"
+              : "Accrued Total:"}{" "}
             {fmtCurrency(penaltyAmount)}
           </Text>
 
@@ -1109,7 +1151,10 @@ export default function AddLoanModal() {
                 ? "⚠️ This member has outstanding obligations: "
                 : "⚠️ Cannot apply for loan: "}
               {unpaidPenalties.count} unpaid
-              item(s) totaling{" "}
+              item(s){" "}
+              {isVerifiedView
+                ? "totaling"
+                : "with an accrued total of about"}{" "}
               {fmtCurrency(penaltyAmount)}
             </Text>
 
@@ -1732,6 +1777,25 @@ const styles = StyleSheet.create({
     color: Colors.text3,
     textAlign: "center",
     marginBottom: S.md,
+  },
+
+  // Shown only when isVerifiedView is false — the totals in the
+  // list below are accrued, not verified against the ledger, so
+  // this banner explains the caveat before the member reads the
+  // numbers.
+  approxBanner: {
+    backgroundColor:
+      Colors.elevated,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: R.md,
+    padding: S.md,
+    marginBottom: S.md,
+  },
+  approxBannerText: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: Colors.text2,
   },
 
   penaltyList: {

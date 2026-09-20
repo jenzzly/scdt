@@ -162,7 +162,23 @@ export interface StoreState {
   approveContribution: (contributionId: ID) => Promise<void>;
   rejectContribution: (contributionId: ID, reason: string) => Promise<void>;
   updateContribution: (contributionId: ID, data: Partial<Contribution>) => Promise<void>;
-  submitLoan: (data: Omit<Loan, "id" | "createdAt" | "updatedAt" | "monthlyPayment" | "totalInterest" | "totalRepayable" | "amountRepaid" | "balance" | "lateFees" | "schedule" | "approvals" | "status">) => Promise<ID>;
+  submitLoan: (data: Omit<Loan,
+    | "id"
+    | "createdAt"
+    | "updatedAt"
+    | "monthlyPayment"
+    | "totalInterest"
+    | "totalRepayable"
+    | "amountRepaid"
+    | "balance"
+    | "lateFees"
+    | "schedule"
+    | "approvals"
+    | "status"
+    | "accruedInterest"
+    | "totalInterestPaid"
+    | "lastAccrualDate"
+  >) => Promise<ID>;
   approveLoanStep: (loanId: ID, step: "loan_officer" | "committee" | "accountant", approved: boolean, comment?: string) => Promise<void>;
   rejectLoan: (loanId: ID, reason: string) => Promise<void>;
   updateLoan: (loanId: ID, data: Partial<Loan>) => Promise<void>;

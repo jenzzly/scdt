@@ -245,7 +245,11 @@ service cloud.firestore {
       }
 
       match /walletTransactions/{id} {
-        allow read: if isAdminOrAccountant(groupId);
+        allow get: if isAdminOrAccountant(groupId)
+          || (isActiveMember(groupId)
+              && resource.data.memberId == membershipData(groupId).memberId);
+        allow list: if isAdminOrAccountant(groupId)
+          || isActiveMember(groupId);
         allow create: if isAuth() && (
           isAdminOrAccountant(groupId)
           || request.resource.data.id == '_init'

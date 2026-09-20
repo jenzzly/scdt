@@ -74,10 +74,9 @@ function KpiCard({ label, value, icon, subtext, accentColor = C.primary, onPress
 // Three series per year: contributions, loans, fees. Plain-View bars —
 // no SVG dependency, works identically on web and native.
 //
-// Bar color encodes the series; bar height encodes the amount relative
-// to the largest single value across all series/years, so a dominant
-// series doesn't flatten the others into invisible slivers. A legend
-// underneath identifies the colors.
+// Personal view: only this member's own records.
+// Group view: the whole group's records (readable via the same
+// list rules that already gate the Members tab).
 type ActivityYear = {
   year: number;
   contributions: number;
@@ -105,7 +104,7 @@ function ActivityChart({
     ...years.flatMap(y => [y.contributions, y.loans, y.fees]),
   );
 
-  // Cap at 6 most recent years so the chart doesn't overflow on
+  // Cap at the 6 most recent years so the chart doesn't overflow on
   // long-lived groups.
   const shown = years.slice(-6);
 
@@ -174,8 +173,8 @@ export default function DashboardScreen() {
 
   useRecalcTotals();
 
-  // Personal data — dual-keyed filter so records written under either
-  // memberId or userId are captured.
+  // Personal records — dual-keyed so records written under either
+  // `memberId` or legacy `userId` are picked up.
   const myLoans = useMemo(
     () =>
       loans.filter(
@@ -226,18 +225,18 @@ export default function DashboardScreen() {
     [contributions, isGroupView, canApproveContributions],
   );
 
-  const activeLoans     = useMemo(() => myLoans.filter(l => l.status === "disbursed"), [myLoans]);
-  const pendingLoans    = useMemo(() => myLoans.filter(l => l.status.startsWith("pending_")), [myLoans]);
-  const approvedLoans   = useMemo(() => myLoans.filter(l => l.status === "approved"), [myLoans]);
+  const activeLoans   = useMemo(() => myLoans.filter(l => l.status === "disbursed"), [myLoans]);
+  const pendingLoans  = useMemo(() => myLoans.filter(l => l.status.startsWith("pending_")), [myLoans]);
+  const approvedLoans = useMemo(() => myLoans.filter(l => l.status === "approved"), [myLoans]);
 
-  // ── My Total Contributions ───────────────────────────────────────
+  // ── MY TOTAL CONTRIBUTIONS ───────────────────────────────────────
   //
-  // Computed directly from this member's approved contribution records.
-  // Deliberately NOT read from `currentMember.totalContributions`:
-  // recalcGroupTotals recomputes that field from walletTransactions, and
-  // a plain member cannot read the wallet collection — so the field
-  // silently reads back as 0 for every non-staff role regardless of how
-  // many approved contributions actually exist.
+  // Sum of THIS member's own approved contribution records. Deliberately
+  // computed from the contributions collection rather than reading
+  // `currentMember.totalContributions`: recalcGroupTotals recomputes
+  // that field from walletTransactions, and a plain member cannot read
+  // the wallet collection, so the field silently reads back as 0 for
+  // non-staff roles regardless of how many approved contributions exist.
   const myTotalContribs = useMemo(
     () =>
       round2(
@@ -267,21 +266,31 @@ export default function DashboardScreen() {
 
   // ── MY SHARE ─────────────────────────────────────────────────────
   //
-  // Each active member's proportional slice of the group's whole pot.
-  // Computed entirely from collections readable by every role —
-  // approved contributions (list-readable) and disbursed loans
-  // (list-readable) — rather than the persisted group.totalSavings
-  // field, which is maintained by recalcGroupTotals on a wallet read
-  // that plain members can't perform and therefore drifts stale.
-  const groupContributionsPool = useMemo(
-    () =>
-      round2(
-        contributions
-          .filter((c) => c.status === "approved")
-          .reduce((sum, c) => sum + (c.amount || 0), 0),
-      ),
-    [contributions],
-  );
+  // Model:
+  //   My Share = my own approved contributions
+  //            + (group profit pool ÷ active member count)
+  //
+  // Your savings are yours. Only the profit the GROUP earned is split
+  // equally across active members — that's the honest reading of "all
+  // profit is shared among members."
+  //
+  // The profit pool is composed of two things, both readable by every
+  // role from the SAME sources so that a member, an accountant, and the
+  // admin all compute an identical value for a given member:
+  //
+  //   • Already-earned interest — persisted on the group doc as
+  //     `totalInterestEarned`, maintained by recalcGroupTotals. Read
+  //     from the group doc, which every authenticated user may `get`.
+  //
+  //   • Projected interest — for every currently-disbursed loan,
+  //     (totalInterest ÷ totalRepayable) × remaining balance. Computed
+  //     from the loans collection, which is list-readable by every
+  //     active member.
+  //
+  // Deliberately NOT sourcing this from `walletTransactions` — a plain
+  // member can't read that collection, so the value would silently
+  // differ by role (the exact bug this replaces).
+  const groupInterestEarned = group?.totalInterestEarned ?? 0;
 
   const projectedGroupInterest = useMemo(() => {
     return loans.reduce((sum, l) => {
@@ -292,25 +301,22 @@ export default function DashboardScreen() {
     }, 0);
   }, [loans]);
 
+  const groupProfitPool = round2(groupInterestEarned + projectedGroupInterest);
+
   const activeMemberCount = Math.max(
     1,
     groupMembers.filter((m) => m.status === "active").length,
   );
 
-  const myShare = useMemo(
-    () =>
-      round2(
-        (groupContributionsPool + projectedGroupInterest) /
-          activeMemberCount,
-      ),
-    [groupContributionsPool, projectedGroupInterest, activeMemberCount],
-  );
+  const myProfitShare = round2(groupProfitPool / activeMemberCount);
+
+  const myShare = round2(myTotalContribs + myProfitShare);
 
   // ── Recent Activity ──────────────────────────────────────────────
   //
   // Group view: whole wallet.
   // Personal view (staff): the member's own wallet txs.
-  // Personal view (plain member): wallet is unreadable, so synthesize
+  // Personal view (plain member): wallet is unreadable → synthesize
   //   from contributions + loans.
   type ActivityRow = {
     id: string;
@@ -376,14 +382,10 @@ export default function DashboardScreen() {
 
   // ── Chart data ───────────────────────────────────────────────────
   //
-  // Year-bucketed activity series. In personal view, both the source
-  // collections and the computed values are limited to this member's
-  // own records. In group view, the whole group is included.
-  //
-  // Fees are the sum of:
-  //   • meeting penalties in the year (readable to every role)
-  //   • late_fee wallet txs in the year (only populated for staff;
-  //     empty array for members, so they simply contribute 0)
+  // Year-bucketed activity series. Personal view: this member's records
+  // only. Group view: whole group. Fees come from meeting penalties
+  // (readable by every role) and, where the caller can read the wallet,
+  // also from `late_fee` wallet txs.
   const chartYears: ActivityYear[] = useMemo(() => {
     const byYear = new Map<
       number,
@@ -404,8 +406,8 @@ export default function DashboardScreen() {
 
     const scopeContribs = isGroupView ? contributions : myContribs;
     const scopeLoans    = isGroupView ? loans : myLoans;
+    const scopeWallet   = isGroupView ? wallet : myWallet;
 
-    // Contributions
     for (const c of scopeContribs) {
       if (c.status !== "approved") continue;
       const y = yearOf(c.date);
@@ -413,32 +415,18 @@ export default function DashboardScreen() {
       ensure(y).contributions += c.amount || 0;
     }
 
-    // Loans (disbursed only — the year the money actually moved)
     for (const l of scopeLoans) {
       const y = yearOf((l as any).disbursementDate);
       if (y === null) continue;
       ensure(y).loans += l.amount || 0;
     }
 
-    // Fees — meeting penalties (readable by all)
-    const myMeetingPenalties = new Map<string, number>();
-    for (const m of groupMembers) {
-      void m;
-    }
-    // Use the meetings collection if available via the store; we can't
-    // rely on it being loaded here, so fall back to wallet txs only
-    // for the fees bucket. Members' meeting penalties were already
-    // shown in the ledger the officer sees; here we keep the chart
-    // focused on wallet-visible fees to avoid divergence.
-    const scopeWallet = isGroupView ? wallet : myWallet;
     for (const tx of scopeWallet) {
       if (tx.type !== "late_fee") continue;
       const y = yearOf(tx.date);
       if (y === null) continue;
       ensure(y).fees += Math.abs(tx.amount || 0);
     }
-
-    void myMeetingPenalties;
 
     return Array.from(byYear.entries())
       .map(([year, v]) => ({
@@ -448,25 +436,15 @@ export default function DashboardScreen() {
         fees: round2(v.fees),
       }))
       .sort((a, b) => a.year - b.year);
-  }, [
-    isGroupView,
-    contributions,
-    myContribs,
-    loans,
-    myLoans,
-    wallet,
-    myWallet,
-    groupMembers,
-  ]);
+  }, [isGroupView, contributions, myContribs, loans, myLoans, wallet, myWallet]);
 
   const QUICK_ACTIONS = [
-    { label: "Contribute", icon: "↑",  route: "/modals/add-contribution", show: permissions.addInvestment },
+    { label: "Contribute", icon: "↑",  route: "/modals/add-contribution", show: permissions.addContribution },
     { label: "New Loan",   icon: "₣",  route: "/modals/add-loan",         show: permissions.addLoan },
     { label: "Invest",     icon: "◈",  route: "/modals/add-investment",   show: permissions.addInvestment },
     { label: "Expense",    icon: "↓",  route: "/modals/add-expense",      show: isAdmin },
   ].filter(a => a.show);
 
-  // Render role-specific group KPI cards
   const renderGroupKpis = () => {
     switch (role) {
       case "accountant":
@@ -497,10 +475,10 @@ export default function DashboardScreen() {
               onPress={() => router.push("/(tabs)/wallet")}
             />
             <KpiCard
-              label="Total Savings"
-              value={fmtCurrency(groupContributionsPool)}
+              label="Group Profit Pool"
+              value={fmtCurrency(groupProfitPool)}
               icon="📊"
-              subtext="All members"
+              subtext="Interest + projections"
               accentColor={C.brandBlue}
               onPress={() => router.push("/(tabs)/reports")}
             />
@@ -588,12 +566,12 @@ export default function DashboardScreen() {
         return (
           <View style={st.kpiGrid}>
             <KpiCard
-              label="Total Contributions"
-              value={fmtCurrency(groupContributionsPool)}
+              label="Group Profit Pool"
+              value={fmtCurrency(groupProfitPool)}
               icon="💵"
-              subtext={`${groupMembers.filter(m => m.status === "active").length} active members`}
+              subtext={`÷ ${activeMemberCount} active members`}
               accentColor={C.primary}
-              onPress={() => router.push("/(tabs)/contributions")}
+              onPress={() => router.push("/(tabs)/reports")}
             />
             <KpiCard
               label="Active Loans"
@@ -649,10 +627,11 @@ export default function DashboardScreen() {
           </View>
         ) : (
           /* ── Account card — Personal View ──
-              MY SHARE = (group's approved contributions + projected
-              interest on disbursed loans) ÷ active member count.
-              Computed entirely from list-readable collections so it
-              works for every role. */
+              MY SHARE = your own contributions + an equal slice of the
+              group's profit pool. Because the formula sources only
+              collections readable by every role, the number is
+              identical whether a member, an accountant, or the admin
+              is looking at it. */
           <View style={st.accountCard}>
             <View style={[st.cardGrid, { pointerEvents: "none" }]} />
             <Text style={st.cardLabel}>MY SHARE</Text>
@@ -661,9 +640,16 @@ export default function DashboardScreen() {
 
             <View style={st.cardPills}>
               <View style={st.cardPill}>
-                <Text style={st.cardPillLabel} numberOfLines={1}>PAYMENTS</Text>
+                <Text style={st.cardPillLabel} numberOfLines={1}>MY SAVINGS</Text>
                 <Text style={st.cardPillVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                  {myContribs.filter(c => c.status === "approved").length}
+                  {fmtCurrency(myTotalContribs)}
+                </Text>
+              </View>
+              <View style={st.cardPillDivider} />
+              <View style={st.cardPill}>
+                <Text style={st.cardPillLabel} numberOfLines={1}>PROFIT SHARE</Text>
+                <Text style={st.cardPillVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                  {fmtCurrency(myProfitShare)}
                 </Text>
               </View>
               <View style={st.cardPillDivider} />
@@ -671,13 +657,6 @@ export default function DashboardScreen() {
                 <Text style={st.cardPillLabel} numberOfLines={1}>ACTIVE LOANS</Text>
                 <Text style={st.cardPillVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
                   {activeLoans.length}
-                </Text>
-              </View>
-              <View style={st.cardPillDivider} />
-              <View style={st.cardPill}>
-                <Text style={st.cardPillLabel} numberOfLines={1}>INTEREST</Text>
-                <Text style={st.cardPillVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                  {fmtCurrency(loanEarnings)}
                 </Text>
               </View>
             </View>
@@ -707,10 +686,10 @@ export default function DashboardScreen() {
                 onPress={() => router.push("/(tabs)/loans")}
               />
               <KpiCard
-                label="Interest Earned"
-                value={fmtCurrency(loanEarnings)}
+                label="Profit Share"
+                value={fmtCurrency(myProfitShare)}
                 icon="📈"
-                subtext="From group earnings"
+                subtext={`1/${activeMemberCount} of group profit`}
                 accentColor={C.accent}
               />
               <KpiCard
@@ -759,7 +738,7 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* ── Pending actions queue (when in Group View) ── */}
+        {/* ── Pending actions queue (Group View only) ── */}
         {isGroupView && (reviewLoans.length > 0 || reviewContribs.length > 0) && (
           <View style={st.block}>
             <SectionHeader
