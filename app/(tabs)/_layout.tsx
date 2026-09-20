@@ -509,8 +509,6 @@ function DesktopTopHeader({
 
           {userMenuOpen && (
             <>
-              {/* Backdrop to close on outside click — must sit above
-                  page content but below the dropdown itself */}
               <TouchableOpacity
                 style={dh.menuBackdrop}
                 activeOpacity={1}
@@ -1077,7 +1075,25 @@ export default function TabsLayout() {
   };
 
   // ── Pending-approval gate ────────────────
-  // Show immediately if member is pending (or if auth exists but member isn't loaded yet)
+  //
+  // Race condition note: `authUid && !currentMember` is TRUE during the
+  // window between "Firebase Auth finished" and "ensureMemberExists
+  // resolved". Firing the pending screen during that window briefly
+  // shows "Awaiting Approval" to every correctly-approved member right
+  // after login, and — if ensureMemberExists ever fails or is slow —
+  // can leave them stuck there permanently.
+  //
+  // The gate now only fires once we've actually given member resolution
+  // a chance to complete. Sync in flight = no gate yet.
+  const stillResolvingMember =
+    !!authUid &&
+    !currentMember &&
+    (syncStatus === "syncing" || syncStatus === "pending");
+
+  if (stillResolvingMember) {
+    return null;
+  }
+
   if (
     (currentMember && currentMember.status === "pending" && currentUserRole !== "admin") ||
     (authUid && !currentMember)

@@ -819,6 +819,10 @@ export function findOverdueInstallments(
   for (const loan of loans) {
     // Keep showing unpaid late fees after the loan is repaid until the
     // person actually pays the fee (feePaid on the wallet tx).
+    if ((loan as any).lateFeesDisabled === true) {
+      continue;
+    }
+    
     if (
       loan.status !== "disbursed" &&
       loan.status !== "repaid"

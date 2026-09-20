@@ -258,6 +258,7 @@ export interface Loan {
   lastAccrualDate: string;    // ISO date of last accrual calculation
   totalInterestPaid: number;  // cumulative interest actually paid
   lateFees: number;
+  lateFeesDisabled?: boolean;
   status: LoanStatus;
   approvals: LoanApprovals;
   purpose?: string;

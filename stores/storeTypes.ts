@@ -127,6 +127,13 @@ export interface StoreState {
   // doesn't exist. See loanSlice.ts.
   rescheduleLoanInstallment: (loanId: ID, installmentIndex: number, newDueDate: string) => Promise<void>;
 
+  // Toggles late-fee tracking for a single loan (loan.lateFeesDisabled).
+  // Disabling ALSO voids every currently-outstanding late_fee tx for that
+  // loan (marks feePaid = true) so nothing lingers on the ledger. Enabling
+  // only flips the flag back — it does NOT restore previously-voided fees,
+  // since those were deliberately cleared. See loanSlice.ts.
+  setLoanLateFeesEnabled: (loanId: ID, enabled: boolean) => Promise<void>;
+
   // Contribution actions
   deleteContribution: (contributionId: ID, reason: string) => Promise<void>;
   // Edits a contribution's amount/date/description AND, if it's approved

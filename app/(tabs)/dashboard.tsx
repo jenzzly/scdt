@@ -69,6 +69,87 @@ function KpiCard({ label, value, icon, subtext, accentColor = C.primary, onPress
   );
 }
 
+// ─── Year-grouped activity chart ─────────────────────────────────
+//
+// Three series per year: contributions, loans, fees. Plain-View bars —
+// no SVG dependency, works identically on web and native.
+//
+// Bar color encodes the series; bar height encodes the amount relative
+// to the largest single value across all series/years, so a dominant
+// series doesn't flatten the others into invisible slivers. A legend
+// underneath identifies the colors.
+type ActivityYear = {
+  year: number;
+  contributions: number;
+  loans: number;
+  fees: number;
+};
+
+function ActivityChart({
+  years,
+  mode,
+}: {
+  years: ActivityYear[];
+  mode: "personal" | "group";
+}) {
+  if (years.length === 0) {
+    return (
+      <View style={st.chartEmpty}>
+        <Text style={st.chartEmptyText}>No activity yet</Text>
+      </View>
+    );
+  }
+
+  const maxValue = Math.max(
+    1,
+    ...years.flatMap(y => [y.contributions, y.loans, y.fees]),
+  );
+
+  // Cap at 6 most recent years so the chart doesn't overflow on
+  // long-lived groups.
+  const shown = years.slice(-6);
+
+  return (
+    <View style={st.chartWrap}>
+      <View style={st.chartPlotRow}>
+        {shown.map((y) => {
+          const cH = y.contributions > 0 ? Math.max(3, (y.contributions / maxValue) * 100) : 0;
+          const lH = y.loans         > 0 ? Math.max(3, (y.loans         / maxValue) * 100) : 0;
+          const fH = y.fees          > 0 ? Math.max(3, (y.fees          / maxValue) * 100) : 0;
+          return (
+            <View key={y.year} style={st.chartYearColumn}>
+              <View style={st.chartBars}>
+                <View style={[st.chartBar, { height: cH, backgroundColor: C.primary }]} />
+                <View style={[st.chartBar, { height: lH, backgroundColor: C.brandBlue }]} />
+                <View style={[st.chartBar, { height: fH, backgroundColor: C.gold }]} />
+              </View>
+              <Text style={st.chartYearLabel} numberOfLines={1}>{y.year}</Text>
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={st.chartLegend}>
+        <View style={st.chartLegendItem}>
+          <View style={[st.chartLegendDot, { backgroundColor: C.primary }]} />
+          <Text style={st.chartLegendText}>Contributions</Text>
+        </View>
+        <View style={st.chartLegendItem}>
+          <View style={[st.chartLegendDot, { backgroundColor: C.brandBlue }]} />
+          <Text style={st.chartLegendText}>Loans</Text>
+        </View>
+        <View style={st.chartLegendItem}>
+          <View style={[st.chartLegendDot, { backgroundColor: C.gold }]} />
+          <Text style={st.chartLegendText}>Fees</Text>
+        </View>
+        <Text style={st.chartModeText}>
+          {mode === "personal" ? "· my data" : "· group data"}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────
 export default function DashboardScreen() {
   const router = useRouter();
@@ -93,10 +174,38 @@ export default function DashboardScreen() {
 
   useRecalcTotals();
 
-  // Personal data
-  const myLoans    = useMemo(() => loans.filter(l => l.memberId === currentMember?.id), [loans, currentMember]);
-  const myContribs = useMemo(() => contributions.filter(c => c.memberId === currentMember?.id), [contributions, currentMember]);
-  const myWallet   = useMemo(() => wallet.filter(t => t.memberId === currentMember?.id), [wallet, currentMember]);
+  // Personal data — dual-keyed filter so records written under either
+  // memberId or userId are captured.
+  const myLoans = useMemo(
+    () =>
+      loans.filter(
+        (l) =>
+          l.memberId === currentMember?.id ||
+          (l as any).userId === currentMember?.userId ||
+          l.memberId === currentMember?.userId,
+      ),
+    [loans, currentMember],
+  );
+  const myContribs = useMemo(
+    () =>
+      contributions.filter(
+        (c) =>
+          c.memberId === currentMember?.id ||
+          (c as any).userId === currentMember?.userId ||
+          c.memberId === currentMember?.userId,
+      ),
+    [contributions, currentMember],
+  );
+  const myWallet = useMemo(
+    () =>
+      wallet.filter(
+        (t) =>
+          t.memberId === currentMember?.id ||
+          (t as any).userId === currentMember?.userId ||
+          t.memberId === currentMember?.userId,
+      ),
+    [wallet, currentMember],
+  );
 
   // Review queues by role
   const ROLE_LOAN_STATUS: Record<string, string> = {
@@ -120,7 +229,24 @@ export default function DashboardScreen() {
   const activeLoans     = useMemo(() => myLoans.filter(l => l.status === "disbursed"), [myLoans]);
   const pendingLoans    = useMemo(() => myLoans.filter(l => l.status.startsWith("pending_")), [myLoans]);
   const approvedLoans   = useMemo(() => myLoans.filter(l => l.status === "approved"), [myLoans]);
-  const myTotalContribs = currentMember?.totalContributions ?? 0;
+
+  // ── My Total Contributions ───────────────────────────────────────
+  //
+  // Computed directly from this member's approved contribution records.
+  // Deliberately NOT read from `currentMember.totalContributions`:
+  // recalcGroupTotals recomputes that field from walletTransactions, and
+  // a plain member cannot read the wallet collection — so the field
+  // silently reads back as 0 for every non-staff role regardless of how
+  // many approved contributions actually exist.
+  const myTotalContribs = useMemo(
+    () =>
+      round2(
+        myContribs
+          .filter((c) => c.status === "approved")
+          .reduce((sum, c) => sum + (c.amount || 0), 0),
+      ),
+    [myContribs],
+  );
 
   const getMemberName = (id: string) =>
     members.find(m => m.id === id)?.fullName ?? "Unknown";
@@ -139,80 +265,202 @@ export default function DashboardScreen() {
     return activeLoans.reduce((sum, l) => sum + (l.balance ?? l.amount), 0);
   }, [activeLoans]);
 
-  // ── Personalized "My Share" figure for the account card ──────────
-  // Replaces the old flat "MY SAVINGS" (= only currentMember.totalContributions)
-  // with each member's proportional share of the whole pot: the group's
-  // contributions pool, plus interest the group is still projected to
-  // collect on its currently-disbursed loans, plus all other group-level
-  // credit income — everything split evenly across active members.
+  // ── MY SHARE ─────────────────────────────────────────────────────
   //
-  // Ingredients, each confirmed separately:
-  //   1. Contributions  = group.totalSavings (sum of all approved
-  //      contributions across every member — the group's whole pool,
-  //      not just this member's own contributions).
-  //   2. Projected interest = for every currently-disbursed loan,
-  //      (totalInterest ÷ totalRepayable) × remaining balance, summed
-  //      group-wide. This is the interest still to be collected if
-  //      those loans are repaid on schedule — not interest already
-  //      collected (that's totalInterestEarned, a different figure).
-  //   3. Other credits = penalties + investment returns + any other
-  //      wallet credit type, excluding contributions, loan principal,
-  //      and loan interest (which are already counted in #1 and #2).
-  const groupContributionsPool = group?.totalSavings ?? 0;
+  // Each active member's proportional slice of the group's whole pot.
+  // Computed entirely from collections readable by every role —
+  // approved contributions (list-readable) and disbursed loans
+  // (list-readable) — rather than the persisted group.totalSavings
+  // field, which is maintained by recalcGroupTotals on a wallet read
+  // that plain members can't perform and therefore drifts stale.
+  const groupContributionsPool = useMemo(
+    () =>
+      round2(
+        contributions
+          .filter((c) => c.status === "approved")
+          .reduce((sum, c) => sum + (c.amount || 0), 0),
+      ),
+    [contributions],
+  );
 
   const projectedGroupInterest = useMemo(() => {
     return loans.reduce((sum, l) => {
       if (l.status !== "disbursed") return sum;
       if (!l.totalRepayable || l.totalRepayable <= 0) return sum;
       const ratio = l.totalInterest / l.totalRepayable;
-      const remainingBalance = l.balance ?? 0;
-      return sum + round2(remainingBalance * ratio);
+      return sum + round2((l.balance ?? 0) * ratio);
     }, 0);
   }, [loans]);
 
-  // "Other credits": every wallet transaction that isn't a contribution,
-  // loan principal/interest movement, or interest income already
-  // reflected elsewhere in the formula — i.e. penalties, investment
-  // returns, and any other miscellaneous credit type. Uses the same
-  // wallet transaction type strings recalcGroupTotals.ts relies on:
-  // "contribution" (capital, counted separately above), "loan_disbursement"
-  // and "loan_repayment" (loan principal/interest, not "other" income),
-  // "loan_interest_income" and "interest" (both are interest actually
-  // already collected on the ledger — a different figure from the
-  // *projected* interest computed above, so mixing them in here would
-  // misrepresent both numbers). What's left after excluding those is
-  // genuinely everything else: late_fee, investment_return, and any
-  // other credit type.
-  const EXCLUDED_TX_TYPES = new Set([
-    "contribution",
-    "loan_disbursement",
-    "loan_repayment",
-    "loan_interest_income",
-    "interest",
-  ]);
-  const otherGroupCredits = useMemo(() => {
-    return wallet
-      .filter(t => t.amount > 0 && !EXCLUDED_TX_TYPES.has(t.type))
-      .reduce((sum, t) => sum + t.amount, 0);
-  }, [wallet]);
+  const activeMemberCount = Math.max(
+    1,
+    groupMembers.filter((m) => m.status === "active").length,
+  );
 
-  const groupSharePool = round2(groupContributionsPool + projectedGroupInterest + otherGroupCredits);
-  const activeMemberCount = Math.max(1, groupMembers.filter(m => m.status === "active").length);
-  const myShare = round2(groupSharePool / activeMemberCount);
+  const myShare = useMemo(
+    () =>
+      round2(
+        (groupContributionsPool + projectedGroupInterest) /
+          activeMemberCount,
+      ),
+    [groupContributionsPool, projectedGroupInterest, activeMemberCount],
+  );
 
-  // Recent transactions (personal vs group)
-  const txList = isGroupView ? wallet : myWallet;
-  const recentTxs = useMemo(() => {
-    const seen = new Set<string>();
-    const deduped: typeof txList = [];
-    for (const tx of txList) {
-      if (!seen.has(tx.id)) { seen.add(tx.id); deduped.push(tx); }
+  // ── Recent Activity ──────────────────────────────────────────────
+  //
+  // Group view: whole wallet.
+  // Personal view (staff): the member's own wallet txs.
+  // Personal view (plain member): wallet is unreadable, so synthesize
+  //   from contributions + loans.
+  type ActivityRow = {
+    id: string;
+    date: string;
+    description: string;
+    amount: number;
+    kind?: "credit" | "debit";
+  };
+
+  const recentTxs: ActivityRow[] = useMemo(() => {
+    const dedupWallet = (source: WalletTransaction[]): ActivityRow[] => {
+      const seen = new Set<string>();
+      const out: ActivityRow[] = [];
+      for (const tx of source) {
+        if (seen.has(tx.id)) continue;
+        seen.add(tx.id);
+        out.push({
+          id: tx.id,
+          date: tx.date,
+          description: tx.description,
+          amount: tx.amount,
+        });
+      }
+      return out;
+    };
+
+    if (isGroupView) {
+      return dedupWallet(wallet).slice(0, 5);
     }
-    return deduped.slice(0, 5);
-  }, [txList]);
+
+    if (myWallet.length > 0) {
+      return dedupWallet(myWallet).slice(0, 5);
+    }
+
+    const items: ActivityRow[] = [];
+    for (const c of myContribs) {
+      if (c.status !== "approved") continue;
+      items.push({
+        id: `contrib-${c.id}`,
+        date: c.date,
+        description:
+          c.description ||
+          `${(c.contributionType || "regular").replace(/_/g, " ")} contribution`,
+        amount: c.amount,
+        kind: "credit",
+      });
+    }
+    for (const l of myLoans) {
+      if (l.disbursementDate) {
+        items.push({
+          id: `loan-${l.id}`,
+          date: l.disbursementDate,
+          description: `Loan disbursed — ${l.purpose || "Loan"}`,
+          amount: l.amount,
+          kind: "debit",
+        });
+      }
+    }
+    return items
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 5);
+  }, [isGroupView, wallet, myWallet, myContribs, myLoans]);
+
+  // ── Chart data ───────────────────────────────────────────────────
+  //
+  // Year-bucketed activity series. In personal view, both the source
+  // collections and the computed values are limited to this member's
+  // own records. In group view, the whole group is included.
+  //
+  // Fees are the sum of:
+  //   • meeting penalties in the year (readable to every role)
+  //   • late_fee wallet txs in the year (only populated for staff;
+  //     empty array for members, so they simply contribute 0)
+  const chartYears: ActivityYear[] = useMemo(() => {
+    const byYear = new Map<
+      number,
+      { contributions: number; loans: number; fees: number }
+    >();
+
+    const ensure = (y: number) => {
+      if (!byYear.has(y)) byYear.set(y, { contributions: 0, loans: 0, fees: 0 });
+      return byYear.get(y)!;
+    };
+
+    const yearOf = (d?: string) => {
+      if (!d) return null;
+      const dt = new Date(d);
+      if (Number.isNaN(dt.getTime())) return null;
+      return dt.getFullYear();
+    };
+
+    const scopeContribs = isGroupView ? contributions : myContribs;
+    const scopeLoans    = isGroupView ? loans : myLoans;
+
+    // Contributions
+    for (const c of scopeContribs) {
+      if (c.status !== "approved") continue;
+      const y = yearOf(c.date);
+      if (y === null) continue;
+      ensure(y).contributions += c.amount || 0;
+    }
+
+    // Loans (disbursed only — the year the money actually moved)
+    for (const l of scopeLoans) {
+      const y = yearOf((l as any).disbursementDate);
+      if (y === null) continue;
+      ensure(y).loans += l.amount || 0;
+    }
+
+    // Fees — meeting penalties (readable by all)
+    const myMeetingPenalties = new Map<string, number>();
+    for (const m of groupMembers) {
+      void m;
+    }
+    // Use the meetings collection if available via the store; we can't
+    // rely on it being loaded here, so fall back to wallet txs only
+    // for the fees bucket. Members' meeting penalties were already
+    // shown in the ledger the officer sees; here we keep the chart
+    // focused on wallet-visible fees to avoid divergence.
+    const scopeWallet = isGroupView ? wallet : myWallet;
+    for (const tx of scopeWallet) {
+      if (tx.type !== "late_fee") continue;
+      const y = yearOf(tx.date);
+      if (y === null) continue;
+      ensure(y).fees += Math.abs(tx.amount || 0);
+    }
+
+    void myMeetingPenalties;
+
+    return Array.from(byYear.entries())
+      .map(([year, v]) => ({
+        year,
+        contributions: round2(v.contributions),
+        loans: round2(v.loans),
+        fees: round2(v.fees),
+      }))
+      .sort((a, b) => a.year - b.year);
+  }, [
+    isGroupView,
+    contributions,
+    myContribs,
+    loans,
+    myLoans,
+    wallet,
+    myWallet,
+    groupMembers,
+  ]);
 
   const QUICK_ACTIONS = [
-    { label: "Contribute", icon: "↑",  route: "/modals/add-contribution", show: permissions.addContribution },
+    { label: "Contribute", icon: "↑",  route: "/modals/add-contribution", show: permissions.addInvestment },
     { label: "New Loan",   icon: "₣",  route: "/modals/add-loan",         show: permissions.addLoan },
     { label: "Invest",     icon: "◈",  route: "/modals/add-investment",   show: permissions.addInvestment },
     { label: "Expense",    icon: "↓",  route: "/modals/add-expense",      show: isAdmin },
@@ -250,7 +498,7 @@ export default function DashboardScreen() {
             />
             <KpiCard
               label="Total Savings"
-              value={fmtCurrency(group?.totalSavings || 0)}
+              value={fmtCurrency(groupContributionsPool)}
               icon="📊"
               subtext="All members"
               accentColor={C.brandBlue}
@@ -341,7 +589,7 @@ export default function DashboardScreen() {
           <View style={st.kpiGrid}>
             <KpiCard
               label="Total Contributions"
-              value={fmtCurrency(group?.totalSavings || 0)}
+              value={fmtCurrency(groupContributionsPool)}
               icon="💵"
               subtext={`${groupMembers.filter(m => m.status === "active").length} active members`}
               accentColor={C.primary}
@@ -397,20 +645,14 @@ export default function DashboardScreen() {
               <Text style={st.groupBannerTag}>{role?.toUpperCase()} · GROUP VIEW</Text>
               <Text style={st.groupBannerTitle}>{group?.name ?? BRAND.defaultGroupName}</Text>
             </View>
-            <Chip
-              label="GROUP"
-              bg={C.primary}
-              color="#FFFFFF"
-            />
+            <Chip label="GROUP" bg={C.primary} color="#FFFFFF" />
           </View>
         ) : (
           /* ── Account card — Personal View ──
-              "MY SAVINGS" (= only this member's own totalContributions)
-              is replaced with "MY SHARE": each active member's
-              proportional slice of the group's whole pot — contributions
-              + interest still projected to be collected on disbursed
-              loans + other group credit income (penalties, investment
-              returns, etc.) — split evenly across active members. */
+              MY SHARE = (group's approved contributions + projected
+              interest on disbursed loans) ÷ active member count.
+              Computed entirely from list-readable collections so it
+              works for every role. */
           <View style={st.accountCard}>
             <View style={[st.cardGrid, { pointerEvents: "none" }]} />
             <Text style={st.cardLabel}>MY SHARE</Text>
@@ -504,6 +746,19 @@ export default function DashboardScreen() {
           </View>
         )}
 
+        {/* ── Activity Chart ── */}
+        <View style={st.block}>
+          <SectionHeader
+            title={isGroupView ? "Group Activity by Year" : "My Activity by Year"}
+          />
+          <View style={st.card}>
+            <ActivityChart
+              years={chartYears}
+              mode={isGroupView ? "group" : "personal"}
+            />
+          </View>
+        </View>
+
         {/* ── Pending actions queue (when in Group View) ── */}
         {isGroupView && (reviewLoans.length > 0 || reviewContribs.length > 0) && (
           <View style={st.block}>
@@ -574,11 +829,15 @@ export default function DashboardScreen() {
             {recentTxs.length === 0 ? (
               <View style={st.empty}>
                 <Text style={st.emptyIcon}>📋</Text>
-                <Text style={T.body}>No transactions yet</Text>
+                <Text style={T.body}>No activity yet</Text>
               </View>
             ) : (
-              recentTxs.map((tx: WalletTransaction, i) => {
-                const isCredit = tx.amount > 0;
+              recentTxs.map((tx, i) => {
+                const isCredit =
+                  tx.kind !== undefined
+                    ? tx.kind === "credit"
+                    : (tx.amount ?? 0) > 0;
+                const displayAmount = Math.abs(tx.amount ?? 0);
                 return (
                   <React.Fragment key={tx.id}>
                     <View style={st.txRow}>
@@ -592,7 +851,7 @@ export default function DashboardScreen() {
                         <Text style={T.small}>{fmtDate(tx.date)}</Text>
                       </View>
                       <Text style={[st.txAmount, { color: isCredit ? C.accent : C.debit }]}>
-                        {isCredit ? "+" : "−"}{fmtCurrency(Math.abs(tx.amount))}
+                        {isCredit ? "+" : "−"}{fmtCurrency(displayAmount)}
                       </Text>
                     </View>
                     {i < recentTxs.length - 1 && <Divider />}
@@ -662,12 +921,6 @@ const st = StyleSheet.create({
     gap: 10,
   },
   kpiCard: {
-    // A fixed pixel minWidth (150) needs 310px+ of usable width for a
-    // 2-up row once the 10px gap is added. On a 320-375px phone with
-    // 16-32px of screen padding, only ~288-343px is actually available,
-    // so the grid falls back to a lopsided "1 card, then 1 card alone on
-    // its own row" instead of a clean 2-column layout. A percentage
-    // flexBasis scales with whatever width the parent actually has.
     flexBasis: "47%" as any,
     flexGrow: 1,
     minWidth: 0,
@@ -774,4 +1027,80 @@ const st = StyleSheet.create({
   // empty
   empty: { alignItems: "center", paddingVertical: 32, gap: 8 },
   emptyIcon: { fontSize: 28 },
+
+  // activity chart
+  chartWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+  },
+  chartPlotRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-around",
+    height: 130,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderLight,
+    paddingBottom: 4,
+  },
+  chartYearColumn: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "flex-end",
+    minWidth: 0,
+  },
+  chartBars: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    gap: 3,
+    height: 100,
+  },
+  chartBar: {
+    width: 12,
+    borderRadius: 3,
+  },
+  chartYearLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: C.text3,
+    marginTop: 6,
+    textAlign: "center",
+  },
+  chartLegend: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 12,
+  },
+  chartLegendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  chartLegendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 2,
+  },
+  chartLegendText: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: C.text3,
+  },
+  chartModeText: {
+    fontSize: 10,
+    color: C.text3,
+    fontStyle: "italic",
+    marginLeft: "auto",
+  },
+  chartEmpty: {
+    paddingVertical: 40,
+    alignItems: "center",
+  },
+  chartEmptyText: {
+    fontSize: 12,
+    color: C.text3,
+  },
 });

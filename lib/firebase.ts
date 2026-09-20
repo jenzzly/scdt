@@ -5,7 +5,6 @@ import {
   getAuth,
   setPersistence,
   browserLocalPersistence,
-  getReactNativePersistence,
   type Auth,
 } from "firebase/auth";
 import { getFirestore, enableNetwork, disableNetwork } from "firebase/firestore";
@@ -14,6 +13,24 @@ import { getStorage } from "firebase/storage";
 import { Platform } from "react-native";
 import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
+
+// getReactNativePersistence is exported from firebase/auth at RUNTIME under
+// React Native (Metro resolves the RN bundle via package.json's conditional
+// exports), but the TypeScript type declarations that "firebase/auth"
+// resolves to by default are the WEB ones, which don't include it. So a
+// plain named import compiles in the IDE only to break `tsc` even though
+// the app runs.
+//
+// Fix: reach the function through the module namespace at runtime and cast
+// to `any`. This preserves the runtime behavior (Metro still resolves the
+// RN entry) while telling TypeScript "this exists, trust me."
+//
+// If you later bump firebase to a version whose type declarations include
+// getReactNativePersistence for both entries, you can switch back to the
+// normal named import and delete this block.
+import * as firebaseAuth from "firebase/auth";
+const getReactNativePersistence = (firebaseAuth as any)
+  .getReactNativePersistence as (storage: unknown) => any;
 
 const firebaseConfig = {
   apiKey: Constants.expoConfig?.extra?.firebaseApiKey ?? process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -62,9 +79,18 @@ if (Platform.OS === "web") {
   });
 } else {
   // Native (iOS/Android): AsyncStorage persistence.
-  auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(ReactNativeAsyncStorage),
-  });
+  //
+  // initializeAuth() throws if called twice for the same app (which can
+  // happen on Fast Refresh during native dev). Guard by checking whether
+  // auth was already initialized for this app.
+  try {
+    auth = initializeAuth(app, {
+      persistence: getReactNativePersistence(ReactNativeAsyncStorage),
+    });
+  } catch (e) {
+    // Already initialized — reuse the existing instance.
+    auth = getAuth(app);
+  }
 }
 
 // Firestore with offline persistence enabled by default.

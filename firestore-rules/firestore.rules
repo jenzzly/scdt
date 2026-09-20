@@ -178,6 +178,14 @@ service cloud.firestore {
 
       match /contributionGoalPeriods/{id} {
         allow read: if isMember(groupId);
+        // getCurrentGoalPeriod() runs a getDocs(query(where('periodStart',
+        // '==', ...), where('periodEnd', '==', ...))). A query operation
+        // needs a `list` rule; `allow read` alone is a shortcut for
+        // `get + list`, but only holds when the condition is
+        // resource.data-free. Adding an explicit list rule with just
+        // isMember gives Firestore something it CAN prove for a
+        // whole-collection query.
+        allow list: if isMember(groupId);
 
         allow create: if isActiveMember(groupId);
 
@@ -196,6 +204,13 @@ service cloud.firestore {
         allow read: if isAdminOrAccountant(groupId)
           || (isActiveMember(groupId) && memberRole(groupId) in ['loan_officer', 'committee'])
           || (isActiveMember(groupId) && resource.data.memberId == membershipData(groupId).memberId);
+        // Explicit list — the read rule above references resource.data,
+        // so Firestore can't prove it for an unfiltered whole-collection
+        // list query. subscribeContributions runs exactly that for
+        // members and staff.
+        allow list: if isAdminOrAccountant(groupId)
+          || (isActiveMember(groupId) && memberRole(groupId) in ['loan_officer', 'committee'])
+          || isActiveMember(groupId);
         allow create: if isAuth() && (
           canAddContribution(groupId)
           || (isActiveMember(groupId) && request.resource.data.memberId == membershipData(groupId).memberId)
@@ -210,6 +225,15 @@ service cloud.firestore {
         allow read: if isAdminOrAccountant(groupId)
           || (isActiveMember(groupId) && memberRole(groupId) in ['loan_officer', 'committee'])
           || (isActiveMember(groupId) && resource.data.memberId == membershipData(groupId).memberId);
+        // THE FIX: without this list rule, subscribeLoans's
+        // query(loansCol(gId), orderBy('createdAt', 'desc')) is denied
+        // for members — the read rule's condition references
+        // resource.data.memberId, which Firestore cannot evaluate for
+        // a whole-collection list. Admins were unaffected because
+        // isAdminOrAccountant(groupId) is provable for the whole query.
+        allow list: if isAdminOrAccountant(groupId)
+          || (isActiveMember(groupId) && memberRole(groupId) in ['loan_officer', 'committee'])
+          || isActiveMember(groupId);
         allow create: if isAuth() && (
           canAddLoan(groupId)
           || (isActiveMember(groupId) && request.resource.data.memberId == membershipData(groupId).memberId)
@@ -256,6 +280,13 @@ service cloud.firestore {
       match /investments/{id} {
         allow read: if isAdminOrAccountant(groupId)
           || (isActiveMember(groupId) && memberRole(groupId) == 'committee');
+        // Pre-emptive list rule — same latent issue as loans. A member's
+        // investments subscription (see useFirebaseSync.ts) will fail
+        // with permission-denied if the client-side viewAllInvestments
+        // flag ever flips for a plain member without this clause.
+        allow list: if isAdminOrAccountant(groupId)
+          || (isActiveMember(groupId) && memberRole(groupId) == 'committee')
+          || isActiveMember(groupId);
         allow create: if isAuth() && (
           canAddInvestment(groupId)
           || request.resource.data.id == '_init'
@@ -283,9 +314,6 @@ service cloud.firestore {
     }
 
     match /groupMemberships/{id} {
-      // Own deterministic IDs are readable even before the document exists
-      // (bootstrap existence check). List is allowed only for queries that
-      // constrain userId == request.auth.uid — not a global membership dump.
       allow get: if isAuth() && (
         isOwnMembershipId(id)
         || (resource.data.userId == uid())
@@ -313,8 +341,6 @@ service cloud.firestore {
       );
     }
 
-    // Maps lowercase email → {groupId, memberId} so an invited user can
-    // claim an existing member record without listing the members collection.
     match /pendingMemberLinks/{emailKey} {
       allow get: if isAuth()
         && authEmail() != null
@@ -347,10 +373,9 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Allow unauthenticated users to request login tokens
     match /pendingTokenRequests/{id} {
       allow read:   if isAuth() && isAdmin(resource.data.groupId);
-      allow create: if true; // Allow anyone to submit token requests
+      allow create: if true;
       allow update: if isAuth() && isAdmin(resource.data.groupId);
       allow delete: if isAuth() && isAdmin(resource.data.groupId);
     }

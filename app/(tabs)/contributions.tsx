@@ -53,6 +53,7 @@ import { getCurrentGoalPeriod } from "../../lib/firestore/contributionGoals";
 import type { Contribution, ContributionGoalPeriod } from "../../types";
 
 import { KpiCard } from "../../components/ui/KpiCard";
+import { canApproveContributions, canManageWallet } from "@/lib/auth/permissions";
 
 // -----------------------------------------------------------------------------
 // Constants
@@ -194,9 +195,6 @@ export default function ContributionsScreen() {
 
   // ---------------------------------------------------------------------------
   // Late fees
-  //
-  // allWallet MUST be a dependency below because applying/clearing a fee
-  // changes wallet state and therefore the late-fee lifecycle.
   // ---------------------------------------------------------------------------
 
   const overdueContributions = useMemo(() => {
@@ -206,22 +204,6 @@ export default function ContributionsScreen() {
 
   // ---------------------------------------------------------------------------
   // Visible late fees
-  //
-  // A late-fee chunk is identified by item.feeTxId === walletTransaction.id
-  // (NOT walletTransaction.sourceId — sourceId is the member/contribution
-  // source, while feeTxId is the actual wallet transaction ID).
-  //
-  // State:
-  //   no transaction              -> Apply
-  //   transaction feePaid=false   -> Clear
-  //   transaction feePaid=true    -> hidden
-  //
-  // Clearing a late-fee transaction does NOT stop future accrual — the
-  // underlying contribution must still be unpaid for accrual to continue.
-  //
-  // NOTE: visibility of this list itself is NOT role-gated — members and
-  // committee can see their own/group late fees. Only the Apply/Clear
-  // action (see canManageFees) is restricted.
   // ---------------------------------------------------------------------------
 
   const visibleLateFees = useMemo(() => {
@@ -265,16 +247,6 @@ export default function ContributionsScreen() {
 
   // ---------------------------------------------------------------------------
   // Collection statistics
-  //
-  // totalExpected is driven directly by the group's goal target — NOT a
-  // "periods elapsed since joining" estimate, which drifted from what's
-  // actually configured in group settings.
-  //
-  //   Group view:    totalExpected = goal target × active member count
-  //   Personal view: totalExpected = goal target (single member)
-  //
-  // Falls back to the plain contributionAmount if no goal period is
-  // configured yet, so the KPI still shows something sensible.
   // ---------------------------------------------------------------------------
 
   const collectionStats = useMemo(() => {
@@ -302,7 +274,6 @@ export default function ContributionsScreen() {
 
     const collectionRate = totalExpected > 0 ? (totalCollected / totalExpected) * 100 : 0;
 
-    // Only currently visible unpaid chunks count here.
     const totalLateFeesRemaining = visibleLateFees.reduce(
       (sum, item) => sum + (item.feeAmount || 0),
       0
@@ -376,14 +347,6 @@ export default function ContributionsScreen() {
 
   // ---------------------------------------------------------------------------
   // Goal progress
-  //
-  // - target          → personal goal (single member's target for the period)
-  // - groupTarget     → target × active member count (matches collectionStats)
-  // - percentage      → my progress vs my target
-  // - groupPercentage → group progress vs groupTarget
-  //
-  // Both figures are always computed regardless of isGroupView, so the goal
-  // card can show Personal AND Group side by side rather than swapping.
   // ---------------------------------------------------------------------------
 
   const goalProgress = useMemo(() => {
@@ -409,8 +372,6 @@ export default function ContributionsScreen() {
       .filter(isApprovedInPeriod)
       .reduce((sum, c) => sum + (c.amount || 0), 0);
 
-    // Group target = personal target × active members — matches
-    // collectionStats.totalExpected exactly.
     const activeMemberCount = allMembers.filter((m) => m.status === "active").length;
     const groupTarget = target * activeMemberCount;
 
@@ -458,9 +419,6 @@ export default function ContributionsScreen() {
     }
   };
 
-
-  // This only marks the individual late-fee transaction as paid.
-  // It does NOT mark the underlying contribution as paid.
   const handleClearContributionFee = async (item: any) => {
     setApplyingFeeId(item.feeTxId);
 
@@ -601,7 +559,7 @@ export default function ContributionsScreen() {
   };
 
   // ---------------------------------------------------------------------------
-  // Export / Import — Excel (.xlsx) only. CSV has been removed.
+  // Export / Import
   // ---------------------------------------------------------------------------
 
   const handleExport = async () => {
@@ -637,7 +595,6 @@ export default function ContributionsScreen() {
 
     setImporting(true);
     try {
-      // Expected columns, in order: Date, Member, Type, Amount, Status, Description
       const rows = await importXlsx();
 
       if (!rows || rows.length === 0) {
@@ -668,8 +625,7 @@ export default function ContributionsScreen() {
   };
 
   // ---------------------------------------------------------------------------
-  // "+ Add" — always routes to the add-contribution modal fresh, with no
-  // contribution id in the URL, so the modal can't mistake this for an edit.
+  // "+ Add"
   // ---------------------------------------------------------------------------
 
   const handleAddPress = () => {
@@ -716,39 +672,39 @@ export default function ContributionsScreen() {
         <View style={[st.block, cardWide]}>
           <View style={st.kpiGrid}>
             <KpiCard
-              label="Total Expected"
+              label={isGroupView ? "Total Expected" : "My Target"}
               value={collectionStats ? fmtCurrency(collectionStats.totalExpected) : "—"}
               icon="📋"
-              subtext={isGroupView ? "Goal target × active members" : "Your goal target"}
+              subtext={isGroupView ? "Goal target × active members" : "Your goal for this period"}
               accentColor={C.accent}
               onPress={() => {}}
             />
 
             <KpiCard
-              label="Total Collected"
+              label={isGroupView ? "Total Collected" : "My Contributions"}
               value={collectionStats ? fmtCurrency(collectionStats.totalCollected) : "—"}
               icon="💰"
-              subtext="Collected contributions"
+              subtext={isGroupView ? "Group collections" : "Your approved contributions"}
               accentColor={C.success}
               onPress={() => setStatusFilter("approved")}
             />
 
             <KpiCard
-              label="Collection Rate"
+              label={isGroupView ? "Collection Rate" : "My Progress"}
               value={collectionStats ? `${collectionStats.collectionRate.toFixed(1)}%` : "—"}
               icon="📊"
-              subtext="Collection efficiency"
+              subtext={isGroupView ? "Collection efficiency" : "Toward your goal"}
               accentColor={C.primary}
               onPress={() => {}}
             />
 
             <KpiCard
-              label="Late Fees Due"
+              label={isGroupView ? "Late Fees Due" : "My Late Fees"}
               value={
                 collectionStats ? fmtCurrency(collectionStats.totalLateFeesRemaining) : "—"
               }
               icon="⚠️"
-              subtext="Unpaid late fees"
+              subtext={isGroupView ? "Unpaid group late fees" : "Fees you owe"}
               accentColor={C.gold}
               onPress={() => setStatusFilter("late_fee")}
             />
@@ -762,18 +718,24 @@ export default function ContributionsScreen() {
             </View>
           </View>
 
-          <View style={st.viewModeRow}>
-            <ViewModeButton
-              label="List View"
-              active={viewMode === "list"}
-              onPress={() => setViewMode("list")}
-            />
-            <ViewModeButton
-              label="Goal Progress"
-              active={viewMode === "monthly"}
-              onPress={() => setViewMode("monthly")}
-            />
-          </View>
+          {/* The "Goal Progress" view is a per-member table. In group view
+              it's genuinely useful; in personal view it collapses to a
+              single row duplicating the goal card above. Hidden for
+              members. */}
+          {isGroupView && (
+            <View style={st.viewModeRow}>
+              <ViewModeButton
+                label="List View"
+                active={viewMode === "list"}
+                onPress={() => setViewMode("list")}
+              />
+              <ViewModeButton
+                label="Goal Progress"
+                active={viewMode === "monthly"}
+                onPress={() => setViewMode("monthly")}
+              />
+            </View>
+          )}
 
           <View style={st.dateFilterRow}>
             <View style={{ flex: 1, marginRight: 8 }}>
@@ -918,7 +880,7 @@ function TopBar({
           </TouchableOpacity>
         )}
 
-        {canAdd && (
+        {isGroupView && (
           <TouchableOpacity style={st.primaryBtn} onPress={onAdd} activeOpacity={0.8}>
             <Text style={st.primaryBtnText}>+ Add</Text>
           </TouchableOpacity>
@@ -958,7 +920,7 @@ function EmptyState({ icon, text }: { icon: string; text: string }) {
 }
 
 // -----------------------------------------------------------------------------
-// Goal card — shows BOTH personal and group goal, always
+// Goal card
 // -----------------------------------------------------------------------------
 
 function GoalCard({
@@ -1012,46 +974,51 @@ function GoalCard({
         color={goalProgress.isCompleted ? Colors.green : Colors.primary}
       />
 
-      {/* Group goal — always shown, not just in one view */}
-      <View style={st.goalDividerLine} />
+      {/* Group goal — only for group-view roles. A plain member's
+          personal view doesn't include group-wide aggregate numbers. */}
+      {isGroupView && (
+        <>
+          <View style={st.goalDividerLine} />
 
-      <View style={[st.goalHeaderRow, { marginTop: 12, marginBottom: 0 }]}>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={st.goalLabel} numberOfLines={1}>
-            {goalProgress.groupPercentage >= 100
-              ? "✓ GROUP GOAL ACHIEVED"
-              : "GROUP CONTRIBUTION GOAL"}
-          </Text>
+          <View style={[st.goalHeaderRow, { marginTop: 12, marginBottom: 0 }]}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={st.goalLabel} numberOfLines={1}>
+                {goalProgress.groupPercentage >= 100
+                  ? "✓ GROUP GOAL ACHIEVED"
+                  : "GROUP CONTRIBUTION GOAL"}
+              </Text>
 
-          <Text
-            style={[st.goalAmount, { fontSize: 20 }]}
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            minimumFontScale={0.8}
-          >
-            <Text style={st.balanceCurrency}>{currency} </Text>
-            {amountText(goalProgress.groupTotalContributed)}
-          </Text>
-        </View>
+              <Text
+                style={[st.goalAmount, { fontSize: 20 }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
+              >
+                <Text style={st.balanceCurrency}>{currency} </Text>
+                {amountText(goalProgress.groupTotalContributed)}
+              </Text>
+            </View>
 
-        <View style={st.goalHeaderRight}>
-          <Text
-            style={[
-              st.goalPercentage,
-              { fontSize: 16 },
-              goalProgress.groupPercentage >= 100 && { color: Colors.green },
-            ]}
-            numberOfLines={1}
-          >
-            {goalProgress.groupPercentage}%
-          </Text>
-        </View>
-      </View>
+            <View style={st.goalHeaderRight}>
+              <Text
+                style={[
+                  st.goalPercentage,
+                  { fontSize: 16 },
+                  goalProgress.groupPercentage >= 100 && { color: Colors.green },
+                ]}
+                numberOfLines={1}
+              >
+                {goalProgress.groupPercentage}%
+              </Text>
+            </View>
+          </View>
 
-      <ProgressBar
-        percentage={goalProgress.groupPercentage}
-        color={goalProgress.groupPercentage >= 100 ? Colors.green : Colors.accent}
-      />
+          <ProgressBar
+            percentage={goalProgress.groupPercentage}
+            color={goalProgress.groupPercentage >= 100 ? Colors.green : Colors.accent}
+          />
+        </>
+      )}
 
       <View style={st.goalStatsRow}>
         <GoalStat
@@ -1069,8 +1036,6 @@ function GoalCard({
   );
 }
 
-// Type-only helper so GoalCard's prop type can reference the shape produced
-// by the goalProgress useMemo above without re-declaring it by hand.
 function useGoalProgressType() {
   return null as unknown as {
     totalContributed: number;
@@ -1128,7 +1093,7 @@ function GoalStat({
 }
 
 // -----------------------------------------------------------------------------
-// Goal progress (per member) — table on wide layouts, card list on mobile
+// Goal progress (per member)
 // -----------------------------------------------------------------------------
 
 function GoalProgressList({
@@ -1291,11 +1256,6 @@ function LateFeeList({
               <View style={st.lateFeeAmountWrap}>
                 <Text style={st.lateFeeAmount}>{fmtCurrency(item.feeAmount)}</Text>
 
-                {/*
-                  Apply/Clear action is restricted to admin, accountant, and
-                  loan_officer. Everyone else can still see the fee amount
-                  and detail above — this button is the only thing gated.
-                */}
                 {canManageFees && (
                   item.applied ? (
                     <TouchableOpacity
@@ -1357,7 +1317,6 @@ function LateFeeList({
     </View>
   );
 }
-
 
 // -----------------------------------------------------------------------------
 // Desktop table
@@ -1967,7 +1926,6 @@ const st = StyleSheet.create({
     color: C.text,
     textAlign: "right",
   },
-
 
   lateFeeAmountWrap: { alignItems: "flex-end", marginLeft: 10 },
 

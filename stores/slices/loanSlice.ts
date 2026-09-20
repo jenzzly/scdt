@@ -22,6 +22,7 @@ export const createLoanSlice = (
   | "recordRepayment"
   | "rejectLoan"
   | "rescheduleLoanInstallment"
+  | "setLoanLateFeesEnabled"
   | "setLoans"
   | "submitLoan"
   | "updateLoan"
@@ -171,6 +172,28 @@ export const createLoanSlice = (
       ).catch(console.warn);
     }
 
+    // Notify the applicant that their submission was received. Without
+    // this the borrower got no feedback at all after submitting, so
+    // their app looked broken until someone chased them down or the
+    // loan officer happened to approve.
+    const applicant = members.find((m: Member) => m.id === loan.memberId);
+    if (applicant?.userId) {
+      FS.addNotification(
+        applicant.userId,
+        {
+          userId: applicant.userId,
+          groupId: activeGroupId,
+          type: "loan_submitted",
+          title: "Loan Application Received",
+          message: `Your loan application for ${loan.amount} RWF was submitted. You'll be notified as it moves through the approval steps.`,
+          read: false,
+          metadata: { loanId: loan.id },
+          createdAt: now,
+        },
+        applicant.email,
+      ).catch(console.warn);
+    }
+
     return loan.id;
   },
 
@@ -289,6 +312,42 @@ export const createLoanSlice = (
               createdAt: new Date().toISOString(),
             },
             disburser.email,
+          ).catch(console.warn);
+        }
+      }
+    }
+
+    // Notify the BORROWER on every approval step. Previously the
+    // borrower was only notified on rejection — approvals went
+    // completely silent, so a member whose loan was approved by the
+    // loan officer, then by the committee, saw nothing on their phone
+    // and had no way to know their loan was moving forward.
+    if (approved) {
+      const loanMember = members.find((m: Member) => m.id === loan.memberId);
+      if (loanMember?.userId) {
+        let title = "";
+        let message = "";
+        if (newStatus === "pending_committee") {
+          title = "Loan Approved by Loan Officer";
+          message = `Your loan application for ${loan.amount} RWF was approved by the Loan Officer and is now awaiting committee review.`;
+        } else if (newStatus === "approved") {
+          title = "Loan Fully Approved";
+          message = `Your loan application for ${loan.amount} RWF has been fully approved. It will be disbursed shortly.`;
+        }
+        if (title) {
+          FS.addNotification(
+            loanMember.userId,
+            {
+              userId: loanMember.userId,
+              groupId: activeGroupId,
+              type: "loan_approved",
+              title,
+              message,
+              read: false,
+              metadata: { loanId, status: newStatus },
+              createdAt: new Date().toISOString(),
+            },
+            loanMember.email,
           ).catch(console.warn);
         }
       }
@@ -496,6 +555,77 @@ export const createLoanSlice = (
     }
   },
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // ENABLE / DISABLE LATE-FEE TRACKING FOR A SINGLE LOAN
+  // ═══════════════════════════════════════════════════════════════════════
+  //
+  // Toggles loan.lateFeesDisabled. When disabling (enabled === false), it
+  // also voids every currently-outstanding late_fee wallet tx for this
+  // loan — sets feePaid = true so the fee stops counting toward any
+  // "owed" total. This is a deliberate one-way action on the fee side:
+  // re-enabling later flips the flag back but does NOT resurrect fees
+  // that were cleared, because the clearing was itself the user's intent
+  // (backfilling, waiver, migration cleanup).
+  //
+  // Everything is done optimistically first, then committed as a batch of
+  // Firestore updates, and rolled back together on failure — so the local
+  // store never drifts from the server.
+  setLoanLateFeesEnabled: async (loanId, enabled) => {
+    const { activeGroupId, loans, walletTransactions } = get();
+    if (!activeGroupId) throw new Error("No active group");
+
+    const loan = loans.find((l: Loan) => l.id === loanId);
+    if (!loan) throw new Error("Loan not found");
+
+    const previousLoan = { ...loan };
+
+    // When disabling, everything currently owed or accrued on this loan
+    // gets voided. When enabling, nothing is touched — only the flag.
+    const feesToVoid = !enabled
+      ? walletTransactions.filter(
+          (t) =>
+            t.loanId === loanId &&
+            t.type === "late_fee" &&
+            !(t as any).feePaid &&
+            !(t as any).deletedAt,
+        )
+      : [];
+
+    // ── Optimistic local updates ──
+    get().updateLoanLocal(loanId, { lateFeesDisabled: !enabled });
+    for (const tx of feesToVoid) {
+      get().updateWalletTxLocal(tx.id, { feePaid: true });
+    }
+    get().recalcTotals();
+
+    try {
+      get().setSyncStatus("pending");
+
+      await FS.updateLoan(activeGroupId, loanId, {
+        lateFeesDisabled: !enabled,
+      });
+
+      for (const tx of feesToVoid) {
+        await FS.updateWalletTx(activeGroupId, tx.id, { feePaid: true });
+      }
+
+      get().setSyncStatus("synced");
+    } catch (e) {
+      // ── Rollback ──
+      get().updateLoanLocal(loanId, previousLoan);
+      for (const tx of feesToVoid) {
+        get().updateWalletTxLocal(tx.id, { feePaid: false });
+      }
+      get().recalcTotals();
+
+      get().setSyncStatus(
+        "failed",
+        e instanceof Error ? e.message : "Failed to update late fee setting",
+      );
+      throw e;
+    }
+  },
+
   // ============================================================
   // Disburse loan
   // ============================================================
@@ -526,6 +656,33 @@ export const createLoanSlice = (
       set((s: StoreState) => recalcGroupTotals(s));
 
       get().setSyncStatus("synced");
+
+      // Notify the borrower that the money is out. This closes the
+      // notification loop: submitted → approved by officer → approved
+      // → disbursed.
+      const { members } = get();
+      const applicant = members.find(
+        (m: Member) => m.id === result.loan.memberId,
+      );
+      if (applicant?.userId) {
+        const formattedDate = new Date(
+          disbursementDate || new Date().toISOString(),
+        ).toLocaleDateString();
+        FS.addNotification(
+          applicant.userId,
+          {
+            userId: applicant.userId,
+            groupId: activeGroupId,
+            type: "loan_disbursed",
+            title: "Loan Disbursed",
+            message: `Your loan of ${result.loan.amount} RWF has been disbursed. First payment is due ${formattedDate}.`,
+            read: false,
+            metadata: { loanId },
+            createdAt: new Date().toISOString(),
+          },
+          applicant.email,
+        ).catch(console.warn);
+      }
     } catch (e) {
       get().setSyncStatus(
         "failed",

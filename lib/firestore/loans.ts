@@ -365,18 +365,27 @@ export async function updateLoan(
 // Subscribe loans
 // ============================================================
 
-export function subscribeLoans(gId: string, cb: (loans: Loan[]) => void) {
+export function subscribeLoans(
+  gId: string,
+  cb: (loans: Loan[]) => void,
+  onError?: (error: unknown) => void,
+  _memberId?: string,
+): () => void {
+  // No where("memberId", "==", ...) clause: the loans list rule in
+  // firestore.rules already permits any active group member to read the
+  // whole subcollection, so the client filter in loans.tsx's
+  // `visibleLoans` is what scopes a personal view. Keeping the query
+  // unconstrained also avoids requiring a composite index on
+  // (memberId, createdAt), which is a common source of "the query
+  // requires an index" failures when a new environment is first run.
   const q = query(loansCol(gId), orderBy("createdAt", "desc"));
 
   return onSnapshot(
     q,
-    (snap) => {
-      const loans = snap.docs.map((item) => fromSnap<Loan>(item));
-      cb(loans);
-    },
+    (snap) => cb(snap.docs.map((item) => fromSnap<Loan>(item))),
     (error) => {
       logError("subscribeLoans", "loans", error, { groupId: gId });
-      cb([]);
+      onError?.(error);
     },
   );
 }

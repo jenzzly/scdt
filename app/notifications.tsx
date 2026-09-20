@@ -9,8 +9,12 @@ import { Colors, S, R, fmtDate } from "../utils/theme";
 
 const TYPE_ICON: Record<string, string> = {
   contribution_due: "📅",
+  loan_submitted: "📝",
+  loan_approval: "📋",
   loan_approved: "✅",
   loan_rejected: "❌",
+  loan_ready_to_disburse: "💳",
+  loan_disbursed: "💰",
   loan_repayment_due: "⏰",
   meeting: "📋",
   investment_maturity: "📈",

@@ -11,6 +11,7 @@ import {
   StatusBar,
   useWindowDimensions,
   TextInput,
+  Switch,
 } from "react-native";
 import { useRouter } from "expo-router";
 import {
@@ -56,14 +57,8 @@ import { exportPdf, generatePaymentScheduleHtml } from "../../utils/export";
 import type { Loan, WalletTransaction, Member } from "../../types";
 import { KpiCard } from "../../components/ui/KpiCard";
 
-// Shared accrual helpers — single source of truth for the anchor chain
-// and the daily-interest math. Kept identical to the version used by
-// record-repayment.tsx and lib/firestore/loans.ts's splitRepayment.
 import { computeTodayAccrued } from "../../utils/accrual";
 
-// Late fees owed on a specific loan, combining already-recorded
-// (unpaid) late_fee wallet txs with live-accrued fees from overdue
-// installments that haven't been applied to the ledger yet.
 import { useLoanLateFees } from "../../hooks/useLoanLateFees";
 
 // ─── Tiny components ──────────────────────────────────────────────
@@ -146,8 +141,13 @@ function getApprovalStepIndex(status: string): number {
   return index === -1 ? APPROVAL_STEPS.length : index;
 }
 
-// ─── UI date helpers (local to this screen) ────────────────────────
-
+// ─── UI date helpers ────────────────────────────────────────────
+//
+// Format-only validation. Deliberately accepts ANY calendar date, past
+// or future — a planned release can legitimately be dated in the future,
+// and a back-recorded release can be dated in the past. The previous
+// version rejected future dates, which is exactly why "confirm
+// disbursement for next months" failed.
 function parseYmdToDate(s: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
   if (!m) return null;
@@ -163,7 +163,6 @@ function parseYmdToDate(s: string): Date | null {
   ) {
     return null;
   }
-  if (dt.getTime() > Date.now()) return null;
   return dt;
 }
 
@@ -216,6 +215,13 @@ function LoanDetailModal({
 }) {
   const [applyingFeeId, setApplyingFeeId] = useState<string | null>(null);
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
+  const [togglingLateFees, setTogglingLateFees] = useState(false);
+  const [feesExpanded, setFeesExpanded] = useState(true);
+
+  const { show } = useToast();
+
+  const isLateFeesDisabled =
+    (loan as any)?.lateFeesDisabled === true;
 
   const handleApplyFee = async (row: any) => {
     if (!row.overdueInstallment) return;
@@ -226,22 +232,85 @@ function LoanDetailModal({
     try {
       await useStore.getState().applyLoanLateFee(row.overdueInstallment, customNum);
       useStore.getState().recalcTotals();
+      show("Late fee applied");
     } catch (e: any) {
-      console.error("Failed to apply loan late fee:", e);
+      show(e?.message || "Failed to apply late fee", "error");
     } finally {
       setApplyingFeeId(null);
     }
   };
 
-  const handleClearFee = async (txId: string) => {
-    setApplyingFeeId(txId);
+  // Void a single fee:
+  //   - Applied (already on ledger)  → mark feePaid = true
+  //   - Accrued (not yet on ledger)  → apply, then immediately mark paid,
+  //     so the days get stamped as charged and won't re-accrue on the
+  //     next render. Without the apply step, "voiding" an accrued fee
+  //     would be a no-op: findOverdueInstallments would just recompute it.
+  const handleVoidFee = async (row: any) => {
+    const feeId =
+      row.feeTxId || `inst-${row.installmentIndex}`;
+
+    setApplyingFeeId(feeId);
+
     try {
-      await useStore.getState().clearStandaloneLateFee(txId);
-      useStore.getState().recalcTotals();
+      const store = useStore.getState();
+
+      if (row.kind === "applied" && row.feeTxId) {
+        await store.clearStandaloneLateFee(row.feeTxId);
+        store.recalcTotals();
+        show("Late fee voided");
+        return;
+      }
+
+      // Accrued — apply then void
+      if (row.kind === "accrued" && row.overdueInstallment) {
+        await store.applyLoanLateFee(row.overdueInstallment);
+        if (row.feeTxId) {
+          await store.clearStandaloneLateFee(row.feeTxId);
+        }
+        store.recalcTotals();
+        show("Late fee voided");
+      }
     } catch (e: any) {
-      console.error("Failed to clear loan late fee:", e);
+      show(e?.message || "Failed to void late fee", "error");
     } finally {
       setApplyingFeeId(null);
+    }
+  };
+
+  // Toggle late-fee tracking for the whole loan. Turning it off also
+  // voids every currently-outstanding fee on this loan (see
+  // setLoanLateFeesEnabled in loanSlice.ts).
+  const handleToggleLateFees = async (nextEnabled: boolean) => {
+    if (!loan) return;
+
+    if (!nextEnabled) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        showConfirm(
+          "Disable late fees for this loan?",
+          lateFees.count > 0
+            ? `This will also void the ${lateFees.count} currently-owed fee${lateFees.count === 1 ? "" : "s"} on this loan. Re-enabling later will NOT bring them back.`
+            : "No fees are currently owed. This loan will be excluded from any future late-fee accrual.",
+          () => resolve(true),
+          () => resolve(false),
+          true,
+        );
+      });
+      if (!confirmed) return;
+    }
+
+    setTogglingLateFees(true);
+    try {
+      await useStore.getState().setLoanLateFeesEnabled(loan.id, nextEnabled);
+      show(
+        nextEnabled
+          ? "Late fee tracking enabled"
+          : "Late fee tracking disabled",
+      );
+    } catch (e: any) {
+      show(e?.message || "Failed to update late fee setting", "error");
+    } finally {
+      setTogglingLateFees(false);
     }
   };
 
@@ -271,12 +340,9 @@ function LoanDetailModal({
     }));
   }, [loan, walletTxs]);
 
-  // Late fees for this loan — hook is called BEFORE the `if (!loan)`
-  // early return so hook order stays stable across renders.
   const lateFees = useLoanLateFees(loan?.id);
 
   if (!loan) return null;
-
 
   const pct =
     loan.status === "repaid"
@@ -286,7 +352,6 @@ function LoanDetailModal({
         : 0;
 
   const isRB = loan.interestMethod === "reducing_balance";
-
   const todayAccrued = computeTodayAccrued(loan);
 
   const accruedInterestForDisplay = isRB
@@ -307,6 +372,12 @@ function LoanDetailModal({
   const statusBg = STATUS_BG[loan.status] || C.mutedBg;
   const statusLabel = STATUS_LABEL[loan.status] || loan.status;
 
+  const hasFeesOwed = lateFees.count > 0;
+  // Show the late-fees card whenever fees exist OR the loan is currently
+  // exempt (so the admin can see the state and re-enable if needed).
+  const shouldRenderLateFeesCard =
+    hasFeesOwed || isLateFeesDisabled || canManageFees;
+
   return (
     <BottomModal visible={visible} onClose={onClose} title="Loan Details">
       <View style={{ padding: 16 }}>
@@ -320,7 +391,7 @@ function LoanDetailModal({
           </Text>
           {(loan as any).disbursementDate ? (
             <Text style={styles.modalDetail}>
-              Disbursed: {fmtDate((loan as any).disbursementDate)}
+              First payment: {fmtDate((loan as any).disbursementDate)}
             </Text>
           ) : null}
           <Text style={styles.modalDetail}>
@@ -331,7 +402,7 @@ function LoanDetailModal({
             {isRB ? " · daily accrual" : " flat"} · {loan.repaymentMonths}{" "}
             months
           </Text>
-          {!!(loan as any).lateFeeRatePct && (
+          {!!(loan as any).lateFeeRatePct && !isLateFeesDisabled && (
             <Text
               style={[
                 styles.modalDetail,
@@ -372,409 +443,251 @@ function LoanDetailModal({
           </View>
         )}
 
-        {/* ── Late fees owed on this loan ─────────────────────────────
-            Combines already-recorded (unpaid) late_fee wallet txs for
-            this loan with live-accrued fees from overdue installments
-            that haven't been applied to the ledger yet. Shown only when
-            something is owed. */}
-        {lateFees.count > 0 && (
-          <View style={styles.lateFeesCard}>
-            <Text style={styles.lateFeesTitle}>
-              ⚠️ Late Fees Owed ({lateFees.count})
-            </Text>
-            <Text style={styles.lateFeesSubtitle}>
-              Overdue installments past their grace period, plus any fees
-              already recorded but not yet paid.
-            </Text>
-
-            {/* {lateFees.rows.map((row, i) => {
-              const feeId = row.feeTxId || `inst-${row.installmentIndex ?? i}`;
-              const isSaving = applyingFeeId === feeId;
-              const customVal = customAmounts[feeId] ?? "";
-              return (
-                <View
-                  key={`${row.kind}-${i}`}
+        {/* ── Late-fees card (redesigned) ──────────────────────────────
+            Structure:
+              • Header: total + status + toggle
+              • When disabled: a single explanatory line + "Enable" toggle
+              • When enabled and fees exist: list + per-row Void action
+              • When enabled and no fees: "No fees currently owed"
+            The whole card is compact by default; the fee list is
+            collapsible so it doesn't dominate the modal on loans with
+            many overdue installments. */}
+        {shouldRenderLateFeesCard && (
+          <View
+            style={[
+              styles.lateFeesCard,
+              isLateFeesDisabled && styles.lateFeesCardDisabled,
+            ]}
+          >
+            {/* ── Header row: title + total ── */}
+            <View style={styles.lateFeesHeader}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text
                   style={[
-                    styles.lateFeeRow,
-                    i === 0 && { borderTopWidth: 0, paddingTop: 4 },
+                    styles.lateFeesTitle,
+                    isLateFeesDisabled && { color: C.text3 },
                   ]}
                 >
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 6,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <Text style={styles.lateFeeLabel} numberOfLines={1}>
-                        {row.label}
-                      </Text>
-                      <View
-                        style={[
-                          styles.lateFeeKind,
-                          row.kind === "applied"
-                            ? { backgroundColor: C.infoBg }
-                            : { backgroundColor: C.goldBg },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.lateFeeKindText,
-                            {
-                              color:
-                                row.kind === "applied"
-                                  ? C.infoText
-                                  : C.gold,
-                            },
-                          ]}
-                        >
-                          {row.kind === "applied" ? "RECORDED" : "ACCRUED"}
-                        </Text>
-                      </View>
-                    </View>
-                    {row.sublabel ? (
-                      <Text style={styles.lateFeeSublabel} numberOfLines={2}>
-                        {row.sublabel}
-                      </Text>
-                    ) : null}
-                    {row.monthlyInterestBase != null && (
-                      <Text
-                        style={[
-                          styles.lateFeeSublabel,
-                          { color: C.text2, marginTop: 2, fontWeight: "600" },
-                        ]}
-                      >
-                        Monthly interest: {fmtCurrency(row.monthlyInterestBase)}
-                      </Text>
-                    )}
-                  </View>
+                  {isLateFeesDisabled
+                    ? "Late Fees — Disabled"
+                    : hasFeesOwed
+                      ? `Late Fees Owed (${lateFees.count})`
+                      : "Late Fees"}
+                </Text>
+                {!isLateFeesDisabled && hasFeesOwed && (
+                  <Text style={styles.lateFeesTotalInline}>
+                    {fmtCurrency(lateFees.total)} total
+                  </Text>
+                )}
+              </View>
 
-                  <View style={{ alignItems: "flex-end", gap: 6 }}>
-                    <Text style={styles.lateFeeAmount}>
-                      {fmtCurrency(row.amount)}
-                    </Text>
-
-                    {canManageFees && row.kind === "accrued" && (
-                      <View
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 6,
-                          marginTop: 4,
-                        }}
-                      >
-                        <TextInput
-                          style={styles.lateFeeInput}
-                          placeholder={String(row.amount)}
-                          placeholderTextColor={C.text3}
-                          keyboardType="numeric"
-                          value={customVal}
-                          onChangeText={(v) =>
-                            setCustomAmounts((prev) => ({
-                              ...prev,
-                              [feeId]: v,
-                            }))
-                          }
-                        />
-                        <TouchableOpacity
-                          style={styles.lateFeeActionBtn}
-                          onPress={() => handleApplyFee(row)}
-                          disabled={isSaving}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={styles.lateFeeActionBtnText}>
-                            {isSaving ? "…" : "Apply"}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-
-                    {canManageFees && row.kind === "applied" && row.feeTxId && (
-                      <TouchableOpacity
-                        style={[
-                          styles.lateFeeActionBtn,
-                          {
-                            backgroundColor: C.mutedBg,
-                            borderWidth: 1,
-                            borderColor: C.border,
-                            marginTop: 4,
-                          },
-                        ]}
-                        onPress={() => handleClearFee(row.feeTxId!)}
-                        disabled={isSaving}
-                        activeOpacity={0.8}
-                      >
-                        <Text
-                          style={[
-                            styles.lateFeeActionBtnText,
-                            { color: C.text },
-                          ]}
-                        >
-                          {isSaving ? "…" : "Clear"}
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
+              {canManageFees && (
+                <View style={styles.lateFeesToggleWrap}>
+                  <Text style={styles.lateFeesToggleLabel}>
+                    {isLateFeesDisabled ? "Off" : "On"}
+                  </Text>
+                  <Switch
+                    value={!isLateFeesDisabled}
+                    onValueChange={(v) => handleToggleLateFees(v)}
+                    disabled={togglingLateFees}
+                    trackColor={{ false: C.border, true: C.success }}
+                    thumbColor="#fff"
+                  />
                 </View>
-              );
-            })} */}
-            {lateFees.rows.map((row, i) => {
-              const feeId =
-                row.feeTxId ||
-                `inst-${row.installmentIndex ?? i}`;
-
-              const isSaving =
-                applyingFeeId === feeId;
-
-              // For accrued fees:
-              // - row.amount = FULL late fee owed
-              // - row.unappliedFeeAmount = amount not yet recorded
-              //
-              // For applied fees, this is not used.
-              const unappliedAmount =
-                row.unappliedFeeAmount ??
-                row.amount;
-
-              const customVal =
-                customAmounts[feeId] ?? "";
-
-              return (
-                <View
-                  key={`${row.kind}-${i}`}
-                  style={[
-                    styles.lateFeeRow,
-                    i === 0 && {
-                      borderTopWidth: 0,
-                      paddingTop: 4,
-                    },
-                  ]}
-                >
-                  <View
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                    }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 6,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <Text
-                        style={styles.lateFeeLabel}
-                        numberOfLines={1}
-                      >
-                        {row.label}
-                      </Text>
-
-                      <View
-                        style={[
-                          styles.lateFeeKind,
-                          row.kind === "applied"
-                            ? {
-                                backgroundColor:
-                                  C.infoBg,
-                              }
-                            : {
-                                backgroundColor:
-                                  C.goldBg,
-                              },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.lateFeeKindText,
-                            {
-                              color:
-                                row.kind === "applied"
-                                  ? C.infoText
-                                  : C.gold,
-                            },
-                          ]}
-                        >
-                          {row.kind === "applied"
-                            ? "RECORDED"
-                            : "ACCRUED"}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {row.sublabel ? (
-                      <Text
-                        style={
-                          styles.lateFeeSublabel
-                        }
-                        numberOfLines={2}
-                      >
-                        {row.sublabel}
-                      </Text>
-                    ) : null}
-
-                    {row.monthlyInterestBase !=
-                      null && (
-                      <Text
-                        style={[
-                          styles.lateFeeSublabel,
-                          {
-                            color: C.text2,
-                            marginTop: 2,
-                            fontWeight: "600",
-                          },
-                        ]}
-                      >
-                        Monthly interest:{" "}
-                        {fmtCurrency(
-                          row.monthlyInterestBase,
-                        )}
-                      </Text>
-                    )}
-
-                    {/* Show the amount still waiting to be recorded */}
-                    {row.kind === "accrued" &&
-                      unappliedAmount > 0 &&
-                      unappliedAmount !==
-                        row.amount && (
-                        <Text
-                          style={[
-                            styles.lateFeeSublabel,
-                            {
-                              color: C.text2,
-                              marginTop: 2,
-                            },
-                          ]}
-                        >
-                          New fee to record:{" "}
-                          {fmtCurrency(
-                            unappliedAmount,
-                          )}
-                        </Text>
-                      )}
-                  </View>
-
-                  <View
-                    style={{
-                      alignItems: "flex-end",
-                      gap: 6,
-                    }}
-                  >
-                    {/* FULL AMOUNT OWED */}
-                    <Text
-                      style={styles.lateFeeAmount}
-                    >
-                      {fmtCurrency(row.amount)}
-                    </Text>
-
-                    {canManageFees &&
-                      row.kind === "accrued" && (
-                        <View
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 6,
-                            marginTop: 4,
-                          }}
-                        >
-                          <TextInput
-                            style={
-                              styles.lateFeeInput
-                            }
-                            placeholder={String(
-                              unappliedAmount,
-                            )}
-                            placeholderTextColor={
-                              C.text3
-                            }
-                            keyboardType="numeric"
-                            value={customVal}
-                            onChangeText={(v) =>
-                              setCustomAmounts(
-                                (prev) => ({
-                                  ...prev,
-                                  [feeId]: v,
-                                }),
-                              )
-                            }
-                          />
-
-                          <TouchableOpacity
-                            style={
-                              styles.lateFeeActionBtn
-                            }
-                            onPress={() =>
-                              handleApplyFee(row)
-                            }
-                            disabled={isSaving}
-                            activeOpacity={0.8}
-                          >
-                            <Text
-                              style={
-                                styles.lateFeeActionBtnText
-                              }
-                            >
-                              {isSaving
-                                ? "…"
-                                : "Apply"}
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                      )}
-
-                    {canManageFees &&
-                      row.kind === "applied" &&
-                      row.feeTxId && (
-                        <TouchableOpacity
-                          style={[
-                            styles.lateFeeActionBtn,
-                            {
-                              backgroundColor:
-                                C.mutedBg,
-                              borderWidth: 1,
-                              borderColor:
-                                C.border,
-                              marginTop: 4,
-                            },
-                          ]}
-                          onPress={() =>
-                            handleClearFee(
-                              row.feeTxId!,
-                            )
-                          }
-                          disabled={isSaving}
-                          activeOpacity={0.8}
-                        >
-                          <Text
-                            style={[
-                              styles.lateFeeActionBtnText,
-                              {
-                                color: C.text,
-                              },
-                            ]}
-                          >
-                            {isSaving
-                              ? "…"
-                              : "Clear"}
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                  </View>
-                </View>
-              );
-            })}
-
-
-            <View style={styles.lateFeeTotalRow}>
-              <Text style={styles.lateFeeTotalLabel}>
-                Total late fees owed
-              </Text>
-              <Text style={styles.lateFeeTotalValue}>
-                {fmtCurrency(lateFees.total)}
-              </Text>
+              )}
             </View>
+
+            {/* ── Body ── */}
+            {isLateFeesDisabled ? (
+              <Text style={styles.lateFeesDisabledMsg}>
+                This loan is excluded from late-fee accrual. No fees will
+                be charged, and any fees that were owed have been voided.
+              </Text>
+            ) : !hasFeesOwed ? (
+              <Text style={styles.lateFeesEmptyMsg}>
+                No late fees currently owed on this loan.
+              </Text>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.lateFeesExpandRow}
+                  onPress={() => setFeesExpanded((v) => !v)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.lateFeesSubtitle}>
+                    {feesExpanded ? "Hide details" : "Show details"}
+                  </Text>
+                  <Text style={styles.lateFeesExpandChevron}>
+                    {feesExpanded ? "▲" : "▼"}
+                  </Text>
+                </TouchableOpacity>
+
+                {feesExpanded && (
+                  <View style={{ marginTop: 4 }}>
+                    {lateFees.rows.map((row, i) => {
+                      const feeId =
+                        row.feeTxId ||
+                        `inst-${row.installmentIndex ?? i}`;
+                      const isSaving = applyingFeeId === feeId;
+
+                      const unappliedAmount =
+                        row.unappliedFeeAmount ?? row.amount;
+
+                      const customVal = customAmounts[feeId] ?? "";
+
+                      return (
+                        <View
+                          key={`${row.kind}-${i}`}
+                          style={[
+                            styles.lateFeeRow,
+                            i === 0 && {
+                              borderTopWidth: 0,
+                              paddingTop: 4,
+                            },
+                          ]}
+                        >
+                          <View style={styles.lateFeeRowTop}>
+                            <View
+                              style={[
+                                styles.lateFeeKindBadge,
+                                row.kind === "applied"
+                                  ? { backgroundColor: C.infoBg }
+                                  : { backgroundColor: C.goldBg },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.lateFeeKindText,
+                                  {
+                                    color:
+                                      row.kind === "applied"
+                                        ? C.infoText
+                                        : C.gold,
+                                  },
+                                ]}
+                              >
+                                {row.kind === "applied"
+                                  ? "RECORDED"
+                                  : "ACCRUED"}
+                              </Text>
+                            </View>
+
+                            <Text
+                              style={styles.lateFeeLabel}
+                              numberOfLines={2}
+                            >
+                              {row.label}
+                            </Text>
+                          </View>
+
+                          {row.sublabel ? (
+                            <Text
+                              style={styles.lateFeeSublabel}
+                              numberOfLines={3}
+                            >
+                              {row.sublabel}
+                            </Text>
+                          ) : null}
+
+                          {row.monthlyInterestBase != null && (
+                            <Text
+                              style={[
+                                styles.lateFeeSublabel,
+                                {
+                                  color: C.text2,
+                                  marginTop: 2,
+                                  fontWeight: "600",
+                                },
+                              ]}
+                            >
+                              Monthly interest:{" "}
+                              {fmtCurrency(row.monthlyInterestBase)}
+                            </Text>
+                          )}
+
+                          {row.kind === "accrued" &&
+                            unappliedAmount > 0 &&
+                            unappliedAmount !== row.amount && (
+                              <Text
+                                style={[
+                                  styles.lateFeeSublabel,
+                                  {
+                                    color: C.text2,
+                                    marginTop: 2,
+                                  },
+                                ]}
+                              >
+                                New fee to record:{" "}
+                                {fmtCurrency(unappliedAmount)}
+                              </Text>
+                            )}
+
+                          <View style={styles.lateFeeRowBottom}>
+                            <Text style={styles.lateFeeAmount}>
+                              {fmtCurrency(row.amount)}
+                            </Text>
+
+                            {canManageFees && (
+                              <View
+                                style={styles.lateFeeActionRow}
+                              >
+                                {row.kind === "accrued" && (
+                                  <>
+                                    <TextInput
+                                      style={styles.lateFeeInput}
+                                      placeholder={String(unappliedAmount)}
+                                      placeholderTextColor={C.text3}
+                                      keyboardType="numeric"
+                                      value={customVal}
+                                      onChangeText={(v) =>
+                                        setCustomAmounts((prev) => ({
+                                          ...prev,
+                                          [feeId]: v,
+                                        }))
+                                      }
+                                    />
+                                    <TouchableOpacity
+                                      style={styles.lateFeeApplyBtn}
+                                      onPress={() => handleApplyFee(row)}
+                                      disabled={isSaving}
+                                      activeOpacity={0.8}
+                                    >
+                                      <Text style={styles.lateFeeApplyBtnText}>
+                                        {isSaving ? "…" : "Apply"}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  </>
+                                )}
+
+                                <TouchableOpacity
+                                  style={styles.lateFeeVoidBtn}
+                                  onPress={() => handleVoidFee(row)}
+                                  disabled={isSaving}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={styles.lateFeeVoidBtnText}>
+                                    {isSaving ? "…" : "Void"}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+                      );
+                    })}
+
+                    <View style={styles.lateFeeTotalRow}>
+                      <Text style={styles.lateFeeTotalLabel}>
+                        Total late fees owed
+                      </Text>
+                      <Text style={styles.lateFeeTotalValue}>
+                        {fmtCurrency(lateFees.total)}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </>
+            )}
           </View>
         )}
 
@@ -1500,16 +1413,24 @@ export default function LoansScreen() {
     setShowDisburseModal(true);
   };
 
+  // Confirm Disbursement — validation is format-only. Past, present, and
+  // future dates are all accepted. Rejecting future dates here was the
+  // exact cause of "confirm disbursement for next months" failing.
   const confirmDisbursement = async () => {
     if (!disburseLoanTarget) return;
 
-    if (disburseDateText.trim() && !parseYmdToDate(disburseDateText)) {
+    if (!disburseDateText.trim()) {
+      show("First payment date is required", "error");
+      return;
+    }
+
+    if (!parseYmdToDate(disburseDateText)) {
       show("Please enter a valid date in YYYY-MM-DD format", "error");
       return;
     }
 
     if (!Number.isFinite(disburseApplicationDate.getTime())) {
-      show("Please select a valid application date", "error");
+      show("Please select a valid first payment date", "error");
       return;
     }
 
@@ -2069,7 +1990,7 @@ export default function LoansScreen() {
           setDisburseLoanTarget(null);
           setDisburseDateText("");
         }}
-        title="Disburse Loan"
+        title="Confirm Disbursement"
       >
         <View style={{ padding: 16 }}>
           {disburseLoanTarget && (
@@ -2134,7 +2055,7 @@ export default function LoansScreen() {
           </View>
 
           <Input
-            label="Disbursement Date"
+            label="First Payment Date *"
             value={disburseDateText}
             onChangeText={(v) => {
               setDisburseDateText(v);
@@ -2145,6 +2066,7 @@ export default function LoansScreen() {
             keyboardType="numbers-and-punctuation"
             autoCapitalize="none"
             autoCorrect={false}
+            hint="Required. May be a past, present, or future date — the money is recorded as leaving the wallet on this day."
           />
 
           <Text
@@ -2156,17 +2078,14 @@ export default function LoansScreen() {
               marginBottom: 16,
             }}
           >
-            The date the money actually left the group wallet. Interest
-            accrual on reducing-balance loans starts from this date, the
-            wallet transaction is stamped with it, and the repayment
-            schedule (installment due dates) is anchored to it — so the
-            first installment is due one month after this date, not one
-            month after the application. The loan's original application
-            date (
+            This date anchors interest accrual (on reducing-balance loans), the
+            wallet transaction, and every installment due date in the repayment
+            schedule — the first installment is due one month from this date.
+            The loan's original application date (
             {disburseLoanTarget?.applicationDate
               ? fmtDate(disburseLoanTarget.applicationDate)
               : "—"}
-            ) is preserved separately.
+            ) is preserved separately and is not affected.
           </Text>
 
           <View style={{ flexDirection: "row", gap: 10 }}>
@@ -2188,6 +2107,11 @@ export default function LoansScreen() {
               onPress={confirmDisbursement}
               variant="primary"
               style={{ flex: 1 }}
+              disabled={
+                isDisbursing ||
+                !disburseDateText.trim() ||
+                !parseYmdToDate(disburseDateText)
+              }
             />
           </View>
         </View>
@@ -2736,7 +2660,6 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
   },
 
-  // Accrual strip — matches record-repayment.tsx's accrualBox.
   accrualBox: {
     backgroundColor: C.elevated,
     borderRadius: 10,
@@ -2747,69 +2670,180 @@ const styles = StyleSheet.create({
   },
   accrualText: { fontSize: 11, color: C.gold, lineHeight: 16 },
 
-  // ── Late fees card — matches record-repayment.tsx's lateFeesCard.
+  // ── Late fees card (redesigned) ──
   lateFeesCard: {
-    backgroundColor: C.redBg,
+    backgroundColor: C.surface,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(239,68,68,0.25)",
+    borderColor: "rgba(239,68,68,0.35)",
     padding: 14,
     marginBottom: 16,
+  },
+  lateFeesCardDisabled: {
+    backgroundColor: C.elevated,
+    borderColor: C.border,
+  },
+
+  lateFeesHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 4,
   },
   lateFeesTitle: {
     fontSize: 13,
     fontWeight: "800",
     color: C.error,
-    marginBottom: 4,
   },
-  lateFeesSubtitle: {
-    fontSize: 11,
-    color: C.text3,
-    marginBottom: 10,
-    lineHeight: 15,
-  },
-  lateFeeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(239,68,68,0.15)",
-    gap: 10,
-  },
-  lateFeeLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: C.text,
-    flexShrink: 1,
-  },
-  lateFeeSublabel: {
+  lateFeesTotalInline: {
     fontSize: 11,
     color: C.text3,
     marginTop: 2,
   },
-  lateFeeAmount: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: C.error,
+  lateFeesToggleWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     flexShrink: 0,
   },
-  lateFeeKind: {
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 3,
+  lateFeesToggleLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+
+  lateFeesDisabledMsg: {
+    fontSize: 12,
+    color: C.text2,
+    lineHeight: 17,
+    marginTop: 8,
+  },
+  lateFeesEmptyMsg: {
+    fontSize: 12,
+    color: C.text3,
+    marginTop: 8,
+  },
+
+  lateFeesExpandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 8,
+    paddingVertical: 4,
+  },
+  lateFeesSubtitle: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.primary,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  lateFeesExpandChevron: {
+    fontSize: 10,
+    color: C.text3,
+  },
+
+  lateFeeRow: {
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: C.borderLight,
+  },
+  lateFeeRowTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
+  lateFeeKindBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    flexShrink: 0,
   },
   lateFeeKindText: {
-    fontSize: 8,
+    fontSize: 9,
     fontWeight: "800",
     letterSpacing: 0.5,
+  },
+  lateFeeLabel: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text,
+  },
+  lateFeeSublabel: {
+    fontSize: 11,
+    color: C.text3,
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  lateFeeRowBottom: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginTop: 8,
+  },
+  lateFeeAmount: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: C.error,
+  },
+  lateFeeActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 0,
+  },
+  lateFeeInput: {
+    height: 30,
+    width: 78,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    fontSize: 11,
+    color: C.text,
+    textAlign: "right",
+  },
+  lateFeeApplyBtn: {
+    backgroundColor: C.primary,
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    height: 30,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  lateFeeApplyBtnText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  lateFeeVoidBtn: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.error,
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    height: 30,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  lateFeeVoidBtnText: {
+    color: C.error,
+    fontSize: 11,
+    fontWeight: "700",
   },
   lateFeeTotalRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingTop: 10,
-    marginTop: 6,
+    marginTop: 8,
     borderTopWidth: 2,
     borderTopColor: "rgba(239,68,68,0.25)",
   },
@@ -2823,32 +2857,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: C.error,
   },
-  lateFeeInput: {
-    height: 28,
-    width: 80,
-    backgroundColor: C.surface,
-    borderWidth: 1,
-    borderColor: C.border,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    fontSize: 11,
-    color: C.text,
-    textAlign: "right",
-  },
-  lateFeeActionBtn: {
-    backgroundColor: C.primary,
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    height: 28,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  lateFeeActionBtnText: {
-    color: "#fff",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-
 
   stepsContainer: {
     backgroundColor: C.elevated,
