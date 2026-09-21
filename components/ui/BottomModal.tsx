@@ -3,6 +3,7 @@ import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform,
   ActivityIndicator, RefreshControl, Modal, useWindowDimensions, Switch, TextInput,
 } from "react-native";
+import { C } from "../../utils/theme";
 export function BottomModal({ visible, onClose, title, children }: any) {
   return (
     <Modal

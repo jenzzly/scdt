@@ -1902,14 +1902,11 @@ function LateFeeWaiverModal({
           </View>
         </View>
 
-        <Text style={st.waiverSectionTitle}>Scope</Text>
-        <Text style={st.waiverSectionHelp}>
-          Pick whether to waive only the fee you clicked, all
-          contribution fees, all loan fees, or both. Loans are included
-          only when you choose "Loans" or "Both".
-        </Text>
+        {/* Scope picker hidden on this screen — contributions
+            only waive contribution fees. Loan waivers live on
+            the loans screen. */}
 
-        <View style={st.waiverScopeRow}>
+        <View style={[st.waiverScopeRow, { display: "none" }]}>
           {[
             { label: "This Contribution", value: "contribution" as const },
             { label: "Loans", value: "loan" as const },

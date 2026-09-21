@@ -11,7 +11,6 @@ import {
   StatusBar,
   useWindowDimensions,
   TextInput,
-  Switch,
 } from "react-native";
 import { useRouter } from "expo-router";
 import {
@@ -61,6 +60,7 @@ import { KpiCard } from "../../components/ui/KpiCard";
 import { computeTodayAccrued } from "../../utils/accrual";
 
 import { useLoanLateFees } from "../../hooks/useLoanLateFees";
+import { LateFeeWaiverModal } from "../../components/ui/LateFeeWaiverModal";
 
 // ─── Tiny components ──────────────────────────────────────────────
 const Divider = () => (
@@ -194,6 +194,7 @@ function LoanDetailModal({
   actableStep,
   canDisburse,
   canManageFees,
+  onWaive,
 }: {
   visible: boolean;
   loan: Loan | null;
@@ -213,16 +214,13 @@ function LoanDetailModal({
   actableStep: string | null;
   canDisburse: boolean;
   canManageFees?: boolean;
+  onWaive?: (fee: any) => void;
 }) {
   const [applyingFeeId, setApplyingFeeId] = useState<string | null>(null);
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
-  const [togglingLateFees, setTogglingLateFees] = useState(false);
   const [feesExpanded, setFeesExpanded] = useState(true);
 
   const { show } = useToast();
-
-  const isLateFeesDisabled =
-    (loan as any)?.lateFeesDisabled === true;
 
   const handleApplyFee = async (row: any) => {
     if (!row.overdueInstallment) return;
@@ -238,80 +236,6 @@ function LoanDetailModal({
       show(e?.message || "Failed to apply late fee", "error");
     } finally {
       setApplyingFeeId(null);
-    }
-  };
-
-  // Void a single fee:
-  //   - Applied (already on ledger)  → mark feePaid = true
-  //   - Accrued (not yet on ledger)  → apply, then immediately mark paid,
-  //     so the days get stamped as charged and won't re-accrue on the
-  //     next render. Without the apply step, "voiding" an accrued fee
-  //     would be a no-op: findOverdueInstallments would just recompute it.
-  const handleVoidFee = async (row: any) => {
-    const feeId =
-      row.feeTxId || `inst-${row.installmentIndex}`;
-
-    setApplyingFeeId(feeId);
-
-    try {
-      const store = useStore.getState();
-
-      if (row.kind === "applied" && row.feeTxId) {
-        await store.clearStandaloneLateFee(row.feeTxId);
-        store.recalcTotals();
-        show("Late fee voided");
-        return;
-      }
-
-      // Accrued — apply then void
-      if (row.kind === "accrued" && row.overdueInstallment) {
-        await store.applyLoanLateFee(row.overdueInstallment);
-        if (row.feeTxId) {
-          await store.clearStandaloneLateFee(row.feeTxId);
-        }
-        store.recalcTotals();
-        show("Late fee voided");
-      }
-    } catch (e: any) {
-      show(e?.message || "Failed to void late fee", "error");
-    } finally {
-      setApplyingFeeId(null);
-    }
-  };
-
-  // Toggle late-fee tracking for the whole loan. Turning it off also
-  // voids every currently-outstanding fee on this loan (see
-  // setLoanLateFeesEnabled in loanSlice.ts).
-  const handleToggleLateFees = async (nextEnabled: boolean) => {
-    if (!loan) return;
-
-    if (!nextEnabled) {
-      const confirmed = await new Promise<boolean>((resolve) => {
-        showConfirm(
-          "Disable late fees for this loan?",
-          lateFees.count > 0
-            ? `This will also void the ${lateFees.count} currently-owed fee${lateFees.count === 1 ? "" : "s"} on this loan. Re-enabling later will NOT bring them back.`
-            : "No fees are currently owed. This loan will be excluded from any future late-fee accrual.",
-          () => resolve(true),
-          () => resolve(false),
-          true,
-        );
-      });
-      if (!confirmed) return;
-    }
-
-    setTogglingLateFees(true);
-    try {
-      await useStore.getState().setLoanLateFeesEnabled(loan.id, nextEnabled);
-      show(
-        nextEnabled
-          ? "Late fee tracking enabled"
-          : "Late fee tracking disabled",
-      );
-    } catch (e: any) {
-      show(e?.message || "Failed to update late fee setting", "error");
-    } finally {
-      setTogglingLateFees(false);
     }
   };
 
@@ -374,10 +298,7 @@ function LoanDetailModal({
   const statusLabel = STATUS_LABEL[loan.status] || loan.status;
 
   const hasFeesOwed = lateFees.count > 0;
-  // Show the late-fees card whenever fees exist OR the loan is currently
-  // exempt (so the admin can see the state and re-enable if needed).
-  const shouldRenderLateFeesCard =
-    hasFeesOwed || isLateFeesDisabled || canManageFees;
+  const shouldRenderLateFeesCard = hasFeesOwed || canManageFees;
 
   return (
     <BottomModal visible={visible} onClose={onClose} title="Loan Details">
@@ -403,7 +324,7 @@ function LoanDetailModal({
             {isRB ? " · daily accrual" : " flat"} · {loan.repaymentMonths}{" "}
             months
           </Text>
-          {!!(loan as any).lateFeeRatePct && !isLateFeesDisabled && (
+          {!!(loan as any).lateFeeRatePct && (
             <Text
               style={[
                 styles.modalDetail,
@@ -454,57 +375,26 @@ function LoanDetailModal({
             collapsible so it doesn't dominate the modal on loans with
             many overdue installments. */}
         {shouldRenderLateFeesCard && (
-          <View
-            style={[
-              styles.lateFeesCard,
-              isLateFeesDisabled && styles.lateFeesCardDisabled,
-            ]}
-          >
+          <View style={styles.lateFeesCard}>
             {/* ── Header row: title + total ── */}
             <View style={styles.lateFeesHeader}>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text
-                  style={[
-                    styles.lateFeesTitle,
-                    isLateFeesDisabled && { color: C.text3 },
-                  ]}
-                >
-                  {isLateFeesDisabled
-                    ? "Late Fees — Disabled"
-                    : hasFeesOwed
-                      ? `Late Fees Owed (${lateFees.count})`
-                      : "Late Fees"}
+                <Text style={styles.lateFeesTitle}>
+                  {hasFeesOwed
+                    ? `Late Fees Owed (${lateFees.count})`
+                    : "Late Fees"}
                 </Text>
-                {!isLateFeesDisabled && hasFeesOwed && (
+                {hasFeesOwed && (
                   <Text style={styles.lateFeesTotalInline}>
                     {fmtCurrency(lateFees.total)} total
                   </Text>
                 )}
               </View>
 
-              {canManageFees && (
-                <View style={styles.lateFeesToggleWrap}>
-                  <Text style={styles.lateFeesToggleLabel}>
-                    {isLateFeesDisabled ? "Off" : "On"}
-                  </Text>
-                  <Switch
-                    value={!isLateFeesDisabled}
-                    onValueChange={(v) => handleToggleLateFees(v)}
-                    disabled={togglingLateFees}
-                    trackColor={{ false: C.border, true: C.success }}
-                    thumbColor="#fff"
-                  />
-                </View>
-              )}
             </View>
 
             {/* ── Body ── */}
-            {isLateFeesDisabled ? (
-              <Text style={styles.lateFeesDisabledMsg}>
-                This loan is excluded from late-fee accrual. No fees will
-                be charged, and any fees that were owed have been voided.
-              </Text>
-            ) : !hasFeesOwed ? (
+            {!hasFeesOwed ? (
               <Text style={styles.lateFeesEmptyMsg}>
                 No late fees currently owed on this loan.
               </Text>
@@ -660,16 +550,33 @@ function LoanDetailModal({
                                   </>
                                 )}
 
-                                <TouchableOpacity
-                                  style={styles.lateFeeVoidBtn}
-                                  onPress={() => handleVoidFee(row)}
-                                  disabled={isSaving}
-                                  activeOpacity={0.8}
-                                >
-                                  <Text style={styles.lateFeeVoidBtnText}>
-                                    {isSaving ? "…" : "Void"}
-                                  </Text>
-                                </TouchableOpacity>
+                                {onWaive && (
+                                  <TouchableOpacity
+                                    style={styles.lateFeeVoidBtn}
+                                    onPress={() =>
+                                      onWaive({
+                                        memberId: loan.memberId,
+                                        periodStart:
+                                          row.overdueInstallment?.dueDate ??
+                                          walletTxs.find(
+                                            (t) => t.id === row.feeTxId,
+                                          )?.date ??
+                                          new Date().toISOString(),
+                                        periodLabel: `Installment #${
+                                          (row.installmentIndex ?? 0) + 1
+                                        }`,
+                                        applied: row.kind === "applied",
+                                        feeTxId: row.feeTxId,
+                                      })
+                                    }
+                                    disabled={isSaving}
+                                    activeOpacity={0.8}
+                                  >
+                                    <Text style={styles.lateFeeVoidBtnText}>
+                                      Waive
+                                    </Text>
+                                  </TouchableOpacity>
+                                )}
                               </View>
                             )}
                           </View>
@@ -1246,6 +1153,10 @@ export default function LoansScreen() {
     approve: boolean;
   } | null>(null);
 
+  // Late-fee waiver modal (per-member, per-period)
+  const [waiverTarget, setWaiverTarget] = useState<any | null>(null);
+  const [waiverSaving, setWaiverSaving] = useState(false);
+
   const isGroupView = useIsGroupView();
   const isAdmin = role === "admin";
 
@@ -1387,6 +1298,44 @@ export default function LoansScreen() {
     return round2(accruedTotal + appliedTotal);
   }, [activeGroup, groupMembers, visibleLoans, walletTxs]);
 
+
+  // ── Late-fee waiver ────────────────────────────────────────────
+  const openWaiverModal = (feeItem: any) => setWaiverTarget(feeItem);
+  const closeWaiverModal = () => setWaiverTarget(null);
+
+  const handleConfirmWaiver = async (
+    periodStart: string,
+    periodEnd: string,
+    reason: string,
+  ) => {
+    if (!waiverTarget) return;
+    setWaiverSaving(true);
+    try {
+      await useStore.getState().addLateFeeExemption(
+        waiverTarget.memberId,
+        { scope: "loan", periodStart, periodEnd, reason: reason || undefined },
+        waiverTarget.applied ? waiverTarget.feeTxId : undefined,
+      );
+      show("Late fee waiver saved");
+      closeWaiverModal();
+    } catch (e: any) {
+      show(e?.message || "Failed to save waiver", "error");
+    } finally {
+      setWaiverSaving(false);
+    }
+  };
+
+  const handleRemoveExemption = async (exemptionId: string) => {
+    if (!waiverTarget) return;
+    try {
+      await useStore
+        .getState()
+        .removeLateFeeExemption(waiverTarget.memberId, exemptionId);
+      show("Waiver removed");
+    } catch (e: any) {
+      show(e?.message || "Failed to remove waiver", "error");
+    }
+  };
 
   const handleApproval = async () => {
     if (!pendingAction) return;
@@ -2237,6 +2186,28 @@ export default function LoansScreen() {
         canManageFees={
           ["admin", "accountant", "loan_officer"].includes(role) || isAdmin
         }
+        onWaive={(fee) => {
+          setShowLoanDetail(false);
+          openWaiverModal(fee);
+        }}
+      />
+
+      <LateFeeWaiverModal
+        visible={!!waiverTarget}
+        onClose={closeWaiverModal}
+        context="loan"
+        target={waiverTarget}
+        member={
+          waiverTarget
+            ? groupMembers.find(
+                (m) => m.id === waiverTarget.memberId,
+              ) ?? null
+            : null
+        }
+        group={activeGroup}
+        saving={waiverSaving}
+        onConfirm={handleConfirmWaiver}
+        onRemoveExemption={handleRemoveExemption}
       />
 
       <Toast visible={visible} msg={msg} type={type} />
