@@ -1,6 +1,13 @@
 // stores/slices/contributionSlice.ts
 import type { SetFn, GetFn, StoreState } from "../storeTypes";
-import type { ID, Contribution, WalletTransaction } from "../../types";
+import type {
+  ID,
+  Contribution,
+  ContributionType,
+  ContributionStatus,
+  WalletTransaction,
+  Member,
+} from "../../types";
 import * as FS from "../../lib/firestore";
 import { uid } from "../../utils/theme";
 import { recalcGroupTotals } from "../recalcGroupTotals";
@@ -9,7 +16,186 @@ import {
   buildLinkedTxPatch,
 } from "../../utils/linkedWalletSync";
 
-export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addContributionLocal" | "approveContribution" | "deleteContribution" | "deleteContributionLocal" | "recordContribution" | "rejectContribution" | "setContributions" | "updateContribution" | "updateContributionAndSync" | "updateContributionLocal"> => ({
+// ─────────────────────────────────────────────────────────────────────────
+// Bulk-import parsing helpers
+//
+// All at module scope so they're created once and can't hold onto stale
+// state. None of them touch the store.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Reverse of the export-side TYPE_LABELS map in contributions.tsx. Keys
+// are whitespace-normalized lowercase versions of the export labels, so
+// a spreadsheet that capitalizes differently still matches.
+const TYPE_KEY_FROM_LABEL: Record<string, ContributionType> = {
+  "regular": "regular",
+  "loan repayment": "loan_repayment",
+  "loan interest": "loan_interest",
+  "late fee": "late_fee",
+  "investment funding": "investment_funding",
+  "investment return": "investment_return",
+  "penalty": "penalty",
+  "other": "other",
+};
+
+// Also accept the raw enum values themselves, in case a user hand-edits
+// the file and types "loan_repayment" instead of "Loan Repayment".
+const RAW_TYPE_KEYS: ContributionType[] = [
+  "regular",
+  "loan_repayment",
+  "loan_interest",
+  "late_fee",
+  "investment_funding",
+  "investment_return",
+  "penalty",
+  "other",
+];
+
+const VALID_STATUSES: ContributionStatus[] = ["approved", "pending", "rejected"];
+
+function normalizeKey(s: string): string {
+  return s.trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+}
+
+function parseType(raw: string): ContributionType | null {
+  if (!raw) return null;
+  const normalized = normalizeKey(raw);
+  const asEnum = raw.trim().toLowerCase() as ContributionType;
+  if (RAW_TYPE_KEYS.includes(asEnum)) return asEnum;
+  return TYPE_KEY_FROM_LABEL[normalized] ?? null;
+}
+
+function parseStatus(raw: string): ContributionStatus {
+  const s = raw.trim().toLowerCase();
+  return (VALID_STATUSES as string[]).includes(s)
+    ? (s as ContributionStatus)
+    : "pending";
+}
+
+function parseAmount(raw: any): number | null {
+  if (raw == null) return null;
+  if (typeof raw === "number") {
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  }
+  const cleaned = String(raw).replace(/[^0-9.\-]/g, "");
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// Tolerant of the shapes Excel and users throw at us: ISO
+// (2026-09-15 or 2026-09-15T00:00:00Z), en-GB (15 Sep 2026),
+// US (9/15/2026), and JavaScript Date objects.
+function parseDate(raw: any): string | null {
+  if (raw == null || raw === "") return null;
+
+  if (raw instanceof Date && !isNaN(raw.getTime())) {
+    return raw.toISOString().slice(0, 10);
+  }
+
+  const str = String(raw).trim();
+  if (!str) return null;
+
+  // Fast-path ISO date or datetime
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(str);
+  if (isoMatch) {
+    const [, y, mo, d] = isoMatch;
+    const yNum = Number(y);
+    const moNum = Number(mo) - 1;
+    const dNum = Number(d);
+    const dt = new Date(yNum, moNum, dNum);
+    if (
+      dt.getFullYear() === yNum &&
+      dt.getMonth() === moNum &&
+      dt.getDate() === dNum
+    ) {
+      return `${y}-${mo}-${d}`;
+    }
+  }
+
+  const dt = new Date(str);
+  if (!isNaN(dt.getTime())) {
+    return dt.toISOString().slice(0, 10);
+  }
+
+  return null;
+}
+
+// Match a member from the text produced by the export (full name) or
+// hand-typed by the user (name, email, member id, or Firebase userId).
+function findMember(raw: string, members: Member[]): Member | null {
+  if (!raw) return null;
+  const needle = raw.trim();
+  if (!needle) return null;
+  const lower = needle.toLowerCase();
+
+  return (
+    members.find((x) => x.fullName === needle) ||
+    members.find((x) => x.fullName?.toLowerCase() === lower) ||
+    members.find((x) => x.email?.toLowerCase() === lower) ||
+    members.find((x) => x.id === needle) ||
+    members.find((x) => x.userId === needle) ||
+    null
+  );
+}
+
+// One row (excluding a possible header) → a Contribution payload + its
+// resolved status, or an error string. Column order:
+//   [0] Date  [1] Member  [2] Type  [3] Amount  [4] Status  [5] Description
+// Extra columns beyond index 5 are ignored.
+function parseContributionRow(
+  row: any[],
+  members: Member[],
+  groupId: ID,
+): { contribution: Omit<Contribution, "id" | "createdAt">; status: ContributionStatus } | { error: string } {
+  if (!Array.isArray(row)) return { error: "Row is not an array" };
+
+  const dateRaw = row[0];
+  const memberRaw = row[1];
+  const typeRaw = row[2];
+  const amountRaw = row[3];
+  const statusRaw = row[4];
+  const descRaw = row[5];
+
+  const date = parseDate(dateRaw);
+  if (!date) return { error: `Unreadable date: "${String(dateRaw ?? "")}"` };
+
+  const member = findMember(String(memberRaw ?? ""), members);
+  if (!member) return { error: `Unknown member: "${String(memberRaw ?? "")}"` };
+
+  const type = parseType(String(typeRaw ?? ""));
+  if (!type) return { error: `Unknown type: "${String(typeRaw ?? "")}"` };
+
+  const amount = parseAmount(amountRaw);
+  if (amount == null) return { error: `Invalid amount: "${String(amountRaw ?? "")}"` };
+
+  const status = parseStatus(String(statusRaw ?? "pending"));
+
+  return {
+    contribution: {
+      groupId,
+      memberId: member.id,
+      amount,
+      date,
+      status,
+      contributionType: type,
+      description:
+        typeof descRaw === "string" && descRaw.trim()
+          ? descRaw.trim()
+          : undefined,
+    } as any,
+    status,
+  };
+}
+
+// Skip a leading header row — the export produces one and users often
+// re-import the file straight from the export without deleting it.
+function looksLikeHeader(row: any[]): boolean {
+  if (!Array.isArray(row) || row.length === 0) return false;
+  return String(row[0] ?? "").trim().toLowerCase() === "date";
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+
+export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addContributionLocal" | "approveContribution" | "bulkImportContributions" | "deleteContribution" | "deleteContributionLocal" | "recordContribution" | "rejectContribution" | "setContributions" | "updateContribution" | "updateContributionAndSync" | "updateContributionLocal"> => ({
       setContributions: (cs) => set({ contributions: cs }),
       addContributionLocal: (c) => set((s) => ({ contributions: [c, ...s.contributions] })),
       updateContributionLocal: (id, data) => set((s) => ({
@@ -20,20 +206,20 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
       deleteContribution: async (contributionId: ID, reason: string) => {
         const { activeGroupId, contributions, walletTransactions, members, authName } = get();
         if (!activeGroupId) throw new Error("No active group");
-        
+
         const contribution = contributions.find((c) => c.id === contributionId);
         if (!contribution) throw new Error("Contribution not found");
-        
+
         const previousContributions = [...contributions];
         const previousWalletTxs = [...walletTransactions];
-        
+
         get().deleteContributionLocal(contributionId);
-        
+
         const associatedTxs = walletTransactions.filter(tx => tx.contributionId === contributionId);
         associatedTxs.forEach(tx => {
           get().deleteWalletTxLocal(tx.id);
         });
-        
+
         try {
           get().setSyncStatus("pending");
           await FS.deleteContributionWithRelations(activeGroupId, contributionId, reason);
@@ -54,7 +240,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
             }, submitter.email).catch(console.warn);
           }
         } catch (e) {
-          set((s) => ({ 
+          set((s) => ({
             contributions: previousContributions,
             walletTransactions: previousWalletTxs,
             ...recalcGroupTotals({ ...s, contributions: previousContributions, walletTransactions: previousWalletTxs })
@@ -300,5 +486,173 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
           );
           throw e;
         }
+      },
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // BULK IMPORT CONTRIBUTIONS FROM .XLSX / .CSV
+      // ═══════════════════════════════════════════════════════════════════════
+      //
+      // Expected columns (in order):
+      //   Date | Member | Type | Amount | Status | Description
+      //
+      // Row-level errors are collected and returned rather than aborting
+      // the whole import. Approved rows also create the linked wallet
+      // transaction so the ledger stays in sync with the contributions
+      // list, exactly the way recordContribution / approveContribution
+      // maintain the pairing for single rows.
+      //
+      //   • All contributions are added to the local store in a single
+      //     batch, then recalcGroupTotals runs once. Doing this per row
+      //     would trigger hundreds of recomputations on a large file.
+      //
+      //   • Firestore writes happen in parallel via Promise.allSettled,
+      //     not sequentially, so a 200-row import doesn't take minutes.
+      //
+      //   • Any row whose Firestore write fails gets rolled back locally;
+      //     the rest of the batch proceeds. A partial import that mostly
+      //     succeeds is more useful than an all-or-nothing failure.
+      //
+      //   • Does NOT notify anyone per row. Importing 500 contributions
+      //     would otherwise mean 500 notifications to every approver.
+      bulkImportContributions: async (rows, groupId) => {
+        const { members } = get();
+
+        if (!groupId) throw new Error("No group id");
+        if (!Array.isArray(rows) || rows.length === 0) {
+          return { count: 0, skipped: 0, errors: ["File is empty"] };
+        }
+
+        const now = new Date().toISOString();
+
+        // ── 1. Parse every row ─────────────────────────────────────────
+        const startIndex = looksLikeHeader(rows[0]) ? 1 : 0;
+        const errors: string[] = [];
+        const toInsert: Array<{
+          contribution: Contribution;
+          walletTx: WalletTransaction | null;
+        }> = [];
+
+        let skipped = 0;
+
+        for (let i = startIndex; i < rows.length; i++) {
+          const row = rows[i];
+
+          // Blank row — skip silently, don't count as an error.
+          if (
+            !Array.isArray(row) ||
+            row.every((cell) => cell === "" || cell == null)
+          ) {
+            continue;
+          }
+
+          const parsed = parseContributionRow(row, members, groupId);
+          if ("error" in parsed) {
+            skipped++;
+            if (errors.length < 20) {
+              errors.push(`Row ${i + 1}: ${parsed.error}`);
+            }
+            continue;
+          }
+
+          const contribution: Contribution = {
+            ...parsed.contribution,
+            id: uid(),
+            status: parsed.status,
+            createdAt: now,
+          } as Contribution;
+
+          const walletTx: WalletTransaction | null =
+            parsed.status === "approved"
+              ? {
+                  id: uid(),
+                  groupId,
+                  type: "contribution",
+                  sourceType: "contribution",
+                  sourceId: contribution.id,
+                  amount: contribution.amount,
+                  description: contribution.description || "Contribution",
+                  date: contribution.date,
+                  memberId: contribution.memberId,
+                  contributionId: contribution.id,
+                  createdAt: now,
+                }
+              : null;
+
+          toInsert.push({ contribution, walletTx });
+        }
+
+        if (toInsert.length === 0) {
+          return {
+            count: 0,
+            skipped,
+            errors: errors.length > 0 ? errors : ["No valid rows found"],
+          };
+        }
+
+        // ── 2. Apply locally in one shot ───────────────────────────────
+        for (const { contribution } of toInsert) {
+          get().addContributionLocal(contribution);
+        }
+        for (const { walletTx } of toInsert) {
+          if (walletTx) get().addWalletTxLocal(walletTx);
+        }
+        set((s) => recalcGroupTotals(s));
+
+        // ── 3. Push to Firestore in parallel ───────────────────────────
+        get().setSyncStatus("pending");
+
+        const results = await Promise.allSettled(
+          toInsert.map(({ contribution, walletTx }) =>
+            (async () => {
+              await FS.addContribution(groupId, {
+                ...contribution,
+                id: contribution.id,
+                status: contribution.status,
+                createdAt: contribution.createdAt,
+              } as any);
+
+              if (walletTx) {
+                await FS.addWalletTx(groupId, walletTx as any);
+              }
+            })(),
+          ),
+        );
+
+        // ── 4. Roll back individual failures ──────────────────────────
+        let count = 0;
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          const { contribution, walletTx } = toInsert[i];
+
+          if (r.status === "fulfilled") {
+            count++;
+            continue;
+          }
+
+          get().deleteContributionLocal(contribution.id);
+          if (walletTx) {
+            get().deleteWalletTxLocal(walletTx.id);
+          }
+
+          skipped++;
+          if (errors.length < 20) {
+            const msg =
+              r.reason instanceof Error
+                ? r.reason.message
+                : String(r.reason ?? "Unknown error");
+            errors.push(`Row for ${contribution.date}: ${msg}`);
+          }
+        }
+
+        set((s) => recalcGroupTotals(s));
+        get().recalcTotals();
+
+        if (skipped > 0 && count === 0) {
+          get().setSyncStatus("failed", "All rows failed to import");
+        } else {
+          get().setSyncStatus("synced");
+        }
+
+        return { count, skipped, errors };
       },
 });

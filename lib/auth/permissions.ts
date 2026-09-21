@@ -177,9 +177,39 @@ export function canViewInvestments(role: UserRole, permissions?: MemberPermissio
   return permissions?.viewAllReports === true;
 }
 
+// Wallet visibility relaxed to every authenticated member of an active
+// group. Two reasons:
+//
+//   1. Rules already permit it. `match /walletTransactions/{id}` has
+//      `allow list: if isAdminOrAccountant(groupId) || isActiveMember(groupId)`,
+//      so the whole-collection list that `subscribeWalletTxs` runs is
+//      legal for any active member. Leaving this gate closed just meant
+//      the client declined to make a read it was allowed to make.
+//
+//   2. Subscribing members to the wallet gives three things:
+//        • Their own ledger rows (contributions, interest paid,
+//          repayments, late fees, penalties) — this is what finally
+//          makes member `loanEarnings` non-zero, and it means the
+//          Recent Activity list on the dashboard shows real
+//          transactions instead of the synthesized fallback.
+//        • Correct group totals on their device too, because
+//          recalcGroupTotals runs locally and needs the collection to
+//          compute `availableBalance` / `totalInterestEarned`. With a
+//          partial read it would compute garbage; with the full read
+//          it computes exactly what staff devices compute.
+//        • No new UI surface. The Wallet tab is not in
+//          MEMBER_WEB_NAV; mobile nav filters it out explicitly; and
+//          every screen that reads `useGroupWallet()` already filters
+//          to the current member when not in group view.
+//
+// The permission argument is retained for API compatibility with the
+// other canView* helpers and for future fine-grained overrides; today
+// the answer is the same for every role that has reached this code
+// path (pending/suspended users are intercepted before mount).
 export function canViewWallet(role: UserRole, permissions?: MemberPermissions): boolean {
-  if (role === "admin" || role === "accountant") return true;
-  return permissions?.manageSettings === true;
+  void role;
+  void permissions;
+  return true;
 }
 
 export function canViewReports(role: UserRole, permissions?: MemberPermissions): boolean {

@@ -14,7 +14,7 @@ import { TabRow, SearchBar, useToast, Toast } from "../../components/ui";
 import { Colors, S, R, C, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
 import type { WalletTransaction } from "../../types";
 import { useStore } from "../../stores/useStore";
-import { useCurrentMemberPermissions } from "../../stores/selectors";
+import { useCurrentMemberPermissions, useMyMemberIds} from "../../stores/selectors";
 import { KpiCard } from "../../components/ui/KpiCard";
 
 const PAGE_SIZE = 20;
@@ -82,9 +82,17 @@ export default function WalletScreen() {
   const isGroupView = useIsGroupView();
   const canSeeAll = isGroupView;
 
+  const myIds = useMyMemberIds();
+
   const txs = useMemo(() =>
-    canSeeAll ? allTxs : allTxs.filter(t => t.memberId === currentMember?.id),
-    [allTxs, canSeeAll, currentMember]
+    canSeeAll
+      ? allTxs
+      : allTxs.filter(
+          (t) =>
+            myIds.has(t.memberId ?? "") ||
+            myIds.has((t as any).userId ?? ""),
+        ),
+    [allTxs, canSeeAll, myIds]
   );
 
   const [tab,    setTab]    = useState("All");

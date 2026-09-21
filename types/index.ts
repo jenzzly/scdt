@@ -197,6 +197,7 @@ export interface Member {
   exitDate?: string;
   exitNotes?: string;
   permissions?: MemberPermissions;
+  lateFeeExemptions?: LateFeeExemption[];
   loginToken?: string;
   loginTokenExpiry?: string;
   customRoleId?: ID; 
@@ -283,6 +284,21 @@ export interface Loan {
   deletedBy?: ID;
   deletedAt?: string;
   deletionReason?: string;
+}
+
+export interface LateFeeExemption {
+  id: ID;
+  /** Which kind of fee this exemption covers. */
+  scope: "contribution" | "loan" | "both";
+  /** Inclusive YYYY-MM-DD. */
+  periodStart: string;
+  /** Inclusive YYYY-MM-DD. */
+  periodEnd: string;
+  /** Optional admin note — shown on the exemption list. */
+  reason?: string;
+  createdBy: ID;
+  createdByName: string;
+  createdAt: string;
 }
 
 export interface RepaymentScheduleItem {

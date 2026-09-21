@@ -15,6 +15,7 @@ web-build/
 scripts/serviceAccountKey.json
 .DS_Store
 *.log
+*.py
 
 # Per-client secrets — each client's Firebase credentials live under
 # clients/<id>/ and must never be committed. brand.json and assets/ ARE

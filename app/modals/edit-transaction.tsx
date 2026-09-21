@@ -130,12 +130,12 @@ export default function EditTransactionModal() {
         },
         date + "T00:00:00.000Z" // Ensure proper ISO format
       );
-      console.log("Accrued interest projection (wallet):", projection, "loan data:", {
-        balance: linkedLoan.balance,
-        interestRate: linkedLoan.interestRate,
-        lastAccrualDate: anchorDate,
-        newDate: date,
-      });
+      // console.log("Accrued interest projection (wallet):", projection, "loan data:", {
+      //   balance: linkedLoan.balance,
+      //   interestRate: linkedLoan.interestRate,
+      //   lastAccrualDate: anchorDate,
+      //   newDate: date,
+      // });
       return projection;
     } catch (e) {
       console.error("Failed to calculate accrued interest projection:", e);

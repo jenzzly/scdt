@@ -1,5 +1,5 @@
 // app/(tabs)/more.tsx - Fixed Toast rendering
-import React, { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useCallback} from "react";
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform, useWindowDimensions } from "react-native";
 import { useRouter } from "expo-router";
 import {
@@ -13,7 +13,6 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { Colors, S, R, fmtCurrency, fmtDate, showConfirm, round2 } from "../../utils/theme";
 import type { Member } from "../../types";
-import { debugSync } from "../../lib/debugSync";
 
 const ROLES = [
   { label: "Member",       value: "member"       },
@@ -36,18 +35,6 @@ export default function MoreScreen() {
   const isWide = width >= 768;
   const { signOut, resetPassword } = useAuth();
   const { show, visible, msg, type } = useToast();
-
-  // ── TEMP DEBUG — remove after diagnosing sync issue ──
-  // Was previously (incorrectly) placed at module scope, outside this
-  // component, which is why it threw "debugSync is not a function" —
-  // hooks can only run during a component's render, not at module load
-  // time, and code at module scope can execute before all imports are
-  // fully wired up depending on bundling order. Moved inside the
-  // component body, alongside the other top-of-function hooks.
-  useEffect(() => {
-    debugSync();
-  }, []);
-
   const group = useStore((s) => s.groups.find(g => g.id === s.activeGroupId));
   const activeGroupId = useStore((s) => s.activeGroupId);
   const authUid = useStore((s) => s.authUid);

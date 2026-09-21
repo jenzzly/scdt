@@ -1,7 +1,7 @@
 // stores/slices/memberSlice.ts
 
 import type { SetFn, GetFn, StoreState } from "../storeTypes";
-import type { Member } from "../../types";
+import type { Member, LateFeeExemption, WalletTransaction } from "../../types";
 import * as FS from "../../lib/firestore";
 import { uid } from "../../utils/theme";
 
@@ -501,6 +501,101 @@ export const createMemberSlice = (
           : "Failed to update profile"
       );
 
+      throw e;
+    }
+  },
+
+  // ─────────────────────────────
+  // LATE-FEE EXEMPTIONS
+  // ─────────────────────────────
+
+  addLateFeeExemption: async (memberId, data, feeTxIdToClear) => {
+    const { activeGroupId, members, authUid, authName } = get();
+    if (!activeGroupId) throw new Error("No active group");
+
+    const member = members.find((m: Member) => m.id === memberId);
+    if (!member) throw new Error("Member not found");
+
+    const now = new Date().toISOString();
+    const newExemption: LateFeeExemption = {
+      id: uid(),
+      scope: data.scope,
+      periodStart: data.periodStart,
+      periodEnd: data.periodEnd,
+      reason: data.reason,
+      createdBy: authUid ?? "",
+      createdByName: authName ?? "Unknown",
+      createdAt: now,
+    };
+
+    const previous = (member.lateFeeExemptions ?? []).slice();
+    const updated = [...previous, newExemption];
+
+    // Snapshot the wallet tx we're about to clear (if any) so we can
+    // roll it back on failure.
+    const txToClear = feeTxIdToClear
+      ? get().walletTransactions.find((t: WalletTransaction) => t.id === feeTxIdToClear)
+      : undefined;
+    const previousFeePaid = txToClear?.feePaid;
+
+    // Optimistic local updates — member + fee tx.
+    get().updateMemberLocal(memberId, { lateFeeExemptions: updated } as any);
+    if (txToClear) {
+      get().updateWalletTxLocal(txToClear.id, { feePaid: true });
+    }
+
+    try {
+      get().setSyncStatus("pending");
+
+      await FS.updateMember(activeGroupId, memberId, {
+        lateFeeExemptions: updated,
+      } as any);
+
+      if (txToClear) {
+        await FS.updateWalletTx(activeGroupId, txToClear.id, { feePaid: true });
+      }
+
+      get().setSyncStatus("synced");
+      return newExemption.id;
+    } catch (e) {
+      get().updateMemberLocal(memberId, { lateFeeExemptions: previous } as any);
+      if (txToClear) {
+        get().updateWalletTxLocal(txToClear.id, {
+          feePaid: previousFeePaid ?? false,
+        });
+      }
+      get().setSyncStatus(
+        "failed",
+        e instanceof Error ? e.message : "Failed to add exemption",
+      );
+      throw e;
+    }
+  },
+
+  removeLateFeeExemption: async (memberId, exemptionId) => {
+    const { activeGroupId, members } = get();
+    if (!activeGroupId) throw new Error("No active group");
+
+    const member = members.find((m: Member) => m.id === memberId);
+    if (!member) throw new Error("Member not found");
+
+    const previous = (member.lateFeeExemptions ?? []).slice();
+    const updated = previous.filter((ex) => ex.id !== exemptionId);
+
+    get().updateMemberLocal(memberId, { lateFeeExemptions: updated } as any);
+
+    try {
+      get().setSyncStatus("pending");
+      await FS.updateMember(activeGroupId, memberId, {
+        lateFeeExemptions: updated,
+      } as any);
+      get().setSyncStatus("synced");
+    } catch (e) {
+      get().updateMemberLocal(memberId, { lateFeeExemptions: previous } as any);
+      get().setSyncStatus(
+        "failed",
+        e instanceof Error ? e.message : "Failed to remove exemption",
+      );
       throw e;
     }
   },

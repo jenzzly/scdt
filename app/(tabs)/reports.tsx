@@ -27,6 +27,8 @@ import {
   useIsGroupView,
 } from "../../stores/useStore";
 
+import { useMyMemberIds } from "../../stores/selectors";
+
 import {
   Card,
   Empty,
@@ -56,10 +58,6 @@ import {
   findOverdueInstallments,
 } from "../../utils/lateFees";
 
-// Shared with loans.tsx and record-repayment.tsx — same anchor chain,
-// same daily-rate math. Used here only for the "Accrued (unpaid)"
-// snapshot figure; the "Interest Earned" and "Projected Interest"
-// figures below still measure different things (see comments there).
 import { computeTodayAccrued } from "../../utils/accrual";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -80,7 +78,6 @@ type DropdownOption = {
   value: string;
 };
 
-// Member-status advanced filter. "all" = no member-status restriction.
 type MemberStatusFilter =
   | "all"
   | "has_unpaid_fees"
@@ -89,11 +86,12 @@ type MemberStatusFilter =
   | "no_contributions_in_period"
   | "no_loans";
 
-// Profits tab: which slice of earnings to show. "all" combines what's
-// already been collected with what's still expected; "actual" shows only
-// money that has actually landed (repayments + fees already paid);
-// "projected" shows only what's still outstanding/expected.
 type EarningsViewMode = "all" | "actual" | "projected";
+
+// Late-fee source — new dimension for the Late Fees category only.
+// "all" shows both combined (previous behavior); "contribution" and
+// "loan" show one source at a time.
+type LateFeeSourceFilter = "all" | "contribution" | "loan";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Categories
@@ -108,8 +106,6 @@ const CATEGORIES: {
   { key: "loans", label: "Loans", icon: "🏦" },
   { key: "latefees", label: "Late Fees", icon: "⚠️" },
   { key: "members", label: "Members", icon: "👥" },
-  // { key: "expenses", label: "Expenses", icon: "🧾" },
-  // { key: "investments", label: "Investments", icon: "📊" },
   { key: "earnings", label: "Profits", icon: "💰" },
 ];
 
@@ -122,9 +118,6 @@ const MEMBER_STATUS_OPTIONS: { label: string; value: MemberStatusFilter }[] = [
   { label: "No loans taken", value: "no_loans" },
 ];
 
-// Simple chip-row options for Loan/Contribution status — short label +
-// short helper shown under the row, no nested modal (avoids stacking a
-// dropdown-modal inside the already-open filter modal).
 const LOAN_STATUS_CHIPS: { label: string; value: "all" | "pending" | "active" | "repaid" }[] = [
   { label: "All", value: "all" },
   { label: "Pending", value: "pending" },
@@ -139,10 +132,14 @@ const CONTRIBUTION_STATUS_CHIPS: { label: string; value: "all" | "approved" | "p
   { label: "Rejected", value: "rejected" },
 ];
 
-// Member Condition, grouped with one-line explanations so it's clear
-// what each option actually checks for — this is the part of the old
-// modal that was most likely to confuse people (six flat options with no
-// context for what "late" or "no activity" means here).
+// Late-fee source chips — new. Shown inline on the Late Fees category
+// itself and inside the advanced filter modal.
+const LATE_FEE_SOURCE_CHIPS: { label: string; value: LateFeeSourceFilter }[] = [
+  { label: "All Sources", value: "all" },
+  { label: "Contributions", value: "contribution" },
+  { label: "Loans", value: "loan" },
+];
+
 const MEMBER_CONDITION_GROUPS: {
   groupLabel: string;
   options: { label: string; value: MemberStatusFilter; description: string }[];
@@ -212,10 +209,6 @@ function monthBounds(key: string) {
   return { from: iso(start), to: iso(end) };
 }
 
-// Counts how many distinct filter GROUPS are active (not individual
-// fields) — a date range counts once even though it's two fields, so the
-// number matches how many chips a person would see, not how many state
-// variables changed.
 function countActiveFilters(opts: {
   search: string;
   fromDate: string;
@@ -223,6 +216,7 @@ function countActiveFilters(opts: {
   loanStatus: string;
   contributionStatus: string;
   memberStatus: string;
+  lateFeeSource: string;
 }) {
   let n = 0;
   if (opts.search) n++;
@@ -230,6 +224,7 @@ function countActiveFilters(opts: {
   if (opts.loanStatus !== "all") n++;
   if (opts.contributionStatus !== "all") n++;
   if (opts.memberStatus !== "all") n++;
+  if (opts.lateFeeSource !== "all") n++;
   return n;
 }
 
@@ -255,26 +250,6 @@ function monthlyTotals(
   };
 }
 
-// Loan interest projection for a single loan, scoped to a date window.
-// Pulled out as a standalone helper (not a hook) so it can safely be
-// called from multiple useMemo blocks without violating the Rules of
-// Hooks and without duplicating the implementation.
-//
-// NOTE on what this measures: this is the SCHEDULE-BASED projection —
-// the interest that will be earned IF every remaining installment is
-// paid exactly on its scheduled due date. For reducing-balance loans,
-// the real interest earned depends on actual payment timing (late
-// payments accrue more; early payments accrue less), which is what
-// groupAccruedInterestUnpaid captures live. The two figures answer
-// different questions:
-//   - this one: "what does the plan say we'll earn?"
-//   - accruedUnpaid: "what has already accrued but isn't yet paid?"
-//
-// FIX: previously this only summed installments whose due date fell
-// between the loan's start and "now" (or the selected toDate). That
-// meant a freshly-disbursed loan with no installment due yet always
-// projected $0 interest, even though the full schedule clearly has
-// interest attached to it.
 function calculateLoanInterestProjection(
   loan: any,
   fromDate: string,
@@ -339,7 +314,7 @@ const KpiCard = ({
 );
 
 // ─────────────────────────────────────────────────────────────────────────
-// Earnings donut — source breakdown with side legend
+// Earnings donut
 // ─────────────────────────────────────────────────────────────────────────
 function EarningsDonut({
   segments,
@@ -378,7 +353,6 @@ function EarningsDonut({
           height={size}
           viewBox={`0 0 ${size} ${size}`}
         >
-          {/* Track makes the donut look complete even with rounded segment caps. */}
           <Circle
             cx={center}
             cy={center}
@@ -464,7 +438,7 @@ function EarningsDonut({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Gauge — single percentage metric, semicircular
+// Gauge
 // ─────────────────────────────────────────────────────────────────────────
 function Gauge({
   value,
@@ -492,9 +466,6 @@ function Gauge({
   const pct = Math.max(0, Math.min(1, safeValue / safeMax));
   const progressLength = pct * arcLength;
 
-  // A real SVG arc is used instead of a dashed Circle. Dashed circles are
-  // easy to clip/misalign because their dash pattern is based on the full
-  // circumference, not the visible semicircle.
   const arcPath = `M ${left} ${centerY} A ${radius} ${radius} 0 0 1 ${right} ${centerY}`;
 
   return (
@@ -843,10 +814,6 @@ function Dropdown({
 // Advanced filter modal
 // ─────────────────────────────────────────────────────────────────────────
 
-// Small single-select chip row — used for Loan/Contribution status so
-// the filter modal doesn't have to nest another dropdown-modal inside
-// itself. Chips are always all visible at once (max 4 options), so
-// there's no extra tap needed to see what's available.
 function StatusChipRow({
   value,
   options,
@@ -890,6 +857,8 @@ function FilterModal({
   onContributionStatusChange,
   memberStatus,
   onMemberStatusChange,
+  lateFeeSource,
+  onLateFeeSourceChange,
   onApply,
   searchTerm,
   onSearchChange,
@@ -907,7 +876,6 @@ function FilterModal({
           to match ALL of the ones you set, not just one.
         </Text>
 
-        {/* ── Search ──────────────────────────────────────────────── */}
         <View style={styles.filterSection}>
           <Text style={styles.filterSectionTitle}>Search</Text>
           <Input
@@ -918,7 +886,6 @@ function FilterModal({
           />
         </View>
 
-        {/* ── Time period ─────────────────────────────────────────── */}
         <View style={styles.filterSection}>
           <Text style={styles.filterSectionTitle}>Time Period</Text>
           <Text style={styles.filterSectionHelp}>
@@ -931,14 +898,12 @@ function FilterModal({
           <DatePicker label="To Date" value={toDate} onChange={onToDateChange} placeholder="End date" />
         </View>
 
-        {/* ── Loan status ─────────────────────────────────────────── */}
         <View style={styles.filterSection}>
           <Text style={styles.filterSectionTitle}>Loan Status</Text>
           <Text style={styles.filterSectionHelp}>Only affects the Loans report tab.</Text>
           <StatusChipRow value={loanStatus} options={LOAN_STATUS_CHIPS} onChange={onLoanStatusChange} />
         </View>
 
-        {/* ── Contribution status ─────────────────────────────────── */}
         <View style={styles.filterSection}>
           <Text style={styles.filterSectionTitle}>Contribution Status</Text>
           <Text style={styles.filterSectionHelp}>Only affects the Contributions report tab.</Text>
@@ -949,7 +914,21 @@ function FilterModal({
           />
         </View>
 
-        {/* ── Member condition ────────────────────────────────────── */}
+        {/* NEW: Late Fee Source — only affects Late Fees tab */}
+        <View style={styles.filterSection}>
+          <Text style={styles.filterSectionTitle}>Late Fee Source</Text>
+          <Text style={styles.filterSectionHelp}>
+            Only affects the Late Fees report tab. Pick whether to see
+            fees from missed contributions, from overdue loan
+            installments, or both combined.
+          </Text>
+          <StatusChipRow
+            value={lateFeeSource}
+            options={LATE_FEE_SOURCE_CHIPS}
+            onChange={onLateFeeSourceChange}
+          />
+        </View>
+
         <View style={styles.filterSection}>
           <Text style={styles.filterSectionTitle}>Member Condition</Text>
           <Text style={styles.filterSectionHelp}>
@@ -1035,9 +1014,6 @@ export default function ReportsScreen() {
   const currentMember = useCurrentMember();
   const canSeeAll = useIsAdminView();
 
-  // View mode now comes from the shared header toggle (ViewSwitch in
-  // _layout.tsx / useDataViewMode), not a local scope state — this screen
-  // no longer renders its own Group/Personal buttons.
   const isGroupViewHeader = useIsGroupView();
   const isPersonalView = !isGroupViewHeader || !canSeeAll;
 
@@ -1060,11 +1036,13 @@ export default function ReportsScreen() {
     "all" | "approved" | "pending" | "rejected"
   >("all");
 
-  // Member-status advanced filter (fees/late/no-contribution/no-loan conditions).
   const [memberStatusFilter, setMemberStatusFilter] =
     useState<MemberStatusFilter>("all");
 
-  // Profits tab only: which slice of earnings to show (see EarningsViewMode).
+  // NEW: source of late fees — "all" | "contribution" | "loan"
+  const [lateFeeSourceFilter, setLateFeeSourceFilter] =
+    useState<LateFeeSourceFilter>("all");
+
   const [earningsMode, setEarningsMode] = useState<EarningsViewMode>("all");
 
   const [tempSearch, setTempSearch] = useState("");
@@ -1075,9 +1053,9 @@ export default function ReportsScreen() {
     useState<typeof contributionStatus>("all");
   const [tempMemberStatus, setTempMemberStatus] =
     useState<MemberStatusFilter>("all");
+  const [tempLateFeeSource, setTempLateFeeSource] =
+    useState<LateFeeSourceFilter>("all");
 
-  // Reset member filter whenever the header toggle flips personal <-> group,
-  // since "all members" only makes sense in group view.
   useEffect(() => {
     if (isPersonalView) {
       setMemberIdFilter("all");
@@ -1088,26 +1066,52 @@ export default function ReportsScreen() {
   // Scope
   // ───────────────────────────────────────────────────────────────────────
 
+   // Dual-key set — records in this app used both `memberId` =
+  // member-doc-id (newer writes) and `memberId` = auth-userId (older
+  // writes). See useMyMemberIds in stores/selectors.ts for the full
+  // reasoning. All five scoped collections below filter against this
+  // set instead of comparing to a single id.
+  const myIds = useMyMemberIds();
+
   const members = isPersonalView
-    ? allMembers.filter((m) => m.id === currentMember?.id)
+    ? allMembers.filter(
+        (m) =>
+          myIds.has(m.id) ||
+          myIds.has((m as any).userId),
+      )
     : allMembers;
 
   const loans = isPersonalView
-    ? allLoans.filter((l) => l.memberId === currentMember?.id)
+    ? allLoans.filter(
+        (l) =>
+          myIds.has(l.memberId) ||
+          myIds.has((l as any).userId),
+      )
     : allLoans;
 
   const contributions = isPersonalView
-    ? allContributions.filter((c) => c.memberId === currentMember?.id)
+    ? allContributions.filter(
+        (c) =>
+          myIds.has(c.memberId) ||
+          myIds.has((c as any).userId),
+      )
     : allContributions;
 
   const investments = isPersonalView
     ? allInvestments.filter(
-        (i: any) => i.createdBy === currentMember?.id || i.memberId === currentMember?.id
+        (i: any) =>
+          myIds.has(i.createdBy) ||
+          myIds.has(i.memberId) ||
+          myIds.has(i.userId),
       )
     : allInvestments;
 
   const wallet = isPersonalView
-    ? allWallet.filter((t) => t.memberId === currentMember?.id)
+    ? allWallet.filter(
+        (t) =>
+          myIds.has(t.memberId) ||
+          myIds.has((t as any).userId),
+      )
     : allWallet;
 
   // ───────────────────────────────────────────────────────────────────────
@@ -1134,6 +1138,7 @@ export default function ReportsScreen() {
     setTempLoanStatus(loanStatus);
     setTempContributionStatus(contributionStatus);
     setTempMemberStatus(memberStatusFilter);
+    setTempLateFeeSource(lateFeeSourceFilter);
     setShowFilterModal(true);
   };
 
@@ -1144,6 +1149,7 @@ export default function ReportsScreen() {
     setLoanStatus(tempLoanStatus);
     setContributionStatus(tempContributionStatus);
     setMemberStatusFilter(tempMemberStatus);
+    setLateFeeSourceFilter(tempLateFeeSource);
     setMonthFilter("all");
     setShowFilterModal(false);
   };
@@ -1157,6 +1163,7 @@ export default function ReportsScreen() {
     setMonthFilter("all");
     setMemberIdFilter("all");
     setMemberStatusFilter("all");
+    setLateFeeSourceFilter("all");
 
     setTempSearch("");
     setTempFromDate("");
@@ -1164,6 +1171,7 @@ export default function ReportsScreen() {
     setTempLoanStatus("all");
     setTempContributionStatus("all");
     setTempMemberStatus("all");
+    setTempLateFeeSource("all");
   };
 
   const hasActiveFilters =
@@ -1173,7 +1181,8 @@ export default function ReportsScreen() {
     contributionStatus !== "all" ||
     searchTerm !== "" ||
     memberIdFilter !== "all" ||
-    memberStatusFilter !== "all";
+    memberStatusFilter !== "all" ||
+    lateFeeSourceFilter !== "all";
 
   const inDateRange = (dStr?: string) => {
     if (!dStr) return true;
@@ -1209,12 +1218,15 @@ export default function ReportsScreen() {
         const tx = allWallet.find((t) => t.id === item.feeTxId && t.type === "late_fee");
         return { ...item, isPaid: !!tx?.feePaid };
       })
-      .filter((item: any) => (isPersonalView ? item.memberId === currentMember?.id : true));
-  }, [overdue, allWallet, isPersonalView, currentMember?.id]);
+      .filter((item: any) =>
+        isPersonalView
+          ? myIds.has(item.memberId) || myIds.has((item as any).userId)
+          : true,
+      );
+  }, [overdue, allWallet, isPersonalView, myIds]);
 
   // ───────────────────────────────────────────────────────────────────────
-  // Overdue loans — derived from findOverdueInstallments, which returns
-  // one record per overdue installment: { memberId, loanId, daysLate, ... }.
+  // Overdue loans
   // ───────────────────────────────────────────────────────────────────────
 
   const overdueLoans = useMemo(() => {
@@ -1245,8 +1257,12 @@ export default function ReportsScreen() {
           isPaid: !!tx?.feePaid,
         };
       })
-      .filter((item: any) => (isPersonalView ? item.memberId === currentMember?.id : true));
-  }, [overdueLoans, allWallet, isPersonalView, currentMember?.id]);
+      .filter((item: any) =>
+        isPersonalView
+          ? myIds.has(item.memberId) || myIds.has((item as any).userId)
+          : true,
+      );
+  }, [overdueLoans, allWallet, isPersonalView, myIds]);
 
   const allLateFeesCombined = useMemo(() => {
     const taggedContribFees = lateFees.map((f: any) => ({
@@ -1257,16 +1273,13 @@ export default function ReportsScreen() {
   }, [lateFees, loanLateFeesList]);
 
   // ───────────────────────────────────────────────────────────────────────
-  // Member-status derived sets — computed once per render from full
-  // (unfiltered-by-category) group data, then intersected into each
-  // category's row filter below.
+  // Member-status derived sets
   // ───────────────────────────────────────────────────────────────────────
 
   const unpaidFeeMemberIds = useMemo(
     () => new Set(allLateFeesCombined.filter((f: any) => !f.isPaid).map((f: any) => f.memberId)),
     [allLateFeesCombined]
   );
-
 
   const lateContributionFeeMemberIds = useMemo(
     () =>
@@ -1278,8 +1291,6 @@ export default function ReportsScreen() {
     [lateFees]
   );
 
-  // Members with zero approved contributions inside the active date range
-  // (selectedFromDate/selectedToDate, or all-time if neither is set).
   const noContributionMemberIds = useMemo(() => {
     const contributingIds = new Set(
       contributions
@@ -1294,7 +1305,6 @@ export default function ReportsScreen() {
     );
   }, [contributions, members, selectedFromDate, selectedToDate]);
 
-  // Members who have never taken out a loan (no loan records at all).
   const noLoanMemberIds = useMemo(() => {
     const borrowerIds = new Set(loans.map((l) => l.memberId));
 
@@ -1318,7 +1328,7 @@ export default function ReportsScreen() {
       case "no_loans":
         return noLoanMemberIds;
       default:
-        return null; // "all" — no restriction
+        return null;
     }
   };
 
@@ -1327,12 +1337,6 @@ export default function ReportsScreen() {
   const passesMemberStatus = (id?: string) =>
     !memberStatusSet || (!!id && memberStatusSet.has(id));
 
-  // "No contributions in period" filtered against the Contributions
-  // category — and "No loans taken" filtered against the Loans category —
-  // can never produce a transaction row by definition: those members are
-  // in the set precisely because they have zero matching records. Detect
-  // that combination so we can show the qualifying MEMBERS instead of an
-  // structurally-guaranteed-empty transaction list.
   const isNoActivityMemberView =
     (category === "contributions" &&
       memberStatusFilter === "no_contributions_in_period") ||
@@ -1430,10 +1434,6 @@ export default function ReportsScreen() {
     [wallet]
   );
 
-  // Total principal currently disbursed across active loans — replaces the
-  // old "Projected Late Fees" card, which was often $0 and less useful than
-  // seeing loan exposure at a glance. groupTotalInvestments is also kept
-  // here in case "Total Investments" is preferred in that slot instead.
   const groupTotalLoansDisbursed = useMemo(
     () =>
       round2(
@@ -1477,20 +1477,6 @@ export default function ReportsScreen() {
     [wallet]
   );
 
-  // ───────────────────────────────────────────────────────────────────────
-  // Accrued (unpaid) interest — current snapshot, "how much interest has
-  // built up on reducing-balance loans that hasn't been collected yet".
-  //
-  // Uses the SAME computeTodayAccrued() helper as loans.tsx's loan detail
-  // modal and record-repayment.tsx, so this figure matches exactly what
-  // each individual loan shows when you open it.
-  //
-  // Respects the Member filter (only this member's loans, if scoped) and
-  // the Member Condition filter, but NOT the date range — it's a live
-  // "as of right now" balance, not a period-bounded figure, the same way
-  // Total Net Assets and Total Loans above also ignore the date range.
-  // ───────────────────────────────────────────────────────────────────────
-
   const groupAccruedInterestUnpaid = useMemo(
     () =>
       round2(
@@ -1509,14 +1495,6 @@ export default function ReportsScreen() {
       ),
     [loans, memberIdFilter, memberStatusFilter]
   );
-
-  // ───────────────────────────────────────────────────────────────────────
-  // Projected calculations — based on user-selected date range. These two
-  // hooks are the single source of truth for loan-interest and
-  // loan-late-fee projections. They are declared once, at the top level
-  // (never inside another hook's callback), and used by BOTH the Overview
-  // cards further down AND the Profits/Earnings report tab via `view`.
-  // ───────────────────────────────────────────────────────────────────────
 
   const loanInterestProjections = useMemo(() => {
     const fromDate = selectedFromDate || "";
@@ -1595,12 +1573,6 @@ export default function ReportsScreen() {
     projectedLoanInterest + projectedLoanLateFees
   );
 
-  // ───────────────────────────────────────────────────────────────────────
-  // Collection rate — drives the gauge. Personal: my contributions vs my
-  // goal-period target. Group: total collected vs (target × active
-  // members), matching the same math used on the Contributions screen.
-  // ───────────────────────────────────────────────────────────────────────
-
   const collectionRatePct = useMemo(() => {
     if (!group) return 0;
 
@@ -1616,10 +1588,6 @@ export default function ReportsScreen() {
 
     return expected > 0 ? Math.min(999, Math.round((collected / expected) * 100)) : 0;
   }, [group, allMembers, contributions, isPersonalView]);
-
-  // ───────────────────────────────────────────────────────────────────────
-  // Cashflow
-  // ───────────────────────────────────────────────────────────────────────
 
   const cashflow = useMemo(() => {
     const months: string[] = [];
@@ -1650,10 +1618,6 @@ export default function ReportsScreen() {
     return { months, income, expenses };
   }, [wallet]);
 
-  // ───────────────────────────────────────────────────────────────────────
-  // Member savings chart
-  // ───────────────────────────────────────────────────────────────────────
-
   const memberPie = useMemo(() => {
     const top = members
       .filter((m) => m.status === "active" && m.totalContributions > 0)
@@ -1667,10 +1631,6 @@ export default function ReportsScreen() {
       color: palette[i % palette.length],
     }));
   }, [members]);
-
-  // ───────────────────────────────────────────────────────────────────────
-  // Month options
-  // ───────────────────────────────────────────────────────────────────────
 
   const monthOptions = useMemo(() => {
     const dateFieldByCat: Record<Category, string> = {
@@ -1723,11 +1683,6 @@ export default function ReportsScreen() {
       ...sorted.map((k) => ({ label: monthLabel(k), value: k })),
     ];
   }, [category, contributions, loans, allLateFeesCombined, members, wallet, investments]);
-
-
-  // ───────────────────────────────────────────────────────────────────────
-  // Member options
-  // ───────────────────────────────────────────────────────────────────────
 
   const memberOptions = useMemo(
     () => [
@@ -1876,6 +1831,11 @@ export default function ReportsScreen() {
           passesMemberStatus(f.memberId)
       );
 
+      // NEW: apply the source filter
+      if (lateFeeSourceFilter !== "all") {
+        list = list.filter((f: any) => f.type === lateFeeSourceFilter);
+      }
+
       list = list.filter((f: any) => matchesSearch(f, ["memberId", "periodLabel"]));
 
       const chart = monthlyTotals(list, "periodStart", "feeAmount");
@@ -1908,23 +1868,13 @@ export default function ReportsScreen() {
         chart,
         chartColor: C.error,
         kpis: [
-          {
-            label: "Total Late Fees",
-            value: fmtCurrency(totalOwed),
-          },
-          {
-            label: "Loan Late Fees",
-            value: fmtCurrency(totalLoanLateFees),
-          },
-          {
-            label: "Contrib Late Fees",
-            value: fmtCurrency(totalContribLateFees),
-          },
+          { label: "Total Late Fees", value: fmtCurrency(totalOwed) },
+          { label: "Loan Late Fees", value: fmtCurrency(totalLoanLateFees) },
+          { label: "Contrib Late Fees", value: fmtCurrency(totalContribLateFees) },
           { label: "Records", value: String(list.length) },
         ],
       };
     }
-
 
     if (category === "members") {
       const list = members
@@ -2032,19 +1982,7 @@ export default function ReportsScreen() {
       };
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Earnings ("Profits" tab). loanInterestProjections and loanLateFees
-    // are computed ONCE at the top level of the component (see above) and
-    // simply referenced here — no hooks are called inside this branch.
-    //
-    // The chart sums real dollar amounts for both actual and projected
-    // rows. The KPIs are broken out by source (interest / late fees /
-    // projected) instead of one vague "Actual Collected" bucket, and each
-    // shows the ALL-IN total (actual + projected combined) where that
-    // makes sense, plus a standalone "Projected Earnings" figure for the
-    // forward-looking piece alone.
-    // ─────────────────────────────────────────────────────────────────────
-
+    // Earnings tab
     const EARNING_TYPES = [
       "loan_interest_income",
       "interest",
@@ -2058,10 +1996,6 @@ export default function ReportsScreen() {
     const earningAmount = (t: any) => {
       if (t.type !== "loan_repayment") return t.amount;
 
-      // Legacy combined tx only — estimate the interest slice of a
-      // blended repayment using the loan's fixed schedule ratio. Modern
-      // loans already have a dedicated loan_interest_income row with the
-      // exact amount, so they never reach this branch.
       const loan = loans.find((l) => l.id === t.loanId);
       if (!loan?.totalRepayable) return 0;
 
@@ -2079,7 +2013,6 @@ export default function ReportsScreen() {
 
     list = list.filter((t) => matchesSearch(t, ["type", "description"]));
 
-    // ── Actual earnings, broken down by source ────────────────────────
     const actualInterest = round2(
       list
         .filter((t) =>
@@ -2117,18 +2050,14 @@ export default function ReportsScreen() {
       actualInterest + actualLateFees + actualInvestmentReturns + actualOther
     );
 
-    // ── Projected (top-level memos, independent of wallet history) ────
     const totalProjectedInterest = projectedLoanInterest;
     const totalLoanLateFees = projectedLoanLateFees;
     const totalProjected = round2(totalProjectedInterest + totalLoanLateFees);
 
-    // ── Combined, all-in totals shown on the KPI row ───────────────────
     const combinedTotal = round2(totalEarnings + totalProjected);
     const totalInterestAllIn = round2(actualInterest + totalProjectedInterest);
     const totalLateFeesAllIn = round2(actualLateFees + totalLoanLateFees);
 
-    // Line-item rows for the projected interest / projected late fees,
-    // built from the shared top-level memos.
     const projectedRows = [
       ...loanInterestProjections.map((item) => ({
         type: "projected_interest",
@@ -2162,11 +2091,6 @@ export default function ReportsScreen() {
 
     const projectedRowsTagged = projectedRows.map((r) => ({ ...r, source: "projected" as const }));
 
-    // earningsMode picks which rows/kpis the Profits tab actually shows.
-    // "all" keeps the original combined view; "actual" and "projected"
-    // isolate one side so someone can check "what have we actually
-    // collected (including fees already paid)" separately from "what's
-    // still expected."
     let earningsRows: any[];
     let earningsKpis: { label: string; value: string }[];
 
@@ -2196,8 +2120,6 @@ export default function ReportsScreen() {
       ];
     }
 
-    // Chart sums real dollar amounts (not record counts) per month, for
-    // whichever row set is currently selected.
     const chart = monthlyTotals(earningsRows, "date", "amount");
 
     return {
@@ -2222,7 +2144,6 @@ export default function ReportsScreen() {
     allLateFeesCombined,
     members,
     wallet,
-
     investments,
     selectedFromDate,
     selectedToDate,
@@ -2231,6 +2152,7 @@ export default function ReportsScreen() {
     loanStatus,
     contributionStatus,
     memberStatusFilter,
+    lateFeeSourceFilter,
     unpaidFeeMemberIds,
     lateContributionFeeMemberIds,
     lateLoanMemberIds,
@@ -2247,10 +2169,6 @@ export default function ReportsScreen() {
     projectedLoanLateFees,
     earningsMode,
   ]);
-
-  // ───────────────────────────────────────────────────────────────────────
-  // Export current report
-  // ───────────────────────────────────────────────────────────────────────
 
   const exportRows = view.rows.map(view.toRow);
 
@@ -2292,10 +2210,6 @@ export default function ReportsScreen() {
 
     show(`Exported as ${format === "excel" ? "Excel" : "PDF"}`);
   };
-
-  // ───────────────────────────────────────────────────────────────────────
-  // Export member contributions
-  // ───────────────────────────────────────────────────────────────────────
 
   const handleExportMemberContributions = async (
     memberId?: string,
@@ -2369,10 +2283,6 @@ export default function ReportsScreen() {
         contentContainerStyle={[styles.page, { paddingBottom: 80 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* ═══════════════════════════════════════════════════════════════
-            OVERVIEW
-        ═══════════════════════════════════════════════════════════════ */}
-
         <View style={[styles.contentContainer, isWide && styles.contentContainerWide]}>
           <View style={styles.chartCard}>
             <Text style={styles.chartTitle}>
@@ -2461,9 +2371,6 @@ export default function ReportsScreen() {
               </View>
             </View>
 
-            {/* Interest split: Accrued (unpaid, live) vs Projected
-                (schedule-based). Two different ways of looking at the
-                same money before it lands in the wallet. */}
             <View style={styles.gfpRow}>
               <View style={[styles.gfpStat, styles.gfpStatBorderRight, styles.gfpStatBorderBottom]}>
                 <Text style={styles.gfpStatLabel} numberOfLines={1}>
@@ -2585,12 +2492,6 @@ export default function ReportsScreen() {
             </View>
           </View>
 
-          {/* Earnings breakdown donut — the interest numbers are split
-              into three distinct buckets: what's been collected
-              ("Loan interest (actual)"), what's accrued but not yet paid
-              ("Accrued (unpaid)"), and what the schedule says is still
-              coming ("Projected interest (schedule)"). */}
-
           <View style={styles.chartCard}>
             <Text style={styles.chartTitle}>Profits by source</Text>
             <Text style={styles.chartSubtitle}>
@@ -2646,13 +2547,7 @@ export default function ReportsScreen() {
           )}
         </View>
 
-        {/* ═══════════════════════════════════════════════════════════════
-            REPORT CONTROLS
-        ═══════════════════════════════════════════════════════════════ */}
-
         <View style={[styles.contentContainer, isWide && styles.contentContainerWide]}>
-          {/* Categories */}
-
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -2679,8 +2574,6 @@ export default function ReportsScreen() {
               </TouchableOpacity>
             ))}
           </ScrollView>
-
-          {/* Filters */}
 
           <View style={[styles.filterArea, isMobile && styles.filterAreaMobile]}>
             <View style={[styles.filterDropdown, isMobile && styles.filterDropdownMobile]}>
@@ -2712,6 +2605,18 @@ export default function ReportsScreen() {
               </TouchableOpacity>
             )}
           </View>
+
+          {/* NEW: inline Late Fee Source chips — only visible on the Late Fees tab */}
+          {category === "latefees" && (
+            <View style={styles.inlineFilterCard}>
+              <Text style={styles.inlineFilterLabel}>Late Fee Source</Text>
+              <StatusChipRow
+                value={lateFeeSourceFilter}
+                options={LATE_FEE_SOURCE_CHIPS}
+                onChange={(v) => setLateFeeSourceFilter(v as LateFeeSourceFilter)}
+              />
+            </View>
+          )}
 
           {hasActiveFilters && (
             <View style={styles.activeFiltersRow}>
@@ -2766,6 +2671,17 @@ export default function ReportsScreen() {
                 </View>
               )}
 
+              {lateFeeSourceFilter !== "all" && (
+                <View style={styles.activeFilterChip}>
+                  <Text style={styles.activeFilterChipText} numberOfLines={1}>
+                    ⚠️ Late Fees: {LATE_FEE_SOURCE_CHIPS.find((o) => o.value === lateFeeSourceFilter)?.label}
+                  </Text>
+                  <TouchableOpacity onPress={() => setLateFeeSourceFilter("all")} hitSlop={8}>
+                    <Text style={styles.activeFilterChipClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
               {memberStatusFilter !== "all" && (
                 <View style={styles.activeFilterChip}>
                   <Text style={styles.activeFilterChipText} numberOfLines={1}>
@@ -2778,10 +2694,6 @@ export default function ReportsScreen() {
               )}
             </View>
           )}
-
-          {/* ═════════════════════════════════════════════════════════════
-              MEMBERS
-          ═════════════════════════════════════════════════════════════ */}
 
           {category === "members" ? (
             <MembersTab
@@ -2797,8 +2709,6 @@ export default function ReportsScreen() {
             />
           ) : (
             <View style={[styles.reportColumns, isWide && styles.reportColumnsWide]}>
-              {/* Chart */}
-
               <View style={[styles.card, isWide && styles.reportColumn]}>
                 <Text style={styles.cardTitle}>
                   {isNoActivityMemberView
@@ -2862,8 +2772,6 @@ export default function ReportsScreen() {
                   <Text style={styles.noData}>No data for this selection</Text>
                 )}
               </View>
-
-              {/* Data preview */}
 
               <View style={[styles.card, isWide && styles.reportColumn]}>
                 <View style={styles.previewHeader}>
@@ -2952,6 +2860,8 @@ export default function ReportsScreen() {
         onContributionStatusChange={setTempContributionStatus}
         memberStatus={tempMemberStatus}
         onMemberStatusChange={setTempMemberStatus}
+        lateFeeSource={tempLateFeeSource}
+        onLateFeeSourceChange={setTempLateFeeSource}
         onApply={applyFilters}
         searchTerm={tempSearch}
         onSearchChange={setTempSearch}
@@ -2963,6 +2873,7 @@ export default function ReportsScreen() {
           loanStatus: tempLoanStatus,
           contributionStatus: tempContributionStatus,
           memberStatus: tempMemberStatus,
+          lateFeeSource: tempLateFeeSource,
         })}
       />
 
@@ -3106,10 +3017,6 @@ function MembersTab({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Member detail
-// ─────────────────────────────────────────────────────────────────────────
-
 function MemberDetail({
   member,
   loans,
@@ -3139,8 +3046,6 @@ function MemberDetail({
 
   const interestEarned = round2(interestFromLedger + interestLegacy);
 
-  // Live accrued (unpaid) interest across this member's reducing-balance
-  // loans — same helper the loan detail modal and repayment screen use.
   const accruedInterestUnpaid = round2(
     loans
       .filter(
@@ -3172,8 +3077,6 @@ function MemberDetail({
           <Text style={styles.backButtonText}>← Back to Directory</Text>
         </TouchableOpacity>
       )}
-
-      {/* Member header */}
 
       <View style={styles.memberDetailCard}>
         <View style={styles.memberDetailHeader}>
@@ -3212,8 +3115,6 @@ function MemberDetail({
         </View>
       </View>
 
-      {/* Member KPIs */}
-
       <View style={styles.memberKpiGrid}>
         <View style={styles.memberKpi}>
           <Text style={styles.memberKpiLabel}>Contributions</Text>
@@ -3247,8 +3148,6 @@ function MemberDetail({
           </Text>
         </View>
       </View>
-
-      {/* Contributions */}
 
       <View style={styles.sectionHeader}>
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -3318,8 +3217,6 @@ function MemberDetail({
         )}
       </Card>
 
-      {/* Recent transactions */}
-
       <Text style={styles.cardTitle}>Recent Transactions</Text>
 
       <Card style={styles.cardWithTopMargin}>
@@ -3375,10 +3272,6 @@ function MemberDetail({
     </View>
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────
-// Divider
-// ─────────────────────────────────────────────────────────────────────────
 
 const Divider = () => (
   <View style={{ height: 1, backgroundColor: C.borderLight, marginHorizontal: 16 }} />
@@ -3673,8 +3566,12 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
 
+  // ── Section cards now carry a tinted background so the page reads as
+  //    distinct blocks rather than one flat surface. The tint is a very
+  //    light version of the surface — subtle enough to stay readable,
+  //    distinct enough to visually separate sections.
   chartCard: {
-    backgroundColor: C.surface,
+    backgroundColor: "#F4F7FB",           // ← tinted background
     borderRadius: 16,
     borderWidth: 1,
     borderColor: C.border,
@@ -3784,6 +3681,25 @@ const styles = StyleSheet.create({
   clearBtn: { minHeight: 46, justifyContent: "center", paddingHorizontal: 6 },
 
   clearBtnText: { fontSize: 12, fontWeight: "700", color: C.error },
+
+  // NEW: inline card that wraps the late-fee source chips
+  inlineFilterCard: {
+    backgroundColor: "#FFF7ED",           // ← warm tint matching late-fee theme
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#FDBA74",
+    padding: 12,
+    marginBottom: 12,
+  },
+
+  inlineFilterLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#9A3412",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
 
   searchIndicator: { fontSize: 12, color: C.primary, marginBottom: 16 },
 

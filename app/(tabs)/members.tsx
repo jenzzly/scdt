@@ -1,5 +1,5 @@
 // app/(tabs)/members.tsx
-import React, { useMemo, useState, useCallback, useEffect } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import {
   ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform,
   useWindowDimensions, TextInput, Alert, ActivityIndicator,
@@ -20,7 +20,7 @@ import { createUserAsAdmin, resetUserPasswordAsAdmin } from "../../lib/auth/admi
 import { USER_ROLES, ROLE_LABELS } from "../../types/roles";
 import type { Member } from "../../types";
 import * as FS from "../../lib/firestore";
-import { exportCsv, exportPdf } from "../../utils/export";
+import { exportXlsx, exportPdf } from "../../utils/export";
 
 const STATUS_BADGE: Record<string, "teal" | "gold" | "green" | "red" | "muted"> = {
   active: "green",
@@ -49,15 +49,15 @@ function getMemberStats(
   const totalContributions = memberWallet
     .filter(t => t.type === "contribution" && t.amount > 0)
     .reduce((s, t) => s + t.amount, 0);
-  
+
   const memberContribs = contributions.filter(c => c.memberId === member.id);
   const pendingAmount = memberContribs
     .filter(c => c.status === "pending")
     .reduce((s, c) => s + c.amount, 0);
-  
+
   const arrears = pendingAmount;
   const activeLoanCount = 0;
-  
+
   return { totalContributions, arrears, activeLoanCount };
 }
 
@@ -65,7 +65,6 @@ export default function MembersScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = Platform.OS === "web" && width >= 768;
-  // const { show, Toast } = useToast();
   const { show, visible, msg, type } = useToast();
 
   const activeGroupId = useStore(s => s.activeGroupId);
@@ -76,22 +75,9 @@ export default function MembersScreen() {
   const { deleteMember } = useStore();
   const permissions = useCurrentMemberPermissions();
 
-  // Move these BEFORE the useEffect that uses them
   const members = useGroupMembers();
   const wallet = useGroupWallet();
   const contributions = useGroupContributions();
-
-  // Debug logging - now members is defined before this
-  useEffect(() => {
-    console.log("[MembersScreen] ========== DEBUG ==========");
-    console.log("[MembersScreen] isGroupView:", isGroupView);
-    console.log("[MembersScreen] role:", role);
-    console.log("[MembersScreen] isAdmin:", role === "admin");
-    console.log("[MembersScreen] permissions:", permissions);
-    console.log("[MembersScreen] currentMember:", currentMember?.fullName);
-    console.log("[MembersScreen] members count:", members?.length || 0);
-    console.log("[MembersScreen] ============================");
-  }, [isGroupView, role, permissions, currentMember, members]);
 
   // Check if user is admin or has admin permissions
   const isAdmin = role === "admin";
@@ -149,7 +135,7 @@ export default function MembersScreen() {
     return list;
   }, [visibleMembers, statusFilter, sortBy, wallet, contributions]);
 
-  // Summary stats - use visibleMembers for accurate counts based on view
+  // Summary stats — use visibleMembers for accurate counts based on view
   const stats = useMemo(() => {
     const active = visibleMembers.filter(m => m.status === "active").length;
     const pending = visibleMembers.filter(m => m.status === "pending").length;
@@ -294,12 +280,10 @@ export default function MembersScreen() {
   };
 
   const handleEditMember = async () => {
-    // This would open an edit modal - for now just show a toast
     show("Edit functionality coming soon");
   };
 
   const openMemberActions = (member: Member) => {
-    console.log("[MembersScreen] Opening actions for:", member.fullName);
     setSelectedMember(member);
     setShowActionModal(true);
   };
@@ -323,9 +307,9 @@ export default function MembersScreen() {
         fmtCurrency(stats.totalContributions),
       ];
     });
-    
+
     if (format === "csv") {
-      await exportCsv("Members_Report", headers, rows);
+      await exportXlsx("Members_Report", headers, rows);
     } else {
       const html = `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
       await exportPdf("Members_Report", "Members Report", html);
@@ -337,7 +321,7 @@ export default function MembersScreen() {
   const MemberCard = ({ member }: { member: Member }) => {
     const stats = getMemberStats(member, wallet, contributions);
     const isMe = member.userId === currentMember?.userId;
-    
+
     return (
       <Card
         key={member.id}
@@ -396,7 +380,6 @@ export default function MembersScreen() {
           contentContainerStyle={st.container}
           showsVerticalScrollIndicator={false}
         >
-          {/* ── KPI Cards ── */}
           <View style={st.kpiGrid}>
             <KpiCard
               label="Total Members"
@@ -432,7 +415,6 @@ export default function MembersScreen() {
             />
           </View>
 
-          {/* ── Smart Controls ── */}
           <View style={st.controlsSection}>
             <View style={st.controlsLeft}>
               <Select
@@ -459,15 +441,14 @@ export default function MembersScreen() {
                 style={st.controlSelect}
               />
             </View>
-            
+
             <View style={st.controlsRight}>
               <View style={st.resultsBadge}>
                 <Text style={st.resultsCount}>
                   {filtered.length} member{filtered.length !== 1 ? "s" : ""}
                 </Text>
               </View>
-              
-              {/* Only show export if in group view and has permission */}
+
               {isGroupView && canExport && (
                 <View style={st.exportGroup}>
                   <TouchableOpacity
@@ -486,8 +467,7 @@ export default function MembersScreen() {
                   </TouchableOpacity>
                 </View>
               )}
-              
-              {/* Only show add button if in group view and has permission */}
+
               {isGroupView && canCreateMember && (
                 <TouchableOpacity
                   style={st.addBtn}
@@ -500,7 +480,6 @@ export default function MembersScreen() {
             </View>
           </View>
 
-          {/* ── Members List ── */}
           {filtered.length === 0 ? (
             <Empty label="No members found" />
           ) : (
@@ -512,7 +491,6 @@ export default function MembersScreen() {
           )}
         </ScrollView>
 
-        {/* ── Create Member Modal ── */}
         <BottomModal visible={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create New User">
           <View style={{ gap: 12, paddingBottom: 20 }}>
             <Input
@@ -549,11 +527,9 @@ export default function MembersScreen() {
           </View>
         </BottomModal>
 
-        {/* ── Member Action Modal ── */}
         <BottomModal visible={showActionModal} onClose={() => setShowActionModal(false)} title={selectedMember?.fullName}>
           {selectedMember && (
             <View style={{ gap: 12, paddingBottom: 20 }}>
-              {/* Member Info */}
               <View style={st.modalInfoSection}>
                 <View style={st.modalAvatar}>
                   <Text style={st.modalAvatarText}>
@@ -575,12 +551,10 @@ export default function MembersScreen() {
                 <InfoRow label="Joined" value={fmtDate(selectedMember.dateJoined || "")} />
               </View>
 
-              {/* Admin Actions - Always shown for admin users */}
               {isAdmin && (
                 <View style={st.adminActionsSection}>
                   <Text style={st.adminActionsTitle}>Admin Actions</Text>
-                  
-                  {/* Edit Button */}
+
                   <TouchableOpacity
                     style={st.actionButton}
                     onPress={handleEditMember}
@@ -589,7 +563,6 @@ export default function MembersScreen() {
                     <Text style={st.actionButtonText}>✏️ Edit Profile</Text>
                   </TouchableOpacity>
 
-                  {/* Approve Button - Only for pending members */}
                   {selectedMember.status === "pending" && (
                     <TouchableOpacity
                       style={[st.actionButton, st.approveButton]}
@@ -600,7 +573,6 @@ export default function MembersScreen() {
                     </TouchableOpacity>
                   )}
 
-                  {/* Deactivate Button - Only for active members (not yourself) */}
                   {selectedMember.status === "active" && selectedMember.userId !== currentMember?.userId && (
                     <TouchableOpacity
                       style={[st.actionButton, st.warningButton]}
@@ -611,7 +583,6 @@ export default function MembersScreen() {
                     </TouchableOpacity>
                   )}
 
-                  {/* Reactivate Button - Only for inactive members */}
                   {selectedMember.status === "inactive" && (
                     <TouchableOpacity
                       style={[st.actionButton, st.successButton]}
@@ -622,7 +593,6 @@ export default function MembersScreen() {
                     </TouchableOpacity>
                   )}
 
-                  {/* Reset Password - For members with userId */}
                   {selectedMember.userId && (
                     <TouchableOpacity
                       style={[st.actionButton, st.passwordButton]}
@@ -633,7 +603,6 @@ export default function MembersScreen() {
                     </TouchableOpacity>
                   )}
 
-                  {/* Delete Button - For all members except yourself */}
                   {selectedMember.userId !== currentMember?.userId && (
                     <TouchableOpacity
                       style={[st.actionButton, st.dangerButton]}
@@ -649,7 +618,6 @@ export default function MembersScreen() {
                 </View>
               )}
 
-              {/* Close Button */}
               <TouchableOpacity
                 style={[st.actionButton, st.closeButton]}
                 onPress={() => setShowActionModal(false)}
@@ -661,7 +629,6 @@ export default function MembersScreen() {
           )}
         </BottomModal>
 
-        {/* ── Delete Confirmation Modal ── */}
         <BottomModal visible={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete Member?">
           {selectedMember && (
             <View style={{ gap: 12, paddingBottom: 20 }}>
@@ -692,9 +659,8 @@ export default function MembersScreen() {
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <Toast visible={visible} msg={msg} type={type}/>
 
-      {/* ── KPI Cards (Mobile) ── */}
-      <ScrollView 
-        horizontal 
+      <ScrollView
+        horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={st.mobileKpiScroll}
       >
@@ -735,7 +701,6 @@ export default function MembersScreen() {
       </ScrollView>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
-        {/* ── Controls - Mobile ── */}
         <View style={st.mobileControls}>
           <View style={st.mobileFilterRow}>
             <Select
@@ -761,7 +726,7 @@ export default function MembersScreen() {
               style={st.mobileFilterSelect}
             />
           </View>
-          
+
           <View style={st.mobileResultsRow}>
             <Text style={st.mobileResultsCount}>
               {filtered.length} member{filtered.length !== 1 ? "s" : ""}
@@ -787,7 +752,6 @@ export default function MembersScreen() {
           </View>
         </View>
 
-        {/* ── Members ── */}
         {filtered.length === 0 ? (
           <Empty label="No members found" />
         ) : (
@@ -796,7 +760,6 @@ export default function MembersScreen() {
           ))
         )}
 
-        {/* ── Add button - Mobile (only in group view) ── */}
         {isGroupView && canCreateMember && (
           <TouchableOpacity
             style={st.mobileFab}
@@ -808,7 +771,6 @@ export default function MembersScreen() {
         )}
       </ScrollView>
 
-      {/* ── Modals (Mobile) ── */}
       <BottomModal visible={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create User">
         <View style={{ gap: 12, paddingBottom: 20 }}>
           <Input
@@ -852,31 +814,30 @@ export default function MembersScreen() {
             <InfoRow label="Role" value={ROLE_LABELS[selectedMember.role] || selectedMember.role} />
             <InfoRow label="Status" value={selectedMember.status} />
 
-            {/* Admin Actions - Always shown for admin users */}
             {isAdmin && (
               <View style={st.adminActionsSection}>
                 <Text style={st.adminActionsTitle}>Admin Actions</Text>
-                
+
                 {selectedMember.status === "pending" && (
                   <Button label="✓ Approve" onPress={handleApproveMember} size="sm" fullWidth />
                 )}
 
                 {selectedMember.status === "active" && selectedMember.userId !== currentMember?.userId && (
-                  <Button 
-                    label="⛔ Deactivate" 
-                    onPress={handleDeactivateMember} 
-                    size="sm" 
-                    fullWidth 
+                  <Button
+                    label="⛔ Deactivate"
+                    onPress={handleDeactivateMember}
+                    size="sm"
+                    fullWidth
                     variant="warning"
                   />
                 )}
 
                 {selectedMember.status === "inactive" && (
-                  <Button 
-                    label="🔄 Reactivate" 
-                    onPress={handleReactivateMember} 
-                    size="sm" 
-                    fullWidth 
+                  <Button
+                    label="🔄 Reactivate"
+                    onPress={handleReactivateMember}
+                    size="sm"
+                    fullWidth
                     variant="success"
                   />
                 )}
@@ -916,21 +877,18 @@ export default function MembersScreen() {
 // Styles
 // ─────────────────────────────────────────────
 const st = StyleSheet.create({
-  // Desktop Container
   container: {
     paddingHorizontal: 24,
     paddingVertical: 16,
   },
-  
-  // KPI Grid - Desktop
+
   kpiGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 12,
     marginBottom: 20,
   },
-  
-  // Controls Section - Desktop
+
   controlsSection: {
     flexDirection: "row",
     alignItems: "center",
@@ -997,8 +955,7 @@ const st = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
   },
-  
-  // Members List - Desktop
+
   membersList: {
     gap: 12,
   },
@@ -1031,7 +988,6 @@ const st = StyleSheet.create({
     gap: 4,
   },
 
-  // Modal Styles
   modalInfoSection: {
     flexDirection: "row",
     alignItems: "center",
@@ -1123,7 +1079,6 @@ const st = StyleSheet.create({
     marginTop: 8,
   },
 
-  // KPI Grid - Mobile
   mobileKpiScroll: {
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -1133,7 +1088,6 @@ const st = StyleSheet.create({
     gap: 10,
   },
 
-  // Mobile Controls
   mobileControls: {
     marginBottom: 12,
   },
@@ -1172,7 +1126,6 @@ const st = StyleSheet.create({
     fontWeight: "700",
   },
 
-  // Mobile FAB
   mobileFab: {
     position: "absolute",
     bottom: 24,

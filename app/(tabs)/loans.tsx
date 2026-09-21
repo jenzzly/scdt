@@ -28,6 +28,7 @@ import { findOverdueInstallments } from "../../utils/lateFees";
 import {
   useGroupWallet,
   useCurrentMemberPermissions,
+  useMyMemberIds,
 } from "../../stores/selectors";
 import {
   TabRow,
@@ -1251,10 +1252,16 @@ export default function LoansScreen() {
   const getMember = (id: string) =>
     groupMembers.find((m: Member) => m.id === id);
 
+  const myIds = useMyMemberIds();
+
   const visibleLoans = useMemo(() => {
     if (isGroupView) return allLoans;
-    return allLoans.filter((l: Loan) => l.memberId === currentMember?.id);
-  }, [allLoans, isGroupView, currentMember]);
+    return allLoans.filter(
+      (l: Loan) =>
+        myIds.has(l.memberId) ||
+        myIds.has((l as any).userId),
+    );
+  }, [allLoans, isGroupView, myIds]);
 
   const LOAN_TABS = isGroupView
     ? ["All", "Pending", "Active", "Repaid", "Rejected"]

@@ -17,7 +17,7 @@
  * and spread it in below.
  */
 import { create } from "zustand";
-import { useEffect, useState } from 'react'; // ← ADD THIS IMPORT
+import { useEffect, useState } from 'react';
 import { persist, createJSONStorage } from "zustand/middleware";
 import { Platform } from "react-native";
 import type { StoreState, SetFn, GetFn } from "./storeTypes";
@@ -53,28 +53,27 @@ export const useStore = create<StoreState>()(
   persist(
     (set: SetFn, get: GetFn) => ({
       // ── Initial state ──────────────────────────────────────────────────
-      dataViewMode: "personal", // Will be adjusted based on role after auth
-      authUid: null, 
-      authName: null, 
+      dataViewMode: "personal",
+      authUid: null,
+      authName: null,
       authEmail: null,
-      groups: [], 
+      groups: [],
       activeGroupId: null,
-      members: [], 
-      contributions: [], 
-      loans: [], 
+      members: [],
+      contributions: [],
+      loans: [],
       investments: [],
-      walletTransactions: [], 
-      expenses: [], 
+      walletTransactions: [],
+      expenses: [],
       meetings: [],
-      notifications: [], 
-      deletionRecords: [], 
+      notifications: [],
+      deletionRecords: [],
       auditLogs: [],
-      syncStatus: "synced", 
-      syncError: null, 
+      syncStatus: "synced",
+      syncError: null,
       lastSyncTimestamp: null,
-      forceSyncTrigger: 0, 
+      forceSyncTrigger: 0,
       isLoading: false,
-      // Add currentMember for quick access
       currentMember: null,
 
       // ── Domain slices ───────────────────────────────────────────────────
@@ -93,54 +92,51 @@ export const useStore = create<StoreState>()(
 
       // ── Cross-cutting (touches every slice's state, stays here) ────────
       setDataViewMode: (mode) => set({ dataViewMode: mode }),
-      
+
       // Set current member with validation
       setCurrentMember: (member) => {
         if (member) {
-          console.log(`[Store] Setting current member: ${member.fullName}, role: ${member.role}, id: ${member.id}`);
           set({ currentMember: member });
-          
-          // Set default view mode based on role
-          // Admins and anyone who is not a regular member should default to group view
+
+          // Set default view mode based on role.
+          // Admins and anyone who is not a regular member default to
+          // group view; plain members default to personal.
           const isNotRegularMember = member.role !== "member";
-          
+
           if (isNotRegularMember) {
             set({ dataViewMode: "group" });
           } else {
             set({ dataViewMode: "personal" });
           }
         } else {
-          console.log('[Store] Clearing current member');
           set({ currentMember: null });
           // Reset to personal view when no member
           set({ dataViewMode: "personal" });
         }
       },
-      
+
       // Set auth info with member lookup
       setAuth: (uid: string | null, name: string | null, email: string | null) => {
-        console.log(`[Store] Setting auth: uid=${uid}, name=${name}, email=${email}`);
-        set({ 
-          authUid: uid, 
-          authName: name, 
-          authEmail: email 
+        set({
+          authUid: uid,
+          authName: name,
+          authEmail: email,
         });
-        
-        // If we have a uid, try to find the member
-        // Note: This might fail if members aren't loaded yet - that's okay
-        // The member will be found when members are loaded via subscribeMembers
+
+        // If we have a uid, try to find the member.
+        // Note: This might fail if members aren't loaded yet — that's
+        // okay; the member will be found when members are loaded via
+        // subscribeMembers, or by the ensureMemberExists bootstrap
+        // flow which calls setCurrentMember directly.
         if (uid) {
           const state = get();
           const member = state.members.find((m) => m.userId === uid);
           if (member) {
-            console.log(`[Store] Found member for auth: ${member.fullName}, role: ${member.role}, status: ${member.status}`);
             set({ currentMember: member });
-          } else {
-            console.log('[Store] No member found for auth uid (members may not be loaded yet)');
           }
         }
       },
-      
+
       clearDataCache: () => {
         set({
           members: [],
@@ -167,17 +163,17 @@ export const useStore = create<StoreState>()(
       reset: () => {
         set({
           dataViewMode: "personal",
-          authUid: null, 
-          authName: null, 
+          authUid: null,
+          authName: null,
           authEmail: null,
-          groups: [], 
-          members: [], 
-          contributions: [], 
-          loans: [], 
+          groups: [],
+          members: [],
+          contributions: [],
+          loans: [],
           investments: [],
-          walletTransactions: [], 
-          expenses: [], 
-          meetings: [], 
+          walletTransactions: [],
+          expenses: [],
+          meetings: [],
           notifications: [],
           auditLogs: [],
           deletionRecords: [],
@@ -230,14 +226,12 @@ export const useStore = create<StoreState>()(
         walletTransactions: s.walletTransactions,
         expenses: s.expenses,
         meetings: s.meetings,
-        // Don't persist currentMember - it will be re-computed on rehydration
+        // Don't persist currentMember — it will be re-computed on rehydration
       }),
       onRehydrateStorage: () => (state: StoreState | undefined, error: unknown) => {
         if (error) {
           console.error("Failed to rehydrate store:", error);
         } else if (state) {
-          console.log('[Store] Rehydrating storage...');
-          
           // Populate currentMember synchronously on the rehydrated state object
           if (state.authUid && state.members) {
             const currentMember = state.members.find((m) => m.userId === state.authUid);
@@ -245,7 +239,7 @@ export const useStore = create<StoreState>()(
               state.currentMember = currentMember;
             }
           }
-          
+
           // Recalculate totals and sync currentMember as soon as rehydration completes.
           //
           // IMPORTANT: onRehydrateStorage's callback can run *during*
@@ -265,10 +259,7 @@ export const useStore = create<StoreState>()(
                 if (state.authUid && state.members) {
                   const member = state.members.find((m) => m.userId === state.authUid);
                   if (member) {
-                    console.log(`[Store] Rehydration: Setting currentMember ${member.fullName}, role: ${member.role}`);
                     memberUpdates = { currentMember: member };
-                  } else {
-                    console.log('[Store] Rehydration: No member found for auth uid');
                   }
                 }
                 const updates = recalcGroupTotals(state as StoreState);
@@ -289,7 +280,7 @@ export const useStore = create<StoreState>()(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Selector Hooks - All selectors in one place
+// Selector Hooks — All selectors in one place
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -380,22 +371,20 @@ export const useNotifications = () => {
  */
 export const useCurrentUserRole = (): MemberRole => {
   const { members, authUid, currentMember } = useStore();
-  
+
   // First check if we have a currentMember set
   if (currentMember) {
     return currentMember.role as MemberRole;
   }
-  
+
   // Fallback: find by authUid
   if (authUid) {
     const member = members.find((m) => m.userId === authUid);
     if (member) {
-      console.log(`[useCurrentUserRole] Found member by authUid: ${member.fullName}, role: ${member.role}`);
       return member.role as MemberRole;
     }
   }
-  
-  console.log(`[useCurrentUserRole] No member found, defaulting to "member"`);
+
   return "member" as MemberRole;
 };
 
@@ -409,39 +398,36 @@ export const useCurrentMember = () => {
   const currentMember = useStore((state) => state.currentMember);
   const activeGroupId = useStore((state) => state.activeGroupId);
   const [hasAttempted, setHasAttempted] = useState(false);
-  
+
   // Use useEffect to update state after render
   useEffect(() => {
     // If we already have a current member or no authUid or no members, skip
     if (currentMember || !authUid || !members || members.length === 0) {
       return;
     }
-    
+
     // Find the member that matches the authUid
     const member = members.find((m: any) => m.authUid === authUid);
     if (member) {
-      console.log(`[useCurrentMember] Found member by authUid: ${member.fullName}`);
-      // Use the store's setState method
       useStore.setState({ currentMember: member });
     }
     setHasAttempted(true);
   }, [authUid, members, currentMember]);
-  
+
   // If we couldn't find a member but have authUid, try looking by email as fallback
   useEffect(() => {
     if (currentMember || !authUid || !members || members.length === 0 || hasAttempted) {
       return;
     }
-    
-    // Try to find by matching some other criteria if needed
-    // This is a fallback in case authUid isn't set correctly on members
+
+    // Try to find by matching some other criteria if needed.
+    // This is a fallback in case authUid isn't set correctly on members.
     const memberByEmail = members.find((m: any) => m.email === authUid);
     if (memberByEmail) {
-      console.log(`[useCurrentMember] Found member by email fallback: ${memberByEmail.fullName}`);
       useStore.setState({ currentMember: memberByEmail });
     }
   }, [authUid, members, currentMember, hasAttempted]);
-  
+
   return useStore((state) => state.currentMember);
 };
 
@@ -452,7 +438,8 @@ export const useDataViewMode = () => useStore((s) => s.dataViewMode);
 
 /**
  * Check if the user is in group view mode.
- * True for authorized roles (admin, accountant, loan_officer, committee) with dataViewMode === "group" (or "admin").
+ * True for authorized roles (admin, accountant, loan_officer, committee)
+ * with dataViewMode === "group" (or "admin").
  */
 export const useIsGroupView = () => {
   const role = useCurrentUserRole();
@@ -523,19 +510,19 @@ export const useGroupDeletionRecords = () => {
  */
 export const useCurrentMemberPermissions = (): MemberPermissions => {
   const { members, authUid, currentMember } = useStore();
-  
+
   // First check currentMember
   const member = currentMember || members.find((m) => m.userId === authUid);
-  
+
   // Admins always have full permissions
   if (!member || member.role === "admin") {
     const allTrue: Record<string, boolean> = {};
-    (Object.keys(DEFAULT_MEMBER_PERMISSIONS) as (keyof MemberPermissions)[]).forEach((k) => { 
-      allTrue[k] = true; 
+    (Object.keys(DEFAULT_MEMBER_PERMISSIONS) as (keyof MemberPermissions)[]).forEach((k) => {
+      allTrue[k] = true;
     });
     return allTrue as unknown as MemberPermissions;
   }
-  
+
   return member.permissions ?? { ...DEFAULT_MEMBER_PERMISSIONS };
 };
 
@@ -546,16 +533,16 @@ export const useCurrentMemberPermissions = (): MemberPermissions => {
 export const useEffectivePermissions = (): MemberPermissions => {
   const role = useCurrentUserRole();
   const permissions = useCurrentMemberPermissions();
-  
+
   // Admins have full permissions
   if (role === "admin") {
     const allTrue: Record<string, boolean> = {};
-    (Object.keys(DEFAULT_MEMBER_PERMISSIONS) as (keyof MemberPermissions)[]).forEach((k) => { 
-      allTrue[k] = true; 
+    (Object.keys(DEFAULT_MEMBER_PERMISSIONS) as (keyof MemberPermissions)[]).forEach((k) => {
+      allTrue[k] = true;
     });
     return allTrue as unknown as MemberPermissions;
   }
-  
+
   // Role-based default permissions
   const roleDefaults: Partial<Record<MemberRole, Partial<MemberPermissions>>> = {
     loan_officer: {
@@ -577,9 +564,9 @@ export const useEffectivePermissions = (): MemberPermissions => {
       manageMeetings: true,
     },
   };
-  
+
   const defaults = roleDefaults[role as MemberRole] || {};
-  
+
   // Merge: permissions take precedence over role defaults
   return {
     ...DEFAULT_MEMBER_PERMISSIONS,
@@ -629,7 +616,7 @@ export const useHasPermission = (permission: keyof MemberPermissions): boolean =
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Store Actions - Convenience wrappers for common actions
+// Store Actions — Convenience wrappers for common actions
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**

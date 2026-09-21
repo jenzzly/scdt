@@ -588,60 +588,38 @@ export async function deleteWalletTx(
 // ============================================================
 // Subscribe wallet transactions
 // ============================================================
-
+//
+// Signature matches subscribeLoans / subscribeContributions /
+// subscribeInvestments: (gId, cb, onError?). useFirebaseSync calls
+// every subscribe helper with that same three-argument shape, so a
+// two-argument version here was silently dropping the onError handler
+// on the floor — any permission or auth error from this listener was
+// logged locally but never routed to the app's sync-status UI.
+//
+// The error path no longer calls cb([]). A real-time listener's
+// transient error (network blip, token refresh, momentary rules hiccup
+// during the auth handshake) must not empty the store — the previous
+// version did exactly that, which caused group.availableBalance,
+// group.totalInterestEarned, and member loanEarnings to recompute to
+// 0 for as long as the listener stayed in an error state. Surfacing
+// the error via onError and letting the next successful snapshot
+// correct the data is the correct behavior.
 export function subscribeWalletTxs(
   gId: string,
-  cb: (
-    txs: WalletTransaction[],
-  ) => void,
-) {
-  const q =
-    query(
-      walletCol(gId),
-      orderBy(
-        "date",
-        "desc",
-      ),
-    );
+  cb: (txs: WalletTransaction[]) => void,
+  onError?: (error: unknown) => void,
+): () => void {
+  const q = query(walletCol(gId), orderBy("date", "desc"));
 
   return onSnapshot(
     q,
-
     (snap) => {
-      const txs =
-        snap.docs.map(
-          (s) =>
-            fromSnap<WalletTransaction>(
-              s,
-            ),
-        );
-
-      console.log(
-        "[WALLET SNAPSHOT]",
-        {
-          groupId:
-            gId,
-
-          count:
-            txs.length,
-        },
-      );
-
+      const txs = snap.docs.map((s) => fromSnap<WalletTransaction>(s));
       cb(txs);
     },
-
     (error) => {
-      logError(
-        "subscribeWalletTxs",
-        "wallet",
-        error,
-        {
-          groupId:
-            gId,
-        },
-      );
-
-      cb([]);
+      logError("subscribeWalletTxs", "wallet", error, { groupId: gId });
+      onError?.(error);
     },
   );
 }

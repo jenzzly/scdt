@@ -8,7 +8,7 @@ import type { StoreApi } from "zustand";
 import type {
   Group, Member, Contribution, Loan, Investment,
   WalletTransaction, Expense, Meeting, AppNotification,
-  SyncStatus, ID, DeletionRecord, AuditLog,
+  SyncStatus, ID, DeletionRecord, AuditLog, LateFeeExemption,
 } from "../types";
 import type { OverdueContribution, OverdueInstallment } from "../utils/lateFees";
 
@@ -49,7 +49,24 @@ export interface StoreState {
   lastSyncTimestamp: number | null;
   forceSyncTrigger: number;
   isLoading: boolean;
+
   setDataViewMode: (mode: DataViewMode) => void;
+  /**
+   * Set the current member (or clear it with `null`). Called during
+   * login, rehydration, and the member-lookup effect in
+   * useCurrentMember. Recomputes the default view mode based on the
+   * member's role: staff roles (anything other than `"member"`)
+   * default to `"group"` view, members default to `"personal"`.
+   */
+  setCurrentMember: (member: Member | null) => void;
+  /**
+   * Wipe the local data cache (members, contributions, loans,
+   * investments, wallet txs, expenses, meetings, notifications,
+   * auditLogs, deletionRecords, currentMember) and the persisted
+   * `scdt-v2` localStorage entry. Used during sign-out and any
+   * "reset to a clean slate" flow.
+   */
+  clearDataCache: () => void;
 
   setAuth: (uid: string, name: string, email: string) => void;
   clearAuth: () => void;
@@ -158,7 +175,53 @@ export interface StoreState {
     fullName?: string; email?: string; phone?: string;
     languagePreference?: string; nationalId?: string; physicalAddress?: string;
   }) => Promise<void>;
+  /**
+   * Add a late-fee exemption to a member. Optionally also mark an
+   * existing unpaid fee as paid (the `feeTxIdToClear` argument), which
+   * is what the per-fee "Waive" action uses — otherwise the specific
+   * fee already sitting on the ledger would keep showing up even after
+   * the exemption is recorded.
+   *
+   * Returns the id of the created exemption.
+   */
+  addLateFeeExemption: (
+    memberId: ID,
+    data: Omit<LateFeeExemption, "id" | "createdBy" | "createdByName" | "createdAt">,
+    feeTxIdToClear?: ID,
+  ) => Promise<ID>;
+  /**
+   * Remove an exemption by id. Does NOT restore any fees that were
+   * cleared when the exemption was created — those are gone from the
+   * ledger; the exemption is only about preventing new accrual.
+   */
+  removeLateFeeExemption: (memberId: ID, exemptionId: ID) => Promise<void>;
   recordContribution: (data: Omit<Contribution, "id" | "createdAt">, autoApprove?: boolean) => Promise<ID>;
+  /**
+   * Bulk import of contributions from a parsed .xlsx (or .csv) file.
+   *
+   * `rows` is the raw array-of-arrays returned by `importXlsx()` — the
+   * first row may be a header row (skipped automatically), and each
+   * subsequent row must have columns in the same order the export
+   * produced:
+   *
+   *   Date | Member | Type | Amount | Status | Description
+   *
+   * Every row is parsed independently; a row that can't be parsed is
+   * skipped and its error is collected in the return value rather than
+   * aborting the whole import. Approved rows also create the linked
+   * "contribution" wallet transaction so the ledger stays consistent
+   * with the contributions list — the same pairing `recordContribution`
+   * and `approveContribution` maintain for single rows.
+   *
+   * Returns `{ count, skipped, errors }` — `count` successful imports,
+   * `skipped` rows dropped due to parse errors, and up to 20 error
+   * messages describing the first failures.
+   */
+  bulkImportContributions: (
+    rows: any[][],
+    groupId: ID,
+  ) => Promise<{ count: number; skipped: number; errors: string[] }>;
+  
   approveContribution: (contributionId: ID) => Promise<void>;
   rejectContribution: (contributionId: ID, reason: string) => Promise<void>;
   updateContribution: (contributionId: ID, data: Partial<Contribution>) => Promise<void>;

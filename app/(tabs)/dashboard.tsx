@@ -1,5 +1,5 @@
 // app/(tabs)/dashboard.tsx
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ScrollView, View, Text, TouchableOpacity,
   StyleSheet, StatusBar, useWindowDimensions,
@@ -70,13 +70,6 @@ function KpiCard({ label, value, icon, subtext, accentColor = C.primary, onPress
 }
 
 // ─── Year-grouped activity chart ─────────────────────────────────
-//
-// Three series per year: contributions, loans, fees. Plain-View bars —
-// no SVG dependency, works identically on web and native.
-//
-// Personal view: only this member's own records.
-// Group view: the whole group's records (readable via the same
-// list rules that already gate the Members tab).
 type ActivityYear = {
   year: number;
   contributions: number;
@@ -104,8 +97,6 @@ function ActivityChart({
     ...years.flatMap(y => [y.contributions, y.loans, y.fees]),
   );
 
-  // Cap at the 6 most recent years so the chart doesn't overflow on
-  // long-lived groups.
   const shown = years.slice(-6);
 
   return (
@@ -166,6 +157,11 @@ export default function DashboardScreen() {
   const isGroupView   = useIsGroupView();
   const isAdmin       = role === "admin";
   const permissions   = useCurrentMemberPermissions();
+
+  // Local UI state for the "How is this calculated?" disclosure on the
+  // account card. Collapsed by default — the number is the headline, the
+  // breakdown is on-demand.
+  const [showCalcBreakdown, setShowCalcBreakdown] = useState(false);
 
   const canApproveContributions =
     ["admin", "loan_officer", "accountant"].includes(role) ||
@@ -230,13 +226,6 @@ export default function DashboardScreen() {
   const approvedLoans = useMemo(() => myLoans.filter(l => l.status === "approved"), [myLoans]);
 
   // ── MY TOTAL CONTRIBUTIONS ───────────────────────────────────────
-  //
-  // Sum of THIS member's own approved contribution records. Deliberately
-  // computed from the contributions collection rather than reading
-  // `currentMember.totalContributions`: recalcGroupTotals recomputes
-  // that field from walletTransactions, and a plain member cannot read
-  // the wallet collection, so the field silently reads back as 0 for
-  // non-staff roles regardless of how many approved contributions exist.
   const myTotalContribs = useMemo(
     () =>
       round2(
@@ -270,26 +259,18 @@ export default function DashboardScreen() {
   //   My Share = my own approved contributions
   //            + (group profit pool ÷ active member count)
   //
-  // Your savings are yours. Only the profit the GROUP earned is split
-  // equally across active members — that's the honest reading of "all
-  // profit is shared among members."
-  //
-  // The profit pool is composed of two things, both readable by every
-  // role from the SAME sources so that a member, an accountant, and the
-  // admin all compute an identical value for a given member:
+  // The profit pool has two components, both computed from collections
+  // every active member can read (the group doc, and the loans
+  // collection), so a member, an accountant, and the admin all compute
+  // an identical value for a given member.
   //
   //   • Already-earned interest — persisted on the group doc as
-  //     `totalInterestEarned`, maintained by recalcGroupTotals. Read
-  //     from the group doc, which every authenticated user may `get`.
-  //
+  //     `totalInterestEarned`, maintained by recalcGroupTotals.
   //   • Projected interest — for every currently-disbursed loan,
-  //     (totalInterest ÷ totalRepayable) × remaining balance. Computed
-  //     from the loans collection, which is list-readable by every
-  //     active member.
+  //     (totalInterest ÷ totalRepayable) × remaining balance.
   //
-  // Deliberately NOT sourcing this from `walletTransactions` — a plain
-  // member can't read that collection, so the value would silently
-  // differ by role (the exact bug this replaces).
+  // Each of the four ingredients below is exposed in the UI's
+  // "How is this calculated?" panel so the number isn't a black box.
   const groupInterestEarned = group?.totalInterestEarned ?? 0;
 
   const projectedGroupInterest = useMemo(() => {
@@ -313,11 +294,6 @@ export default function DashboardScreen() {
   const myShare = round2(myTotalContribs + myProfitShare);
 
   // ── Recent Activity ──────────────────────────────────────────────
-  //
-  // Group view: whole wallet.
-  // Personal view (staff): the member's own wallet txs.
-  // Personal view (plain member): wallet is unreadable → synthesize
-  //   from contributions + loans.
   type ActivityRow = {
     id: string;
     date: string;
@@ -381,11 +357,6 @@ export default function DashboardScreen() {
   }, [isGroupView, wallet, myWallet, myContribs, myLoans]);
 
   // ── Chart data ───────────────────────────────────────────────────
-  //
-  // Year-bucketed activity series. Personal view: this member's records
-  // only. Group view: whole group. Fees come from meeting penalties
-  // (readable by every role) and, where the caller can read the wallet,
-  // also from `late_fee` wallet txs.
   const chartYears: ActivityYear[] = useMemo(() => {
     const byYear = new Map<
       number,
@@ -626,12 +597,7 @@ export default function DashboardScreen() {
             <Chip label="GROUP" bg={C.primary} color="#FFFFFF" />
           </View>
         ) : (
-          /* ── Account card — Personal View ──
-              MY SHARE = your own contributions + an equal slice of the
-              group's profit pool. Because the formula sources only
-              collections readable by every role, the number is
-              identical whether a member, an accountant, or the admin
-              is looking at it. */
+          /* ── Account card — Personal View ── */
           <View style={st.accountCard}>
             <View style={[st.cardGrid, { pointerEvents: "none" }]} />
             <Text style={st.cardLabel}>MY SHARE</Text>
@@ -660,10 +626,67 @@ export default function DashboardScreen() {
                 </Text>
               </View>
             </View>
+
+            {/* ── How is this calculated? ── */}
+            <TouchableOpacity
+              style={st.calcToggle}
+              onPress={() => setShowCalcBreakdown(v => !v)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="How is my share calculated?"
+            >
+              <Text style={st.calcToggleText}>How is this calculated?</Text>
+              <Text style={st.calcToggleChevron}>{showCalcBreakdown ? "▲" : "▼"}</Text>
+            </TouchableOpacity>
+
+            {showCalcBreakdown && (
+              <View style={st.calcBody}>
+                <View style={st.calcRow}>
+                  <Text style={st.calcRowLabel}>Your contributions</Text>
+                  <Text style={st.calcRowValue}>{fmtCurrency(myTotalContribs)}</Text>
+                </View>
+
+                <View style={st.calcRow}>
+                  <Text style={st.calcRowLabel}>Group profit pool</Text>
+                  <Text style={st.calcRowValue}>{fmtCurrency(groupProfitPool)}</Text>
+                </View>
+
+                <View style={st.calcSubRow}>
+                  <Text style={st.calcSubLabel}>· Already earned interest</Text>
+                  <Text style={st.calcSubValue}>{fmtCurrency(groupInterestEarned)}</Text>
+                </View>
+                <View style={st.calcSubRow}>
+                  <Text style={st.calcSubLabel}>· Projected interest (disbursed loans)</Text>
+                  <Text style={st.calcSubValue}>{fmtCurrency(projectedGroupInterest)}</Text>
+                </View>
+
+                <View style={st.calcRow}>
+                  <Text style={st.calcRowLabel}>Active members (divisor)</Text>
+                  <Text style={st.calcRowValue}>{activeMemberCount}</Text>
+                </View>
+
+                <View style={st.calcRow}>
+                  <Text style={[st.calcRowLabel, st.calcRowLabelEmphasis]}>Your profit share</Text>
+                  <Text style={[st.calcRowValue, st.calcRowValueEmphasis]}>
+                    {fmtCurrency(myProfitShare)}
+                  </Text>
+                </View>
+
+                <View style={st.calcDivider} />
+
+                <Text style={st.calcFormula}>
+                  My share = {fmtCurrency(myTotalContribs)} + {fmtCurrency(myProfitShare)} = {fmtCurrency(myShare)}
+                </Text>
+
+                <Text style={st.calcFootnote}>
+                  Your savings are yours alone. Only the group's profit — interest earned on loans and the interest still projected to be collected — is split equally among active members.
+                </Text>
+              </View>
+            )}
           </View>
         )}
 
-        {/* ── KPI Cards: Group View or Personal View Cards ── */}
+        {/* ── KPI Cards ── */}
         <View style={st.block}>
           {isGroupView ? (
             renderGroupKpis()
@@ -892,6 +915,101 @@ const st = StyleSheet.create({
   cardPillLabel: { fontSize: 9, fontWeight: "700", color: "rgba(255,255,255,0.4)", letterSpacing: 0.8, textTransform: "uppercase" },
   cardPillVal: { fontSize: 13, fontWeight: "700", color: "#FFFFFF", marginTop: 3 },
   cardPillDivider: { width: 1, backgroundColor: "rgba(255,255,255,0.1)" },
+
+  // "How is this calculated?" disclosure — sits inside the dark
+  // account card, so it uses translucent white so it reads clearly
+  // against the navy/green background without introducing a new
+  // surface.
+  calcToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 16,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.1)",
+  },
+  calcToggleText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.6)",
+    letterSpacing: 0.3,
+  },
+  calcToggleChevron: {
+    fontSize: 9,
+    color: "rgba(255,255,255,0.55)",
+  },
+  calcBody: {
+    marginTop: 12,
+    paddingTop: 4,
+  },
+  calcRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 6,
+    gap: 8,
+  },
+  calcRowLabel: {
+    flex: 1,
+    fontSize: 11,
+    color: "rgba(255,255,255,0.65)",
+    fontWeight: "500",
+  },
+  calcRowLabelEmphasis: {
+    color: "rgba(255,255,255,0.9)",
+    fontWeight: "700",
+  },
+  calcRowValue: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.85)",
+    fontWeight: "600",
+    flexShrink: 0,
+  },
+  calcRowValueEmphasis: {
+    color: "#FFFFFF",
+    fontWeight: "800",
+  },
+  calcSubRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 3,
+    paddingLeft: 14,
+    gap: 8,
+  },
+  calcSubLabel: {
+    flex: 1,
+    fontSize: 10,
+    color: "rgba(255,255,255,0.45)",
+    fontStyle: "italic",
+  },
+  calcSubValue: {
+    fontSize: 10,
+    color: "rgba(255,255,255,0.6)",
+    fontWeight: "500",
+    flexShrink: 0,
+  },
+  calcDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    marginVertical: 8,
+  },
+  calcFormula: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.9)",
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 8,
+    letterSpacing: 0.2,
+  },
+  calcFootnote: {
+    fontSize: 10,
+    lineHeight: 14,
+    color: "rgba(255,255,255,0.45)",
+    fontStyle: "italic",
+    textAlign: "center",
+  },
 
   // KPI grid
   kpiGrid: {

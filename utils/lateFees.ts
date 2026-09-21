@@ -40,6 +40,24 @@
 // Clearing a late-fee transaction does NOT reset the overdue period.
 // Only the actual regular contribution payment stops contribution late-fee
 // accrual for that period.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// LATE-FEE EXEMPTIONS
+//
+// A member may have a `lateFeeExemptions` array (see LateFeeExemption in
+// types/index.ts). Each entry covers a scope (`contribution`, `loan`, or
+// `both`) and an inclusive [periodStart, periodEnd] window. Both detection
+// functions below skip any period or installment whose date falls inside
+// an applicable exemption — so recording an exemption is all that's
+// required to stop new fees from accruing for that member and period,
+// without touching the ledger.
+//
+// Exemptions do NOT retroactively delete fees that were already applied
+// to the ledger. Clearing those is a separate operation; the UI's
+// "Waive Period" flow combines both (records the exemption and marks the
+// specific fee tx paid), but the exemption on its own is purely about
+// future accrual.
+// ─────────────────────────────────────────────────────────────────────────────
 
 import { round2 } from "./theme";
 
@@ -50,6 +68,8 @@ import type {
   Loan,
   WalletTransaction,
 } from "../types";
+
+import type { LateFeeExemption } from "../types";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -165,6 +185,51 @@ function maxDate(
   return first > second
     ? new Date(first)
     : new Date(second);
+}
+
+/**
+ * Local calendar date as YYYY-MM-DD.
+ *
+ * Deliberately NOT `toISOString().slice(0, 10)` — that returns the UTC
+ * date, so a period evaluated at 11pm on September 30 in a UTC+2
+ * timezone would produce "2026-10-01" and slip past a September
+ * exemption by one day. Everything in this module is local-time, so
+ * the exemption comparison has to be too.
+ */
+function localIso(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * True when the given member has a late-fee exemption that covers the
+ * given scope AND the given calendar day.
+ *
+ * Scope matching: "both" matches any request, otherwise the exemption's
+ * scope must equal the requested one. The [periodStart, periodEnd]
+ * window is inclusive on both ends.
+ */
+function isLateFeeExempt(
+  member: Member | null | undefined,
+  scope: "contribution" | "loan",
+  date: Date,
+): boolean {
+  if (!member) return false;
+
+  const exemptions = (member.lateFeeExemptions ??
+    []) as LateFeeExemption[];
+  if (exemptions.length === 0) return false;
+
+  const day = localIso(date);
+
+  return exemptions.some((ex) => {
+    if (ex.scope !== "both" && ex.scope !== scope) {
+      return false;
+    }
+    return day >= ex.periodStart && day <= ex.periodEnd;
+  });
 }
 
 // -----------------------------------------------------------------------------
@@ -398,6 +463,41 @@ export function findOverdueContributions(
           periodStart,
           group.contributionFrequency,
         );
+
+      /**
+       * Skip periods covered by a member late-fee exemption.
+       *
+       * The exemption's [periodStart, periodEnd] window is compared
+       * against the contribution period's START date — a September
+       * exemption covers the September period (periodStart = Sept 1),
+       * which is exactly the granularity an admin thinks in when they
+       * say "waive September for this member".
+       *
+       * Placed BEFORE the periodEnd-vs-startDate check so a waiver
+       * can silence a period that would otherwise be skipped anyway,
+       * and BEFORE the grace-period check so no work is done for
+       * periods we're not going to charge.
+       */
+      if (
+        isLateFeeExempt(
+          member,
+          "contribution",
+          periodStart,
+        )
+      ) {
+        const next =
+          periodEnd;
+
+        if (
+          next.getTime() <=
+          periodStart.getTime()
+        ) {
+          break;
+        }
+
+        cursor = next;
+        continue;
+      }
 
       /**
        * Do not process a contribution period that ended
@@ -822,7 +922,7 @@ export function findOverdueInstallments(
     if ((loan as any).lateFeesDisabled === true) {
       continue;
     }
-    
+
     if (
       loan.status !== "disbursed" &&
       loan.status !== "repaid"
@@ -877,6 +977,29 @@ export function findOverdueInstallments(
         if (
           Number.isNaN(
             dueDate.getTime(),
+          )
+        ) {
+          return;
+        }
+
+        /**
+         * Skip installments covered by a member late-fee exemption.
+         *
+         * For loans, the exemption window is compared against the
+         * installment's DUE DATE — an October exemption waives fees
+         * on installments due in October, not fees applied in
+         * October. That's the phrasing an admin uses ("waive October
+         * for this member") and it's stable even when the fee is
+         * applied weeks later.
+         *
+         * Placed BEFORE the grace-period check so an exempted
+         * installment skips all downstream work.
+         */
+        if (
+          isLateFeeExempt(
+            member,
+            "loan",
+            dueDate,
           )
         ) {
           return;

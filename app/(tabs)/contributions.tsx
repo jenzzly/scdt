@@ -18,54 +18,49 @@ import {
   useGroupMembers,
   useCurrentUserRole,
   useCurrentMember,
-  useCanSeeAllFinancial,
   useIsGroupView,
   useCurrentMemberPermissions,
   useActiveGroup,
   useGroupWallet,
-  useDataViewMode,
 } from "../../stores/useStore";
 
 import {
   SearchBar,
-  Card,
   Badge,
   Empty,
   BottomModal,
   useToast,
   Toast,
-  Select,
   DatePicker,
   TabRow,
+  Input,
 } from "../../components/ui";
 
 import { Colors, C, T, S, R, fmtCurrency, fmtDate } from "../../utils/theme";
 
-import {
-  exportXlsx,
-  importXlsx,
-  exportPdf,
-  generatePaymentScheduleHtml as _unused,
-} from "../../utils/export";
+import { exportXlsx, importXlsx, exportPdf } from "../../utils/export";
 import { findOverdueContributions } from "../../utils/lateFees";
 import { getCurrentGoalPeriod } from "../../lib/firestore/contributionGoals";
 
-import type { Contribution, ContributionGoalPeriod } from "../../types";
+import type {
+  Contribution,
+  ContributionGoalPeriod,
+  LateFeeExemption,
+  Member,
+} from "../../types";
 
 import { KpiCard } from "../../components/ui/KpiCard";
-import { canApproveContributions, canManageWallet } from "@/lib/auth/permissions";
+import {
+  canApproveContributions as canApproveContributionsPerm,
+  canManageWallet,
+  canViewAllContributions,
+} from "@/lib/auth/permissions";
 
 // -----------------------------------------------------------------------------
 // Constants
 // -----------------------------------------------------------------------------
 
 const PAGE_SIZE = 20;
-
-const STATUS_COLOR: Record<string, "teal" | "gold" | "green" | "red" | "muted"> = {
-  approved: "green",
-  pending: "gold",
-  rejected: "red",
-};
 
 const TYPE_LABELS: Record<string, string> = {
   regular: "Regular",
@@ -78,23 +73,29 @@ const TYPE_LABELS: Record<string, string> = {
   other: "Other",
 };
 
-const SORT_OPTIONS = [
-  { label: "Newest first", value: "date_desc" },
-  { label: "Oldest first", value: "date_asc" },
-  { label: "Month", value: "month" },
-  { label: "Year", value: "year" },
-];
-
-const TYPE_OPTIONS = [
-  { label: "All types", value: "all" },
-  ...Object.entries(TYPE_LABELS).map(([value, label]) => ({ label, value })),
-];
-
 const STATUS_TABS = ["All", "Approved", "Pending", "Late Fee"] as const;
 
 // Matches EDIT_ROLES in edit-contribution.tsx — kept in sync manually
 // since that file is a separate route/bundle.
 const EDIT_ROLES = ["admin", "loan_officer", "accountant"];
+
+type SortKey = "date_desc" | "date_asc" | "month" | "year";
+
+const SORT_COMPARATORS: Record<
+  SortKey,
+  (a: Contribution, b: Contribution) => number
+> = {
+  date_asc: (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+  date_desc: (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+  month: (a, b) => {
+    const idx = (d: Contribution) => {
+      const date = new Date(d.date);
+      return date.getFullYear() * 12 + date.getMonth();
+    };
+    return idx(b) - idx(a);
+  },
+  year: (a, b) => new Date(b.date).getFullYear() - new Date(a.date).getFullYear(),
+};
 
 // -----------------------------------------------------------------------------
 // Small shared pieces
@@ -104,9 +105,14 @@ const Divider = () => <View style={st.divider} />;
 
 const typeLabel = (type: string) => TYPE_LABELS[type] ?? type;
 
-/** Card width caps content at 900px and centers it on wide/desktop layouts. */
 const wideCardStyle = (isWide: boolean) =>
-  isWide ? { maxWidth: 900, alignSelf: "center" as const, width: "100%" as const } : null;
+  isWide
+    ? { maxWidth: 900, alignSelf: "center" as const, width: "100%" as const }
+    : null;
+
+// -----------------------------------------------------------------------------
+// Main screen
+// -----------------------------------------------------------------------------
 
 export default function ContributionsScreen() {
   const router = useRouter();
@@ -119,7 +125,6 @@ export default function ContributionsScreen() {
     activeGroupId,
     applyContributionLateFee,
     recalcTotals,
-    setDataViewMode,
   } = useStore();
 
   const allContributions = useGroupContributions();
@@ -129,28 +134,26 @@ export default function ContributionsScreen() {
 
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
-
-  const canSeeAll = useCanSeeAllFinancial();
   const isGroupView = useIsGroupView();
-  const dataViewMode = useDataViewMode();
   const permissions = useCurrentMemberPermissions();
 
   const { show, visible, msg, type } = useToast();
 
   const isAdmin = role === "admin";
 
+  // Permission gates — routed through the shared helpers in
+  // lib/auth/permissions.ts so client checks stay aligned with what
+  // firestore.rules actually authorizes.
   const canApprove =
-    ["admin", "loan_officer", "accountant"].includes(role) ||
-    (role === "committee" && permissions.approveContributions);
+    canApproveContributionsPerm(role, permissions) || role === "loan_officer";
+
+  const canManageFees =
+    canManageWallet(role, permissions) || role === "loan_officer";
+
+  const canSeeAllContribs = canViewAllContributions(role, permissions);
 
   const canAdd = permissions.addContribution || isAdmin;
   const canExport = permissions.downloadReports || isAdmin;
-
-  // Only these three roles may apply or clear a late fee. Members and
-  // committee can still SEE the late fee tab/list/amounts — this flag only
-  // gates the Apply/Clear action button.
-  const canManageFees = ["admin", "accountant", "loan_officer"].includes(role);
-
   const canEditContribution = EDIT_ROLES.includes(role);
 
   const getMemberName = (id: string) =>
@@ -161,7 +164,7 @@ export default function ContributionsScreen() {
   };
 
   // ---------------------------------------------------------------------------
-  // Scope contributions to either group view or personal view.
+  // Scope contributions — group view or personal view.
   // ---------------------------------------------------------------------------
 
   const contributions = useMemo(
@@ -179,19 +182,23 @@ export default function ContributionsScreen() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
-  const [sort, setSort] = useState("date_desc");
+  const [sort, setSort] = useState<SortKey>("date_desc");
   const [page, setPage] = useState(1);
 
-  const [selectedContrib, setSelectedContrib] = useState<Contribution | null>(null);
-  const [approvingId, setApprovingId] = useState<string | null>(null);
   const [applyingFeeId, setApplyingFeeId] = useState<string | null>(null);
-  const [goalPeriod, setGoalPeriod] = useState<ContributionGoalPeriod | null>(null);
+  const [goalPeriod, setGoalPeriod] = useState<ContributionGoalPeriod | null>(
+    null
+  );
 
   const [dateRangeStart, setDateRangeStart] = useState("");
   const [dateRangeEnd, setDateRangeEnd] = useState("");
 
   const [viewMode, setViewMode] = useState<"list" | "monthly">("list");
   const [importing, setImporting] = useState(false);
+
+  // Late-fee waiver modal state
+  const [waiverTarget, setWaiverTarget] = useState<any | null>(null);
+  const [waiverSaving, setWaiverSaving] = useState(false);
 
   // ---------------------------------------------------------------------------
   // Late fees
@@ -201,10 +208,6 @@ export default function ContributionsScreen() {
     if (!group) return [];
     return findOverdueContributions(group, allMembers, allContributions, allWallet);
   }, [group, allMembers, allContributions, allWallet]);
-
-  // ---------------------------------------------------------------------------
-  // Visible late fees
-  // ---------------------------------------------------------------------------
 
   const visibleLateFees = useMemo(() => {
     if (!allWallet) return [];
@@ -272,14 +275,20 @@ export default function ContributionsScreen() {
       )
       .reduce((sum, c) => sum + (c.amount || 0), 0);
 
-    const collectionRate = totalExpected > 0 ? (totalCollected / totalExpected) * 100 : 0;
+    const collectionRate =
+      totalExpected > 0 ? (totalCollected / totalExpected) * 100 : 0;
 
     const totalLateFeesRemaining = visibleLateFees.reduce(
       (sum, item) => sum + (item.feeAmount || 0),
       0
     );
 
-    return { totalExpected, totalCollected, collectionRate, totalLateFeesRemaining };
+    return {
+      totalExpected,
+      totalCollected,
+      collectionRate,
+      totalLateFeesRemaining,
+    };
   }, [
     group,
     allMembers,
@@ -290,10 +299,6 @@ export default function ContributionsScreen() {
     currentMember?.id,
   ]);
 
-  // ---------------------------------------------------------------------------
-  // Per-member goal progress
-  // ---------------------------------------------------------------------------
-
   const memberGoalRows = useMemo(() => {
     if (!goalPeriod || !allMembers || !allContributions) return [];
 
@@ -303,7 +308,9 @@ export default function ContributionsScreen() {
 
     const scopedMembers = isGroupView
       ? allMembers.filter((m) => m.status === "active")
-      : allMembers.filter((m) => m.status === "active" && m.id === currentMember?.id);
+      : allMembers.filter(
+          (m) => m.status === "active" && m.id === currentMember?.id
+        );
 
     return scopedMembers
       .map((member) => {
@@ -345,10 +352,6 @@ export default function ContributionsScreen() {
     visibleLateFees,
   ]);
 
-  // ---------------------------------------------------------------------------
-  // Goal progress
-  // ---------------------------------------------------------------------------
-
   const goalProgress = useMemo(() => {
     if (!goalPeriod) return null;
 
@@ -359,12 +362,16 @@ export default function ContributionsScreen() {
 
     const isApprovedInPeriod = (c: Contribution) => {
       const cDate = new Date(c.date);
-      return cDate >= periodStart && cDate <= periodEnd && c.status === "approved";
+      return (
+        cDate >= periodStart && cDate <= periodEnd && c.status === "approved"
+      );
     };
 
     const totalContributed = allContributions
       .filter(
-        (c) => isApprovedInPeriod(c) && (isGroupView || c.memberId === currentMember?.id)
+        (c) =>
+          isApprovedInPeriod(c) &&
+          (isGroupView || c.memberId === currentMember?.id)
       )
       .reduce((sum, c) => sum + (c.amount || 0), 0);
 
@@ -372,12 +379,17 @@ export default function ContributionsScreen() {
       .filter(isApprovedInPeriod)
       .reduce((sum, c) => sum + (c.amount || 0), 0);
 
-    const activeMemberCount = allMembers.filter((m) => m.status === "active").length;
+    const activeMemberCount = allMembers.filter(
+      (m) => m.status === "active"
+    ).length;
     const groupTarget = target * activeMemberCount;
 
-    const percentage = target > 0 ? Math.round((totalContributed / target) * 100) : 0;
+    const percentage =
+      target > 0 ? Math.round((totalContributed / target) * 100) : 0;
     const groupPercentage =
-      groupTarget > 0 ? Math.round((groupTotalContributed / groupTarget) * 100) : 0;
+      groupTarget > 0
+        ? Math.round((groupTotalContributed / groupTarget) * 100)
+        : 0;
 
     const remaining = Math.max(0, target - totalContributed);
     const daysLeft = Math.max(
@@ -397,20 +409,33 @@ export default function ContributionsScreen() {
       isCompleted: totalContributed >= target,
       isGroupScoped: isGroupView,
     };
-  }, [goalPeriod, allContributions, allMembers, isGroupView, currentMember?.id]);
+  }, [
+    goalPeriod,
+    allContributions,
+    allMembers,
+    isGroupView,
+    currentMember?.id,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Apply / clear late fee
   // ---------------------------------------------------------------------------
 
-  const handleApplyContributionFee = async (item: any, customAmount?: number) => {
+  const handleApplyContributionFee = async (
+    item: any,
+    customAmount?: number
+  ) => {
     setApplyingFeeId(item.feeTxId);
 
     try {
       await applyContributionLateFee(item, customAmount);
       const appliedAmount =
-        customAmount != null && customAmount > 0 ? customAmount : item.feeAmount;
-      show(`Late fee of ${fmtCurrency(appliedAmount)} applied to ${item.memberName}`);
+        customAmount != null && customAmount > 0
+          ? customAmount
+          : item.feeAmount;
+      show(
+        `Late fee of ${fmtCurrency(appliedAmount)} applied to ${item.memberName}`
+      );
       recalcTotals();
     } catch (e: any) {
       show(e?.message || "Failed to apply late fee", "error");
@@ -433,22 +458,66 @@ export default function ContributionsScreen() {
     }
   };
 
+  // ── Late-fee waiver ──────────────────────────────────────────────
+  //
+  // Called from the "Waive" link on each late-fee card. Opens a modal
+  // that records a per-member exemption covering the fee's period, with
+  // an optional scope widening to loans too, and — for fees that have
+  // already been applied to the ledger — marks that specific fee paid.
+
+  const openWaiverModal = (feeItem: any) => {
+    setWaiverTarget(feeItem);
+  };
+
+  const closeWaiverModal = () => {
+    setWaiverTarget(null);
+  };
+
+  const handleConfirmWaiver = async (
+    scope: "contribution" | "loan" | "both",
+    periodStart: string,
+    periodEnd: string,
+    reason: string
+  ) => {
+    if (!waiverTarget) return;
+
+    setWaiverSaving(true);
+    try {
+      await useStore.getState().addLateFeeExemption(
+        waiverTarget.memberId,
+        { scope, periodStart, periodEnd, reason: reason || undefined },
+        // Only pass the fee tx id when the fee is already on the ledger.
+        // Accrued-but-not-yet-applied fees have no wallet tx to clear.
+        waiverTarget.applied ? waiverTarget.feeTxId : undefined
+      );
+
+      show("Late fee waiver saved");
+      recalcTotals();
+      closeWaiverModal();
+    } catch (e: any) {
+      show(e?.message || "Failed to save waiver", "error");
+    } finally {
+      setWaiverSaving(false);
+    }
+  };
+
+  const handleRemoveExemption = async (exemptionId: string) => {
+    if (!waiverTarget) return;
+
+    try {
+      await useStore
+        .getState()
+        .removeLateFeeExemption(waiverTarget.memberId, exemptionId);
+      show("Waiver removed");
+      recalcTotals();
+    } catch (e: any) {
+      show(e?.message || "Failed to remove waiver", "error");
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // Filter + sort + pagination
   // ---------------------------------------------------------------------------
-
-  const SORT_COMPARATORS: Record<string, (a: Contribution, b: Contribution) => number> = {
-    date_asc: (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-    date_desc: (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-    month: (a, b) => {
-      const monthIndex = (d: Contribution) => {
-        const date = new Date(d.date);
-        return date.getFullYear() * 12 + date.getMonth();
-      };
-      return monthIndex(b) - monthIndex(a);
-    },
-    year: (a, b) => new Date(b.date).getFullYear() - new Date(a.date).getFullYear(),
-  };
 
   const filtered = useMemo(() => {
     let list = [...contributions];
@@ -486,31 +555,25 @@ export default function ContributionsScreen() {
     if (comparator) list.sort(comparator);
 
     return list;
-  }, [contributions, statusFilter, typeFilter, search, sort, allMembers, dateRangeStart, dateRangeEnd]);
+  }, [
+    contributions,
+    statusFilter,
+    typeFilter,
+    search,
+    sort,
+    allMembers,
+    dateRangeStart,
+    dateRangeEnd,
+  ]);
 
-  const totalPages = useMemo(() => Math.ceil(filtered.length / PAGE_SIZE), [filtered]);
+  const totalPages = useMemo(
+    () => Math.ceil(filtered.length / PAGE_SIZE),
+    [filtered]
+  );
 
   const paginated = useMemo(
     () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
     [filtered, page]
-  );
-
-  const totalAmount = useMemo(
-    () =>
-      statusFilter === "late_fee"
-        ? visibleLateFees.reduce((sum, item) => sum + (item.feeAmount || 0), 0)
-        : filtered.reduce((sum, c) => sum + (c.amount || 0), 0),
-    [statusFilter, visibleLateFees, filtered]
-  );
-
-  const pendingCount = useMemo(
-    () => filtered.filter((c) => c.status === "pending").length,
-    [filtered]
-  );
-
-  const approvedCount = useMemo(
-    () => filtered.filter((c) => c.status === "approved").length,
-    [filtered]
   );
 
   const handleTabChange = (t: string) => {
@@ -523,47 +586,38 @@ export default function ContributionsScreen() {
     setPage(1);
   };
 
-  const handleSort = (v: string) => {
+  const handleSort = (v: SortKey) => {
     setSort(v);
     setPage(1);
   };
 
-  // ---------------------------------------------------------------------------
-  // Approve / reject contribution
-  // ---------------------------------------------------------------------------
-
   const handleApprove = async (id: string) => {
-    setApprovingId(id);
     try {
       await approveContribution(id);
       show("Contribution approved");
-      setSelectedContrib(null);
     } catch (e: any) {
       show(e.message || "Failed to approve", "error");
-    } finally {
-      setApprovingId(null);
     }
   };
 
   const handleReject = async (id: string) => {
-    setApprovingId(id);
     try {
       await rejectContribution(id, "Rejected by admin/officer");
       show("Contribution rejected");
-      setSelectedContrib(null);
     } catch (e: any) {
       show(e.message || "Failed to reject", "error");
-    } finally {
-      setApprovingId(null);
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // Export / Import
-  // ---------------------------------------------------------------------------
-
   const handleExport = async () => {
-    const headers = ["Date", "Member", "Type", "Amount", "Status", "Description"];
+    const headers = [
+      "Date",
+      "Member",
+      "Type",
+      "Amount",
+      "Status",
+      "Description",
+    ];
 
     const rows = filtered.map((c) => [
       fmtDate(c.date),
@@ -576,7 +630,9 @@ export default function ContributionsScreen() {
 
     const fileName =
       dateRangeStart || dateRangeEnd
-        ? `Contributions_Report_${dateRangeStart || "start"}_to_${dateRangeEnd || "end"}`
+        ? `Contributions_Report_${dateRangeStart || "start"}_to_${
+            dateRangeEnd || "end"
+          }`
         : "Contributions_Report";
 
     try {
@@ -613,7 +669,28 @@ export default function ContributionsScreen() {
       }
 
       const result = await bulkImport(rows, activeGroupId);
-      show(`Imported ${result?.count ?? rows.length} contributions`);
+      const count = result?.count ?? 0;
+      const skipped = result?.skipped ?? 0;
+      const firstError =
+        Array.isArray(result?.errors) && result.errors.length > 0
+          ? result.errors[0]
+          : null;
+
+      if (count === 0) {
+        show(
+          firstError
+            ? `Nothing imported — ${firstError}`
+            : "Nothing imported — check the file format",
+          "error"
+        );
+      } else if (skipped > 0) {
+        show(
+          `Imported ${count} contribution${count !== 1 ? "s" : ""}, ${skipped} skipped`
+        );
+      } else {
+        show(`Imported ${count} contribution${count !== 1 ? "s" : ""}`);
+      }
+
       recalcTotals();
     } catch (e: any) {
       if (e?.message !== "Cancelled") {
@@ -624,22 +701,17 @@ export default function ContributionsScreen() {
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // "+ Add"
-  // ---------------------------------------------------------------------------
-
   const handleAddPress = () => {
-    setSelectedContrib(null);
     router.push("/modals/add-contribution");
   };
 
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
-
   const cardWide = wideCardStyle(isWide);
   const activeTab =
-    statusFilter === "all" ? "All" : statusFilter === "late_fee" ? "Late Fee" : statusFilter;
+    statusFilter === "all"
+      ? "All"
+      : statusFilter === "late_fee"
+      ? "Late Fee"
+      : statusFilter;
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -656,7 +728,10 @@ export default function ContributionsScreen() {
       />
 
       <ScrollView
-        contentContainerStyle={[{ paddingBottom: 100 }, isWide && { paddingHorizontal: 24 }]}
+        contentContainerStyle={[
+          { paddingBottom: 100 },
+          isWide && { paddingHorizontal: 24 },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {goalProgress && (
@@ -673,27 +748,49 @@ export default function ContributionsScreen() {
           <View style={st.kpiGrid}>
             <KpiCard
               label={isGroupView ? "Total Expected" : "My Target"}
-              value={collectionStats ? fmtCurrency(collectionStats.totalExpected) : "—"}
+              value={
+                collectionStats
+                  ? fmtCurrency(collectionStats.totalExpected)
+                  : "—"
+              }
               icon="📋"
-              subtext={isGroupView ? "Goal target × active members" : "Your goal for this period"}
+              subtext={
+                isGroupView
+                  ? "Goal target × active members"
+                  : "Your goal for this period"
+              }
               accentColor={C.accent}
               onPress={() => {}}
             />
 
             <KpiCard
               label={isGroupView ? "Total Collected" : "My Contributions"}
-              value={collectionStats ? fmtCurrency(collectionStats.totalCollected) : "—"}
+              value={
+                collectionStats
+                  ? fmtCurrency(collectionStats.totalCollected)
+                  : "—"
+              }
               icon="💰"
-              subtext={isGroupView ? "Group collections" : "Your approved contributions"}
+              subtext={
+                isGroupView
+                  ? "Group collections"
+                  : "Your approved contributions"
+              }
               accentColor={C.success}
               onPress={() => setStatusFilter("approved")}
             />
 
             <KpiCard
               label={isGroupView ? "Collection Rate" : "My Progress"}
-              value={collectionStats ? `${collectionStats.collectionRate.toFixed(1)}%` : "—"}
+              value={
+                collectionStats
+                  ? `${collectionStats.collectionRate.toFixed(1)}%`
+                  : "—"
+              }
               icon="📊"
-              subtext={isGroupView ? "Collection efficiency" : "Toward your goal"}
+              subtext={
+                isGroupView ? "Collection efficiency" : "Toward your goal"
+              }
               accentColor={C.primary}
               onPress={() => {}}
             />
@@ -701,10 +798,14 @@ export default function ContributionsScreen() {
             <KpiCard
               label={isGroupView ? "Late Fees Due" : "My Late Fees"}
               value={
-                collectionStats ? fmtCurrency(collectionStats.totalLateFeesRemaining) : "—"
+                collectionStats
+                  ? fmtCurrency(collectionStats.totalLateFeesRemaining)
+                  : "—"
               }
               icon="⚠️"
-              subtext={isGroupView ? "Unpaid group late fees" : "Fees you owe"}
+              subtext={
+                isGroupView ? "Unpaid group late fees" : "Fees you owe"
+              }
               accentColor={C.gold}
               onPress={() => setStatusFilter("late_fee")}
             />
@@ -714,14 +815,14 @@ export default function ContributionsScreen() {
         <View style={[st.controls, cardWide]}>
           <View style={st.controlsTop}>
             <View style={{ flex: 2 }}>
-              <SearchBar value={search} onChange={handleSearch} placeholder="Search contributions…" />
+              <SearchBar
+                value={search}
+                onChange={handleSearch}
+                placeholder="Search contributions…"
+              />
             </View>
           </View>
 
-          {/* The "Goal Progress" view is a per-member table. In group view
-              it's genuinely useful; in personal view it collapses to a
-              single row duplicating the goal card above. Hidden for
-              members. */}
           {isGroupView && (
             <View style={st.viewModeRow}>
               <ViewModeButton
@@ -764,7 +865,11 @@ export default function ContributionsScreen() {
           </View>
 
           <View style={st.statusRow}>
-            <TabRow tabs={[...STATUS_TABS]} active={activeTab} onChange={handleTabChange} />
+            <TabRow
+              tabs={[...STATUS_TABS]}
+              active={activeTab}
+              onChange={handleTabChange}
+            />
           </View>
         </View>
 
@@ -784,6 +889,7 @@ export default function ContributionsScreen() {
               applyingFeeId={applyingFeeId}
               onApply={handleApplyContributionFee}
               onClear={handleClearContributionFee}
+              onWaive={openWaiverModal}
             />
           ) : paginated.length === 0 ? (
             <EmptyState icon="💰" text="No contributions found" />
@@ -808,7 +914,6 @@ export default function ContributionsScreen() {
                     canEdit={canEditContribution}
                     onApprove={() => handleApprove(c.id)}
                     onReject={() => handleReject(c.id)}
-                    onView={() => setSelectedContrib(c)}
                     onEdit={() => handleEditPress(c.id)}
                   />
                   {i < paginated.length - 1 && <Divider />}
@@ -817,11 +922,31 @@ export default function ContributionsScreen() {
             </View>
           )}
 
-          {viewMode !== "monthly" && (
-            <Pagination page={page} totalPages={totalPages} setPage={setPage} filtered={filtered} />
+          {viewMode !== "monthly" && statusFilter !== "late_fee" && (
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              setPage={setPage}
+              filtered={filtered}
+            />
           )}
         </View>
       </ScrollView>
+
+      <LateFeeWaiverModal
+        visible={!!waiverTarget}
+        onClose={closeWaiverModal}
+        target={waiverTarget}
+        member={
+          waiverTarget
+            ? allMembers.find((m) => m.id === waiverTarget.memberId) ?? null
+            : null
+        }
+        group={group}
+        saving={waiverSaving}
+        onConfirm={handleConfirmWaiver}
+        onRemoveExemption={handleRemoveExemption}
+      />
 
       <Toast visible={visible} msg={msg} type={type} />
     </View>
@@ -856,7 +981,9 @@ function TopBar({
   return (
     <View style={[st.topBar, wideCardStyle(isWide)]}>
       <View>
-        <Text style={st.pageSummaryLabel}>{isGroupView ? "Group" : "Personal"}</Text>
+        <Text style={st.pageSummaryLabel}>
+          {isGroupView ? "Group" : "Personal"}
+        </Text>
         <Text style={st.pageSummaryTitle}>
           {isLateFeeView ? "Late Fees Record" : "History"}
         </Text>
@@ -864,24 +991,34 @@ function TopBar({
 
       <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
         {canExport && (
-          <TouchableOpacity style={st.iconBtn} onPress={onExport} activeOpacity={0.8}>
+          <TouchableOpacity
+            style={st.iconBtn}
+            onPress={onExport}
+            activeOpacity={0.8}
+          >
             <Text style={st.iconBtnText}>Export</Text>
           </TouchableOpacity>
         )}
 
-        {canExport && (
+        {isGroupView && (
           <TouchableOpacity
             style={st.iconBtn}
             onPress={onImport}
             activeOpacity={0.8}
             disabled={importing}
           >
-            <Text style={st.iconBtnText}>{importing ? "Importing…" : "Import"}</Text>
+            <Text style={st.iconBtnText}>
+              {importing ? "Importing…" : "Import"}
+            </Text>
           </TouchableOpacity>
         )}
 
-        {isGroupView && (
-          <TouchableOpacity style={st.primaryBtn} onPress={onAdd} activeOpacity={0.8}>
+        {isGroupView && canAdd && (
+          <TouchableOpacity
+            style={st.primaryBtn}
+            onPress={onAdd}
+            activeOpacity={0.8}
+          >
             <Text style={st.primaryBtnText}>+ Add</Text>
           </TouchableOpacity>
         )}
@@ -905,7 +1042,11 @@ function ViewModeButton({
       onPress={onPress}
       activeOpacity={0.7}
     >
-      <Text style={[st.viewModeBtnText, active && st.viewModeBtnTextActive]}>{label}</Text>
+      <Text
+        style={[st.viewModeBtnText, active && st.viewModeBtnTextActive]}
+      >
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -940,17 +1081,31 @@ function GoalCard({
     fmtCurrency(value, currency).replace(`${currency} `, "");
 
   return (
-    <View style={[st.goalCard, wideCardStyle(isWide) && { ...wideCardStyle(isWide), marginHorizontal: 0 }]}>
+    <View
+      style={[
+        st.goalCard,
+        wideCardStyle(isWide) && {
+          ...wideCardStyle(isWide),
+          marginHorizontal: 0,
+        },
+      ]}
+    >
       <View style={st.cardAccentDot} />
 
-      {/* Personal goal */}
       <View style={st.goalHeaderRow}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={st.goalLabel} numberOfLines={1}>
-            {goalProgress.isCompleted ? "✓ MY GOAL ACHIEVED" : "MY CONTRIBUTION GOAL"}
+            {goalProgress.isCompleted
+              ? "✓ MY GOAL ACHIEVED"
+              : "MY CONTRIBUTION GOAL"}
           </Text>
 
-          <Text style={st.goalAmount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+          <Text
+            style={st.goalAmount}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.8}
+          >
             <Text style={st.balanceCurrency}>{currency} </Text>
             {amountText(goalProgress.totalContributed)}
           </Text>
@@ -958,29 +1113,39 @@ function GoalCard({
 
         <View style={st.goalHeaderRight}>
           <Text
-            style={[st.goalPercentage, goalProgress.isCompleted && { color: Colors.green }]}
+            style={[
+              st.goalPercentage,
+              goalProgress.isCompleted && { color: Colors.green },
+            ]}
             numberOfLines={1}
           >
             {goalProgress.percentage}%
           </Text>
           <Text style={st.goalDaysLeft} numberOfLines={1}>
-            {goalProgress.daysLeft > 0 ? `${goalProgress.daysLeft}d left` : "Period ended"}
+            {goalProgress.daysLeft > 0
+              ? `${goalProgress.daysLeft}d left`
+              : "Period ended"}
           </Text>
         </View>
       </View>
 
       <ProgressBar
         percentage={goalProgress.percentage}
-        color={goalProgress.isCompleted ? Colors.green : Colors.primary}
+        color={
+          goalProgress.isCompleted ? Colors.green : Colors.primary
+        }
       />
 
-      {/* Group goal — only for group-view roles. A plain member's
-          personal view doesn't include group-wide aggregate numbers. */}
       {isGroupView && (
         <>
           <View style={st.goalDividerLine} />
 
-          <View style={[st.goalHeaderRow, { marginTop: 12, marginBottom: 0 }]}>
+          <View
+            style={[
+              st.goalHeaderRow,
+              { marginTop: 12, marginBottom: 0 },
+            ]}
+          >
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={st.goalLabel} numberOfLines={1}>
                 {goalProgress.groupPercentage >= 100
@@ -1004,7 +1169,9 @@ function GoalCard({
                 style={[
                   st.goalPercentage,
                   { fontSize: 16 },
-                  goalProgress.groupPercentage >= 100 && { color: Colors.green },
+                  goalProgress.groupPercentage >= 100 && {
+                    color: Colors.green,
+                  },
                 ]}
                 numberOfLines={1}
               >
@@ -1015,7 +1182,11 @@ function GoalCard({
 
           <ProgressBar
             percentage={goalProgress.groupPercentage}
-            color={goalProgress.groupPercentage >= 100 ? Colors.green : Colors.accent}
+            color={
+              goalProgress.groupPercentage >= 100
+                ? Colors.green
+                : Colors.accent
+            }
           />
         </>
       )}
@@ -1023,14 +1194,19 @@ function GoalCard({
       <View style={st.goalStatsRow}>
         <GoalStat
           label="Target"
-          value={fmtCurrency(isGroupView ? goalProgress.groupTarget : goalProgress.target)}
+          value={fmtCurrency(
+            isGroupView ? goalProgress.groupTarget : goalProgress.target
+          )}
         />
         <GoalStat
           label="Remaining"
           value={fmtCurrency(goalProgress.remaining)}
           dimWhenComplete={goalProgress.isCompleted}
         />
-        <GoalStat label="Min Contribution" value={fmtCurrency(minimumContribution)} />
+        <GoalStat
+          label="Min Contribution"
+          value={fmtCurrency(minimumContribution)}
+        />
       </View>
     </View>
   );
@@ -1051,11 +1227,23 @@ function useGoalProgressType() {
   } | null;
 }
 
-function ProgressBar({ percentage, color }: { percentage: number; color: string }) {
+function ProgressBar({
+  percentage,
+  color,
+}: {
+  percentage: number;
+  color: string;
+}) {
   return (
     <View style={st.progressBarContainer}>
       <View
-        style={[st.progressBar, { width: `${Math.min(100, percentage)}%`, backgroundColor: color }]}
+        style={[
+          st.progressBar,
+          {
+            width: `${Math.min(100, percentage)}%`,
+            backgroundColor: color,
+          },
+        ]}
       />
     </View>
   );
@@ -1081,7 +1269,10 @@ function GoalStat({
         {label}
       </Text>
       <Text
-        style={[st.goalStatValue, dimWhenComplete && { color: Colors.bgWhite }]}
+        style={[
+          st.goalStatValue,
+          dimWhenComplete && { color: Colors.bgWhite },
+        ]}
         numberOfLines={1}
         adjustsFontSizeToFit
         minimumFontScale={0.75}
@@ -1114,7 +1305,12 @@ function GoalProgressList({
   }[];
 }) {
   if (!goalPeriod) {
-    return <EmptyState icon="🎯" text="No contribution goal is set up for this group" />;
+    return (
+      <EmptyState
+        icon="🎯"
+        text="No contribution goal is set up for this group"
+      />
+    );
   }
 
   if (rows.length === 0) {
@@ -1133,16 +1329,31 @@ function GoalProgressList({
                 </Text>
                 <Text style={st.txMeta} numberOfLines={1}>
                   {fmtCurrency(row.paid)} paid · {row.percentage}% of goal
-                  {row.lateFees > 0 ? ` · ${fmtCurrency(row.lateFees)} late fees` : ""}
+                  {row.lateFees > 0
+                    ? ` · ${fmtCurrency(row.lateFees)} late fees`
+                    : ""}
                 </Text>
               </View>
 
-              <View style={{ alignItems: "flex-end", flexShrink: 0, marginLeft: 8 }}>
+              <View
+                style={{
+                  alignItems: "flex-end",
+                  flexShrink: 0,
+                  marginLeft: 8,
+                }}
+              >
                 <Text
-                  style={[st.txAmount, { color: row.isCompleted ? C.success : C.accent }]}
+                  style={[
+                    st.txAmount,
+                    {
+                      color: row.isCompleted ? C.success : C.accent,
+                    },
+                  ]}
                   numberOfLines={1}
                 >
-                  {row.isCompleted ? "Done" : fmtCurrency(row.remaining)}
+                  {row.isCompleted
+                    ? "Done"
+                    : fmtCurrency(row.remaining)}
                 </Text>
                 {!row.isCompleted && (
                   <Text style={st.remainingLabel}>remaining</Text>
@@ -1161,40 +1372,101 @@ function GoalProgressList({
     <View style={st.table}>
       <View style={[st.tableRow, st.tableHeadRow]}>
         <Text style={[st.tableHeadCell, { flex: 2 }]}>MEMBER</Text>
-        <Text style={[st.tableHeadCell, { width: 130, textAlign: "right" }]}>PAID</Text>
-        <Text style={[st.tableHeadCell, { width: 130, textAlign: "right" }]}>REMAINING</Text>
-        <Text style={[st.tableHeadCell, { width: 90, textAlign: "right" }]}>PROGRESS</Text>
-        <Text style={[st.tableHeadCell, { width: 110, textAlign: "right" }]}>LATE FEES</Text>
-        <Text style={[st.tableHeadCell, { width: 90, textAlign: "center" }]}>STATUS</Text>
+        <Text
+          style={[
+            st.tableHeadCell,
+            { width: 130, textAlign: "right" },
+          ]}
+        >
+          PAID
+        </Text>
+        <Text
+          style={[
+            st.tableHeadCell,
+            { width: 130, textAlign: "right" },
+          ]}
+        >
+          REMAINING
+        </Text>
+        <Text
+          style={[
+            st.tableHeadCell,
+            { width: 90, textAlign: "right" },
+          ]}
+        >
+          PROGRESS
+        </Text>
+        <Text
+          style={[
+            st.tableHeadCell,
+            { width: 110, textAlign: "right" },
+          ]}
+        >
+          LATE FEES
+        </Text>
+        <Text
+          style={[
+            st.tableHeadCell,
+            { width: 90, textAlign: "center" },
+          ]}
+        >
+          STATUS
+        </Text>
       </View>
 
       {rows.map((row) => (
         <View key={row.memberId} style={[st.tableRow, st.tableRowBordered]}>
-          <Text style={[st.tableCell, { flex: 2 }]} numberOfLines={1}>
+          <Text
+            style={[st.tableCell, { flex: 2 }]}
+            numberOfLines={1}
+          >
             {row.memberName}
           </Text>
 
-          <Text style={[st.tableCell, st.tableCellPaid]}>{fmtCurrency(row.paid)}</Text>
+          <Text style={[st.tableCell, st.tableCellPaid]}>
+            {fmtCurrency(row.paid)}
+          </Text>
 
-          <Text style={[st.tableCell, { width: 130, textAlign: "right" }]}>
+          <Text
+            style={[
+              st.tableCell,
+              { width: 130, textAlign: "right" },
+            ]}
+          >
             {row.isCompleted ? "—" : fmtCurrency(row.remaining)}
           </Text>
 
-          <Text style={[st.tableCell, { width: 90, textAlign: "right", fontWeight: "600" }]}>
+          <Text
+            style={[
+              st.tableCell,
+              {
+                width: 90,
+                textAlign: "right",
+                fontWeight: "600",
+              },
+            ]}
+          >
             {row.percentage}%
           </Text>
 
           <Text
             style={[
               st.tableCell,
-              { width: 110, textAlign: "right", color: row.lateFees > 0 ? C.gold : C.text3 },
+              {
+                width: 110,
+                textAlign: "right",
+                color: row.lateFees > 0 ? C.gold : C.text3,
+              },
             ]}
           >
             {row.lateFees > 0 ? fmtCurrency(row.lateFees) : "—"}
           </Text>
 
           <View style={{ width: 90, alignItems: "center" }}>
-            <Badge label={row.isCompleted ? "Done" : "In progress"} color={row.isCompleted ? "green" : "gold"} />
+            <Badge
+              label={row.isCompleted ? "Done" : "In progress"}
+              color={row.isCompleted ? "green" : "gold"}
+            />
           </View>
         </View>
       ))}
@@ -1204,6 +1476,12 @@ function GoalProgressList({
 
 // -----------------------------------------------------------------------------
 // Late fee list
+//
+// Applied fees swap the action row for a single "Clear Fee" button plus
+// a "Waive Period" link. Accrued fees get an optional custom-amount
+// input, a primary "Apply {full amount}" button, and a "Waive period
+// instead" link. Tapping "Custom amount" expands an input below and
+// changes the primary action to apply the custom value instead.
 // -----------------------------------------------------------------------------
 
 function LateFeeList({
@@ -1214,6 +1492,7 @@ function LateFeeList({
   applyingFeeId,
   onApply,
   onClear,
+  onWaive,
 }: {
   items: any[];
   isGroupView: boolean;
@@ -1222,99 +1501,554 @@ function LateFeeList({
   applyingFeeId: string | null;
   onApply: (item: any, customAmount?: number) => void;
   onClear: (item: any) => void;
+  onWaive: (item: any) => void;
 }) {
-  const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
+  const [customAmounts, setCustomAmounts] = useState<
+    Record<string, string>
+  >({});
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   if (items.length === 0) {
     return <EmptyState icon="✓" text="No late fees owed" />;
   }
 
-  return (
-    <View style={st.block}>
-      {items.map((item, index) => {
-        const detail = item.applied
-          ? `${item.periodLabel} · Unpaid late fee`
-          : `${isGroupView ? `${item.periodLabel} · ` : ""}${item.daysNewlyOwed}d @ ${
-              group?.contributionLateFeeRatePct ?? 0
-            }%/day · ${item.daysLate}d late`;
+  const totalOwed = items.reduce(
+    (sum, item) => sum + (item.feeAmount || 0),
+    0
+  );
+  const appliedCount = items.filter((i) => i.applied).length;
+  const accruedCount = items.length - appliedCount;
 
+  return (
+    <View style={st.feeList}>
+      <View style={st.feeSummary}>
+        <View style={st.feeSummaryIcon}>
+          <Text style={{ fontSize: 22 }}>⚠️</Text>
+        </View>
+
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={st.feeSummaryLabel}>Total Owed</Text>
+          <Text
+            style={st.feeSummaryValue}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+          >
+            {fmtCurrency(totalOwed)}
+          </Text>
+        </View>
+
+        <View style={st.feeSummaryCount}>
+          <Text style={st.feeSummaryCountNumber}>{items.length}</Text>
+          <Text style={st.feeSummaryCountLabel}>
+            fee{items.length !== 1 ? "s" : ""}
+          </Text>
+        </View>
+      </View>
+
+      {(appliedCount > 0 || accruedCount > 0) && (
+        <View style={st.feeStatusRow}>
+          {appliedCount > 0 && (
+            <View style={st.feeStatusChipWrap}>
+              <View
+                style={[
+                  st.feeStatusChipDot,
+                  { backgroundColor: C.info },
+                ]}
+              />
+              <Text style={st.feeStatusChipText}>
+                {appliedCount} recorded
+              </Text>
+            </View>
+          )}
+          {accruedCount > 0 && (
+            <View style={st.feeStatusChipWrap}>
+              <View
+                style={[
+                  st.feeStatusChipDot,
+                  { backgroundColor: C.gold },
+                ]}
+              />
+              <Text style={st.feeStatusChipText}>
+                {accruedCount} accruing
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {items.map((item) => {
         const isSaving = applyingFeeId === item.feeTxId;
         const customVal = customAmounts[item.feeTxId] ?? "";
+        const isExpanded = expandedId === item.feeTxId;
+
+        const statusLabel = item.applied ? "RECORDED" : "ACCRUING";
+        const statusColor = item.applied ? C.info : C.gold;
+        const statusBg = item.applied ? C.infoBg : C.goldBg;
+
+        const headline = isGroupView
+          ? item.memberName
+          : item.periodLabel;
+        const subline = isGroupView ? item.periodLabel : null;
+
+        const customNum = customVal.trim() ? Number(customVal) : undefined;
+        const effectiveAmount =
+          customNum != null && Number.isFinite(customNum) && customNum > 0
+            ? customNum
+            : item.feeAmount;
 
         return (
-          <React.Fragment key={item.feeTxId}>
-            <View style={st.lateFeeRow}>
+          <View key={item.feeTxId} style={st.feeCard}>
+            <View style={st.feeCardTop}>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={st.lateFeeMemberName} numberOfLines={1}>
-                  {isGroupView ? item.memberName : item.periodLabel}
-                </Text>
-                <Text style={st.lateFeeDetail} numberOfLines={2}>
-                  {detail}
+                <View style={st.feeCardNameRow}>
+                  <Text style={st.feeMember} numberOfLines={1}>
+                    {headline}
+                  </Text>
+                  <View
+                    style={[
+                      st.feeStatusPill,
+                      { backgroundColor: statusBg },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        st.feeStatusPillText,
+                        { color: statusColor },
+                      ]}
+                    >
+                      {statusLabel}
+                    </Text>
+                  </View>
+                </View>
+
+                {subline && (
+                  <Text style={st.feePeriod} numberOfLines={1}>
+                    {subline}
+                  </Text>
+                )}
+              </View>
+
+              <Text
+                style={st.feeAmount}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
+              >
+                {fmtCurrency(item.feeAmount)}
+              </Text>
+            </View>
+
+            <View style={st.feeDetailStrip}>
+              <View style={st.feeDetailCell}>
+                <Text style={st.feeDetailCellLabel}>Days late</Text>
+                <Text style={st.feeDetailCellValue}>
+                  {item.daysLate ?? 0}
                 </Text>
               </View>
 
-              <View style={st.lateFeeAmountWrap}>
-                <Text style={st.lateFeeAmount}>{fmtCurrency(item.feeAmount)}</Text>
+              <View style={st.feeDetailDivider} />
 
-                {canManageFees && (
-                  item.applied ? (
+              <View style={st.feeDetailCell}>
+                <Text style={st.feeDetailCellLabel}>Newly owed</Text>
+                <Text style={st.feeDetailCellValue}>
+                  {item.daysNewlyOwed ?? 0}
+                </Text>
+              </View>
+
+              <View style={st.feeDetailDivider} />
+
+              <View style={st.feeDetailCell}>
+                <Text style={st.feeDetailCellLabel}>Rate</Text>
+                <Text style={st.feeDetailCellValue}>
+                  {group?.contributionLateFeeRatePct ?? 0}%
+                </Text>
+              </View>
+            </View>
+
+            {canManageFees && (
+              <>
+                {item.applied ? (
+                  <View style={st.feeActionRow}>
                     <TouchableOpacity
-                      style={st.lateFeeApplyBtn}
+                      style={st.feeSecondaryBtn}
+                      onPress={() => onWaive(item)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={st.feeSecondaryBtnText}>
+                        Waive Period
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={st.feeClearBtn}
                       onPress={() => onClear(item)}
                       disabled={isSaving}
                       activeOpacity={0.8}
                     >
-                      <Text style={st.lateFeeApplyBtnText}>
-                        {isSaving ? "Saving…" : "Clear"}
+                      <Text style={st.feeClearBtnText}>
+                        {isSaving ? "Clearing…" : "Clear Fee"}
                       </Text>
                     </TouchableOpacity>
-                  ) : (
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 6,
-                        marginTop: 4,
-                      }}
-                    >
-                      <TextInput
-                        style={st.lateFeeInput}
-                        placeholder={String(item.feeAmount)}
-                        placeholderTextColor={C.text3}
-                        keyboardType="numeric"
-                        value={customVal}
-                        onChangeText={(v) =>
-                          setCustomAmounts((prev) => ({
-                            ...prev,
-                            [item.feeTxId]: v,
-                          }))
-                        }
-                      />
+                  </View>
+                ) : (
+                  <>
+                    <View style={st.feeActionRow}>
                       <TouchableOpacity
-                        style={st.lateFeeApplyBtn}
-                        onPress={() => {
-                          const valStr = customAmounts[item.feeTxId]?.trim();
-                          const customNum = valStr ? Number(valStr) : undefined;
-                          onApply(item, customNum);
-                        }}
+                        style={[
+                          st.feeSecondaryBtn,
+                          isExpanded && st.feeSecondaryBtnActive,
+                        ]}
+                        onPress={() =>
+                          setExpandedId(
+                            isExpanded ? null : item.feeTxId
+                          )
+                        }
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            st.feeSecondaryBtnText,
+                            isExpanded &&
+                              st.feeSecondaryBtnTextActive,
+                          ]}
+                        >
+                          {isExpanded ? "Cancel" : "Custom amount"}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={st.feePrimaryBtn}
+                        onPress={() => onApply(item, customNum)}
                         disabled={isSaving}
                         activeOpacity={0.8}
                       >
-                        <Text style={st.lateFeeApplyBtnText}>
-                          {isSaving ? "Saving…" : "Apply"}
+                        <Text style={st.feePrimaryBtnText}>
+                          {isSaving
+                            ? "Applying…"
+                            : `Apply ${fmtCurrency(effectiveAmount)}`}
                         </Text>
                       </TouchableOpacity>
                     </View>
-                  )
-                )}
-              </View>
-            </View>
 
-            {index < items.length - 1 && <Divider />}
-          </React.Fragment>
+                    <TouchableOpacity
+                      style={st.feeWaiveLink}
+                      onPress={() => onWaive(item)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={st.feeWaiveLinkText}>
+                        Waive period instead
+                      </Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+
+                {!item.applied && isExpanded && (
+                  <View style={st.feeCustomWrap}>
+                    <Text style={st.feeCustomLabel}>
+                      Custom amount
+                    </Text>
+                    <TextInput
+                      style={st.feeCustomInput}
+                      placeholder={String(item.feeAmount)}
+                      placeholderTextColor={C.text3}
+                      keyboardType="numeric"
+                      value={customVal}
+                      onChangeText={(v) =>
+                        setCustomAmounts((prev) => ({
+                          ...prev,
+                          [item.feeTxId]: v,
+                        }))
+                      }
+                    />
+                    <Text style={st.feeCustomHint}>
+                      Leave blank to apply the full{" "}
+                      {fmtCurrency(item.feeAmount)}
+                    </Text>
+                  </View>
+                )}
+              </>
+            )}
+          </View>
         );
       })}
     </View>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Late Fee Waiver Modal
+//
+// Records a per-member exemption that suppresses late fees for a period.
+// Two effects on confirm:
+//
+//   1. A LateFeeExemption is appended to the member's record.
+//      findOverdueContributions / findOverdueInstallments skip any
+//      period that falls inside an exemption, so no new fees accrue
+//      for that window going forward.
+//
+//   2. If the fee the admin clicked on is ALREADY on the ledger, that
+//      specific fee's wallet tx is marked `feePaid: true` so it stops
+//      appearing in the list. Accrued-but-not-yet-applied fees have no
+//      wallet tx, so the exemption alone is enough for those.
+//
+// Existing exemptions for the same member are listed inside the modal
+// with a "Revoke" link so the admin can undo a waiver they added
+// earlier. Revoking does NOT resurrect cleared fees.
+// -----------------------------------------------------------------------------
+
+function LateFeeWaiverModal({
+  visible,
+  onClose,
+  target,
+  member,
+  group,
+  saving,
+  onConfirm,
+  onRemoveExemption,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  target: any;
+  member: Member | null;
+  group: any;
+  saving: boolean;
+  onConfirm: (
+    scope: "contribution" | "loan" | "both",
+    periodStart: string,
+    periodEnd: string,
+    reason: string
+  ) => void;
+  onRemoveExemption: (exemptionId: string) => void;
+}) {
+  const [scope, setScope] = useState<"contribution" | "loan" | "both">(
+    "contribution"
+  );
+  const [periodStart, setPeriodStart] = useState("");
+  const [periodEnd, setPeriodEnd] = useState("");
+  const [reason, setReason] = useState("");
+
+  // Default the period to the calendar month containing the clicked
+  // fee's periodStart.
+  React.useEffect(() => {
+    if (!visible || !target) return;
+
+    const rawPeriodStart =
+      typeof target.periodStart === "string"
+        ? target.periodStart.slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+
+    setScope("contribution");
+    setReason("");
+
+    const start = new Date(rawPeriodStart + "T00:00:00");
+    if (!isNaN(start.getTime())) {
+      const firstOfMonth = new Date(
+        start.getFullYear(),
+        start.getMonth(),
+        1
+      );
+      const lastOfMonth = new Date(
+        start.getFullYear(),
+        start.getMonth() + 1,
+        0
+      );
+      const iso = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+          2,
+          "0"
+        )}-${String(d.getDate()).padStart(2, "0")}`;
+      setPeriodStart(iso(firstOfMonth));
+      setPeriodEnd(iso(lastOfMonth));
+    } else {
+      setPeriodStart(rawPeriodStart);
+      setPeriodEnd(rawPeriodStart);
+    }
+  }, [visible, target?.feeTxId, target?.periodStart]);
+
+  if (!member) return null;
+
+  const existingExemptions: LateFeeExemption[] =
+    (member.lateFeeExemptions ?? []) as LateFeeExemption[];
+
+  return (
+    <BottomModal
+      visible={visible}
+      onClose={onClose}
+      title="Waive Late Fees"
+    >
+      <ScrollView
+        contentContainerStyle={{ padding: 16, paddingBottom: 30 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={st.waiverIntro}>
+          Record a per-member waiver for a period. No late fees of the
+          selected scope will accrue for {member.fullName} between the
+          dates below — including fees on loan installments that fall
+          inside the window if you widen the scope.
+        </Text>
+
+        <View style={st.waiverTargetCard}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={st.waiverTargetLabel}>Member</Text>
+            <Text style={st.waiverTargetName} numberOfLines={1}>
+              {member.fullName}
+            </Text>
+            {target?.periodLabel && (
+              <Text style={st.waiverTargetSub} numberOfLines={1}>
+                Fee period: {target.periodLabel}
+              </Text>
+            )}
+          </View>
+        </View>
+
+        <Text style={st.waiverSectionTitle}>Scope</Text>
+        <Text style={st.waiverSectionHelp}>
+          Pick whether to waive only the fee you clicked, all
+          contribution fees, all loan fees, or both. Loans are included
+          only when you choose "Loans" or "Both".
+        </Text>
+
+        <View style={st.waiverScopeRow}>
+          {[
+            { label: "This Contribution", value: "contribution" as const },
+            { label: "Loans", value: "loan" as const },
+            { label: "Both", value: "both" as const },
+          ].map((opt) => {
+            const active = scope === opt.value;
+            return (
+              <TouchableOpacity
+                key={opt.value}
+                style={[
+                  st.waiverScopeBtn,
+                  active && st.waiverScopeBtnActive,
+                ]}
+                onPress={() => setScope(opt.value)}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    st.waiverScopeBtnText,
+                    active && st.waiverScopeBtnTextActive,
+                  ]}
+                >
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <Text style={[st.waiverSectionTitle, { marginTop: 20 }]}>
+          Period
+        </Text>
+        <Text style={st.waiverSectionHelp}>
+          Defaults to the calendar month of the fee you clicked.
+        </Text>
+
+        <DatePicker
+          label="From Date"
+          value={periodStart}
+          onChange={setPeriodStart}
+          placeholder="YYYY-MM-DD"
+        />
+        <DatePicker
+          label="To Date"
+          value={periodEnd}
+          onChange={setPeriodEnd}
+          placeholder="YYYY-MM-DD"
+        />
+
+        <Text style={[st.waiverSectionTitle, { marginTop: 12 }]}>
+          Reason
+        </Text>
+        <Input
+          value={reason}
+          onChangeText={setReason}
+          placeholder="Optional note (shown on the exemption list)"
+          multiline
+        />
+
+        {existingExemptions.length > 0 && (
+          <View style={{ marginTop: 20 }}>
+            <Text style={st.waiverSectionTitle}>
+              Existing Waivers ({existingExemptions.length})
+            </Text>
+            <Text style={st.waiverSectionHelp}>
+              Revoke a waiver to allow fees to accrue for its period
+              again. Fees already cleared when the waiver was created
+              are not restored.
+            </Text>
+
+            {existingExemptions.map((ex) => (
+              <View key={ex.id} style={st.waiverExistingRow}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text
+                    style={st.waiverExistingTitle}
+                    numberOfLines={1}
+                  >
+                    {ex.scope === "both"
+                      ? "Contributions + Loans"
+                      : ex.scope === "contribution"
+                      ? "Contributions"
+                      : "Loans"}
+                  </Text>
+                  <Text
+                    style={st.waiverExistingPeriod}
+                    numberOfLines={1}
+                  >
+                    {ex.periodStart} → {ex.periodEnd}
+                  </Text>
+                  {ex.reason && (
+                    <Text
+                      style={st.waiverExistingReason}
+                      numberOfLines={2}
+                    >
+                      {ex.reason}
+                    </Text>
+                  )}
+                </View>
+
+                <TouchableOpacity
+                  style={st.waiverRevokeBtn}
+                  onPress={() => onRemoveExemption(ex.id)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={st.waiverRevokeBtnText}>Revoke</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        )}
+
+        <View style={st.waiverButtonRow}>
+          <TouchableOpacity
+            style={st.waiverCancelBtn}
+            onPress={onClose}
+            disabled={saving}
+            activeOpacity={0.8}
+          >
+            <Text style={st.waiverCancelBtnText}>Cancel</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              st.waiverSaveBtn,
+              saving && { opacity: 0.6 },
+            ]}
+            onPress={() =>
+              onConfirm(scope, periodStart, periodEnd, reason)
+            }
+            disabled={saving}
+            activeOpacity={0.8}
+          >
+            <Text style={st.waiverSaveBtnText}>
+              {saving ? "Saving…" : "Save Waiver"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    </BottomModal>
   );
 }
 
@@ -1345,9 +2079,18 @@ function ContributionTable({
         <View style={{ width: 40 }} />
         <Text style={[st.tableHeadCell, { flex: 2 }]}>DESCRIPTION</Text>
         <Text style={[st.tableHeadCell, { width: 160 }]}>TYPE</Text>
-        {isGroupView && <Text style={[st.tableHeadCell, { width: 150 }]}>MEMBER</Text>}
+        {isGroupView && (
+          <Text style={[st.tableHeadCell, { width: 150 }]}>MEMBER</Text>
+        )}
         <Text style={[st.tableHeadCell, { width: 120 }]}>DATE</Text>
-        <Text style={[st.tableHeadCell, { width: 120, textAlign: "right" }]}>AMOUNT</Text>
+        <Text
+          style={[
+            st.tableHeadCell,
+            { width: 120, textAlign: "right" },
+          ]}
+        >
+          AMOUNT
+        </Text>
         {canApprove && <View style={{ width: 100 }} />}
         {canEdit && <View style={{ width: 50 }} />}
       </View>
@@ -1387,44 +2130,78 @@ const TableRow = ({
 }) => {
   const allMembers = useGroupMembers();
   const memberName =
-    allMembers.find((m) => m.id === contribution.memberId)?.fullName ?? "Unknown";
+    allMembers.find((m) => m.id === contribution.memberId)?.fullName ??
+    "Unknown";
 
   const { icon, bg, color } = statusBadge(contribution.status);
-  const showApproveReject = canApprove && contribution.status === "pending";
+  const showApproveReject =
+    canApprove && contribution.status === "pending";
 
   return (
     <View style={[st.tableRow, st.tableRowBordered]}>
       <View style={[st.tableCell, { width: 40 }]}>
         <View style={[st.txIconSm, { backgroundColor: bg }]}>
-          <Text style={{ fontSize: 9, fontWeight: "800", color }}>{icon}</Text>
+          <Text style={{ fontSize: 9, fontWeight: "800", color }}>
+            {icon}
+          </Text>
         </View>
       </View>
 
       <Text style={[st.tableCell, { flex: 2 }]} numberOfLines={1}>
-        {contribution.description || typeLabel(contribution.contributionType)}
+        {contribution.description ||
+          typeLabel(contribution.contributionType)}
       </Text>
 
-      <Text style={[st.tableCell, { width: 160 }]}>{typeLabel(contribution.contributionType)}</Text>
+      <Text style={[st.tableCell, { width: 160 }]}>
+        {typeLabel(contribution.contributionType)}
+      </Text>
 
-      {showMember && <Text style={[st.tableCell, { width: 150 }]}>{memberName}</Text>}
+      {showMember && (
+        <Text style={[st.tableCell, { width: 150 }]}>
+          {memberName}
+        </Text>
+      )}
 
-      <Text style={[st.tableCell, { width: 120 }]}>{fmtDate(contribution.date)}</Text>
+      <Text style={[st.tableCell, { width: 120 }]}>
+        {fmtDate(contribution.date)}
+      </Text>
 
-      <Text style={[st.tableCell, st.tableCellAmount]}>{fmtCurrency(contribution.amount)}</Text>
+      <Text style={[st.tableCell, st.tableCellAmount]}>
+        {fmtCurrency(contribution.amount)}
+      </Text>
 
       {showApproveReject && (
-        <View style={[st.tableCell, { width: 100, alignItems: "center", flexDirection: "row", gap: 4, justifyContent: "center" }]}>
-          <TouchableOpacity onPress={onApprove} style={st.tableApproveBtn}>
+        <View
+          style={[
+            st.tableCell,
+            {
+              width: 100,
+              alignItems: "center",
+              flexDirection: "row",
+              gap: 4,
+              justifyContent: "center",
+            },
+          ]}
+        >
+          <TouchableOpacity
+            onPress={onApprove}
+            style={st.tableApproveBtn}
+          >
             <Text style={st.tableApproveText}>Approve</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={onReject} style={st.tableRejectBtn}>
+          <TouchableOpacity
+            onPress={onReject}
+            style={st.tableRejectBtn}
+          >
             <Text style={st.tableRejectText}>Reject</Text>
           </TouchableOpacity>
         </View>
       )}
 
       {canEdit && (
-        <View style={[st.tableCell, { width: 50, alignItems: "center" }]}>
+        <View
+          style={[st.tableCell, { width: 50, alignItems: "center" }]}
+        >
           <TouchableOpacity onPress={onEdit}>
             <Text style={st.tableEditText}>Edit</Text>
           </TouchableOpacity>
@@ -1439,8 +2216,10 @@ const TableRow = ({
 // -----------------------------------------------------------------------------
 
 function statusBadge(status: string) {
-  if (status === "approved") return { icon: "✓", bg: C.greenBg, color: C.greenText };
-  if (status === "pending") return { icon: "⏳", bg: C.goldBg, color: C.goldText };
+  if (status === "approved")
+    return { icon: "✓", bg: C.greenBg, color: C.greenText };
+  if (status === "pending")
+    return { icon: "⏳", bg: C.goldBg, color: C.goldText };
   return { icon: "✗", bg: C.redBg, color: C.redText };
 }
 
@@ -1451,9 +2230,16 @@ function ContributionRow({
   canEdit,
   onApprove,
   onReject,
-  onView,
   onEdit,
-}: any) {
+}: {
+  contribution: Contribution;
+  memberName: string;
+  canApprove: boolean;
+  canEdit: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+  onEdit: () => void;
+}) {
   const { icon, bg, color } = statusBadge(contribution.status);
 
   const metaParts = [
@@ -1462,24 +2248,41 @@ function ContributionRow({
     typeLabel(contribution.contributionType),
   ].filter(Boolean);
 
-  const showApproveReject = canApprove && contribution.status === "pending";
+  const showApproveReject =
+    canApprove && contribution.status === "pending";
 
   return (
     <View style={st.txRow}>
       <View style={[st.txIcon, { backgroundColor: bg }]}>
-        <Text style={{ fontSize: 11, fontWeight: "800", color, letterSpacing: 0.3 }}>{icon}</Text>
+        <Text
+          style={{
+            fontSize: 11,
+            fontWeight: "800",
+            color,
+            letterSpacing: 0.3,
+          }}
+        >
+          {icon}
+        </Text>
       </View>
 
       <View style={st.txMid}>
         <Text style={st.txDesc} numberOfLines={1}>
-          {contribution.description || typeLabel(contribution.contributionType)}
+          {contribution.description ||
+            typeLabel(contribution.contributionType)}
         </Text>
         <Text style={st.txMeta} numberOfLines={1}>
           {metaParts.join(" · ")}
         </Text>
       </View>
 
-      <View style={{ alignItems: "flex-end", flexShrink: 0, marginLeft: 8 }}>
+      <View
+        style={{
+          alignItems: "flex-end",
+          flexShrink: 0,
+          marginLeft: 8,
+        }}
+      >
         <Text
           style={[st.txAmount, { color: C.accent }]}
           numberOfLines={1}
@@ -1490,21 +2293,32 @@ function ContributionRow({
         </Text>
 
         {(showApproveReject || canEdit) && (
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 3 }}>
+          <View
+            style={{ flexDirection: "row", gap: 8, marginTop: 3 }}
+          >
             {showApproveReject && (
               <>
-                <TouchableOpacity onPress={onApprove} style={st.rowApproveBtn}>
+                <TouchableOpacity
+                  onPress={onApprove}
+                  style={st.rowApproveBtn}
+                >
                   <Text style={st.rowApproveText}>Approve</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={onReject} style={st.rowRejectBtn}>
+                <TouchableOpacity
+                  onPress={onReject}
+                  style={st.rowRejectBtn}
+                >
                   <Text style={st.rowRejectText}>Reject</Text>
                 </TouchableOpacity>
               </>
             )}
 
             {canEdit && (
-              <TouchableOpacity onPress={onEdit} style={st.rowEditBtn}>
+              <TouchableOpacity
+                onPress={onEdit}
+                style={st.rowEditBtn}
+              >
                 <Text style={st.rowEditText}>Edit</Text>
               </TouchableOpacity>
             )}
@@ -1544,7 +2358,11 @@ const Pagination = ({
         onPress={() => !isFirst && setPage(page - 1)}
         disabled={isFirst}
       >
-        <Text style={[st.pageBtnText, isFirst && { color: C.text3 }]}>← Prev</Text>
+        <Text
+          style={[st.pageBtnText, isFirst && { color: C.text3 }]}
+        >
+          ← Prev
+        </Text>
       </TouchableOpacity>
 
       <Text style={st.pageInfo}>
@@ -1556,7 +2374,9 @@ const Pagination = ({
         onPress={() => !isLast && setPage(page + 1)}
         disabled={isLast}
       >
-        <Text style={[st.pageBtnText, isLast && { color: C.text3 }]}>Next →</Text>
+        <Text style={[st.pageBtnText, isLast && { color: C.text3 }]}>
+          Next →
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -1625,7 +2445,11 @@ const st = StyleSheet.create({
     backgroundColor: "rgba(26,86,219,0.15)",
   },
 
-  balanceCurrency: { fontSize: 14, fontWeight: "600", color: "rgba(255,255,255,0.45)" },
+  balanceCurrency: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.45)",
+  },
 
   goalCard: {
     margin: 16,
@@ -1643,7 +2467,11 @@ const st = StyleSheet.create({
     marginBottom: 12,
   },
 
-  goalHeaderRight: { alignItems: "flex-end", flexShrink: 0, marginLeft: 8 },
+  goalHeaderRight: {
+    alignItems: "flex-end",
+    flexShrink: 0,
+    marginLeft: 8,
+  },
 
   goalLabel: {
     fontSize: 10,
@@ -1653,9 +2481,19 @@ const st = StyleSheet.create({
     textTransform: "uppercase",
   },
 
-  goalAmount: { fontSize: 24, fontWeight: "800", color: "#fff", letterSpacing: -1, marginTop: 4 },
+  goalAmount: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#fff",
+    letterSpacing: -1,
+    marginTop: 4,
+  },
 
-  goalPercentage: { fontSize: 20, fontWeight: "800", color: C.primary },
+  goalPercentage: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: C.primary,
+  },
 
   goalDaysLeft: {
     fontSize: 10,
@@ -1706,7 +2544,12 @@ const st = StyleSheet.create({
     flexWrap: "wrap",
   },
 
-  viewModeRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  viewModeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
 
   viewModeBtn: {
     flex: 1,
@@ -1719,9 +2562,16 @@ const st = StyleSheet.create({
     alignItems: "center",
   },
 
-  viewModeBtnActive: { backgroundColor: C.primary, borderColor: C.primary },
+  viewModeBtnActive: {
+    backgroundColor: C.primary,
+    borderColor: C.primary,
+  },
 
-  viewModeBtnText: { fontSize: 12, fontWeight: "600", color: C.text3 },
+  viewModeBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: C.text3,
+  },
 
   viewModeBtnTextActive: { color: "#fff" },
 
@@ -1746,7 +2596,12 @@ const st = StyleSheet.create({
 
   divider: { height: 1, backgroundColor: C.border, marginHorizontal: 16 },
 
-  txRow: { flexDirection: "row", alignItems: "center", padding: 14, gap: 12 },
+  txRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 14,
+    gap: 12,
+  },
 
   txIcon: {
     width: 38,
@@ -1759,7 +2614,12 @@ const st = StyleSheet.create({
 
   txMid: { flex: 1, minWidth: 0 },
 
-  txDesc: { fontSize: 13, fontWeight: "600", color: C.text, marginBottom: 2 },
+  txDesc: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: C.text,
+    marginBottom: 2,
+  },
 
   txMeta: { fontSize: 11, color: C.text3 },
 
@@ -1805,7 +2665,12 @@ const st = StyleSheet.create({
     overflow: "hidden",
   },
 
-  tableRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12, paddingHorizontal: 12 },
+  tableRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
 
   tableRowBordered: { borderBottomWidth: 1, borderBottomColor: C.border },
 
@@ -1817,9 +2682,19 @@ const st = StyleSheet.create({
 
   tableCell: { fontSize: 12, color: C.text2, paddingHorizontal: 6 },
 
-  tableCellPaid: { width: 130, textAlign: "right", fontWeight: "700", color: C.accent },
+  tableCellPaid: {
+    width: 130,
+    textAlign: "right",
+    fontWeight: "700",
+    color: C.accent,
+  },
 
-  tableCellAmount: { width: 120, textAlign: "right", fontWeight: "700", color: C.accent },
+  tableCellAmount: {
+    width: 120,
+    textAlign: "right",
+    fontWeight: "700",
+    color: C.accent,
+  },
 
   tableApproveBtn: {
     backgroundColor: C.greenBg,
@@ -1829,7 +2704,11 @@ const st = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 4,
   },
-  tableApproveText: { fontSize: 11, color: C.success, fontWeight: "600" },
+  tableApproveText: {
+    fontSize: 11,
+    color: C.success,
+    fontWeight: "600",
+  },
 
   tableRejectBtn: {
     backgroundColor: C.redBg,
@@ -1889,45 +2768,414 @@ const st = StyleSheet.create({
 
   pageInfo: { fontSize: 12, color: C.text3 },
 
-  lateFeeRow: {
+  // Late fee list
+  feeList: {
+    marginHorizontal: 16,
+    gap: 12,
+  },
+
+  feeSummary: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#fee2e2",
-  },
-
-  lateFeeMemberName: { fontSize: 13, fontWeight: "600", color: C.text },
-
-  lateFeeDetail: { fontSize: 11, color: C.text3, marginTop: 2 },
-
-  lateFeeApplyBtn: {
-    backgroundColor: "#fef2f2",
+    gap: 14,
+    backgroundColor: "#FEF2F2",
     borderWidth: 1,
-    borderColor: "#fca5a5",
-    borderRadius: 8,
+    borderColor: "#FCA5A5",
+    borderRadius: 14,
+    padding: 16,
+  },
+  feeSummaryIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: "#FEE2E2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  feeSummaryLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#9A3412",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  feeSummaryValue: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#991B1B",
+    letterSpacing: -0.5,
+    marginTop: 2,
+  },
+  feeSummaryCount: {
+    alignItems: "center",
     paddingHorizontal: 12,
-    paddingVertical: 7,
-    marginLeft: 6,
+    paddingVertical: 6,
+    backgroundColor: "#FEE2E2",
+    borderRadius: 10,
+    minWidth: 56,
+  },
+  feeSummaryCountNumber: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#991B1B",
+    lineHeight: 22,
+  },
+  feeSummaryCountLabel: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#9A3412",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
 
-  lateFeeApplyBtnText: { fontSize: 12, fontWeight: "700", color: "#b91c1c" },
+  feeStatusRow: {
+    flexDirection: "row",
+    gap: 16,
+    paddingHorizontal: 4,
+  },
+  feeStatusChipWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  feeStatusChipDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  feeStatusChipText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: C.text2,
+  },
 
-  lateFeeInput: {
-    height: 32,
-    width: 80,
+  feeCard: {
     backgroundColor: C.surface,
     borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    fontSize: 12,
-    color: C.text,
-    textAlign: "right",
+    borderRadius: 14,
+    padding: 14,
+    gap: 12,
   },
 
-  lateFeeAmountWrap: { alignItems: "flex-end", marginLeft: 10 },
+  feeCardTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  feeCardNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 2,
+  },
+  feeMember: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: C.text,
+    flexShrink: 1,
+  },
+  feeStatusPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    flexShrink: 0,
+  },
+  feeStatusPillText: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  feePeriod: {
+    fontSize: 12,
+    color: C.text3,
+    marginTop: 2,
+  },
+  feeAmount: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#991B1B",
+    flexShrink: 0,
+    letterSpacing: -0.3,
+  },
 
-  lateFeeAmount: { fontSize: 13, fontWeight: "800", color: "#b91c1c", marginBottom: 5 },
+  feeDetailStrip: {
+    flexDirection: "row",
+    backgroundColor: C.elevated,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+  },
+  feeDetailCell: {
+    flex: 1,
+    alignItems: "center",
+    minWidth: 0,
+  },
+  feeDetailDivider: {
+    width: 1,
+    backgroundColor: C.border,
+    marginVertical: 2,
+  },
+  feeDetailCellLabel: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginBottom: 3,
+  },
+  feeDetailCellValue: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: C.text,
+  },
+
+  feeActionRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  feeSecondaryBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.elevated,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  feeSecondaryBtnActive: {
+    backgroundColor: C.pill,
+    borderColor: C.primary,
+  },
+  feeSecondaryBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text2,
+  },
+  feeSecondaryBtnTextActive: {
+    color: C.primary,
+  },
+  feePrimaryBtn: {
+    flex: 1.4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: "#DC2626",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  feePrimaryBtnText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#fff",
+  },
+
+  feeClearBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.elevated,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  feeClearBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text,
+  },
+
+  feeWaiveLink: {
+    alignSelf: "center",
+    paddingVertical: 6,
+  },
+  feeWaiveLinkText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.text3,
+    textDecorationLine: "underline",
+  },
+
+  feeCustomWrap: {
+    paddingTop: 4,
+    paddingBottom: 2,
+    borderTopWidth: 1,
+    borderTopColor: C.borderLight,
+    gap: 6,
+  },
+  feeCustomLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginTop: 6,
+  },
+  feeCustomInput: {
+    height: 40,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: C.text,
+    fontWeight: "600",
+  },
+  feeCustomHint: {
+    fontSize: 10,
+    color: C.text3,
+    fontStyle: "italic",
+  },
+
+  // Waiver modal
+  waiverIntro: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: C.text3,
+    marginBottom: 14,
+  },
+  waiverTargetCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.border,
+    marginBottom: 20,
+  },
+  waiverTargetLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  waiverTargetName: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: C.text,
+    marginTop: 2,
+  },
+  waiverTargetSub: {
+    fontSize: 11,
+    color: C.text3,
+    marginTop: 2,
+  },
+  waiverSectionTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: C.text,
+    marginBottom: 4,
+  },
+  waiverSectionHelp: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: C.text3,
+    marginBottom: 10,
+  },
+  waiverScopeRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  waiverScopeBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.surface,
+    alignItems: "center",
+  },
+  waiverScopeBtnActive: {
+    backgroundColor: C.primary,
+    borderColor: C.primary,
+  },
+  waiverScopeBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.text2,
+    textAlign: "center",
+  },
+  waiverScopeBtnTextActive: {
+    color: "#fff",
+  },
+  waiverExistingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    marginBottom: 8,
+  },
+  waiverExistingTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text,
+  },
+  waiverExistingPeriod: {
+    fontSize: 11,
+    color: C.text3,
+    marginTop: 2,
+  },
+  waiverExistingReason: {
+    fontSize: 11,
+    color: C.text2,
+    marginTop: 2,
+    fontStyle: "italic",
+  },
+  waiverRevokeBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    backgroundColor: C.redBg,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.25)",
+  },
+  waiverRevokeBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.error,
+  },
+  waiverButtonRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 20,
+  },
+  waiverCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.surface,
+    alignItems: "center",
+  },
+  waiverCancelBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: C.text2,
+  },
+  waiverSaveBtn: {
+    flex: 2,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: C.primary,
+    alignItems: "center",
+  },
+  waiverSaveBtnText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#fff",
+  },
 });
