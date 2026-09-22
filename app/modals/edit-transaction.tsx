@@ -234,14 +234,18 @@ export default function EditTransactionModal() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
+      {/* ── Header ─────────────────────────────────────────────────── */}
       <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={10}>
           <Text style={s.headerCancel}>Cancel</Text>
         </TouchableOpacity>
+
         <Text style={s.headerTitle}>Edit Transaction</Text>
+
         <TouchableOpacity
           onPress={handleSave}
           disabled={!canSave || !hasChanges || saving}
+          hitSlop={10}
         >
           <Text
             style={[
@@ -254,86 +258,104 @@ export default function EditTransactionModal() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={s.body}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── Summary: what you're editing ──────────────────────────── */}
+        <View style={s.summaryBox}>
+          <Text style={s.summaryLabel}>Original Record</Text>
+          <Text style={s.summaryValue}>
+            {wasCredit ? "+" : "−"}
+            {fmtCurrency(originalAmount)} · {TX_LABEL[tx.type] ?? tx.type}
+          </Text>
+          <Text style={s.summaryDate}>
+            {(tx.date ?? "").slice(0, 10)}
+          </Text>
+        </View>
+
+        {/* ── Compact linked-record notice ──────────────────────────── */}
         {isLinked && (
-          <View style={s.noticeBox}>
-            <Text style={s.noticeText}>
-              This transaction is linked to a{" "}
-              {tx.loanId ? "loan" : tx.contributionId ? "contribution" : tx.investmentId ? "investment" : "record"}.
-              Only the description, amount, and date can be edited here — the
-              transaction type and linked record stay the same.
+          <View style={s.noticeBanner}>
+            <Text style={s.noticeBannerIcon}>🔗</Text>
+            <Text style={s.noticeBannerText} numberOfLines={3}>
+              Linked to a{" "}
+              {tx.loanId
+                ? "loan"
+                : tx.contributionId
+                ? "contribution"
+                : tx.investmentId
+                ? "investment"
+                : "record"}
+              . Editing date or amount also updates that record.
+              {tx.loanId && tx.type === "loan_disbursement"
+                ? " Reducing-balance loans will re-accrue interest from the new date."
+                : ""}
             </Text>
-            <Text style={s.noticeText}>
-              {"\n"}Editing the date or amount will also update the linked{" "}
-              {tx.loanId ? "loan" : tx.contributionId ? "contribution" : tx.investmentId ? "investment" : "record"}
-              {" "}to keep data synchronized.
-            </Text>
-            {tx.loanId && tx.type === "loan_disbursement" && (
-              <Text style={s.noticeText}>
-                {"\n"}For reducing-balance loans, editing the date will also recalculate accrued interest.
-              </Text>
-            )}
           </View>
         )}
 
-        <View style={s.field}>
-          <Text style={s.label}>Description</Text>
-          <TextInput
-            style={s.input}
-            value={description}
-            onChangeText={setDescription}
-            placeholder="Transaction description"
-            placeholderTextColor={C.text3}
-          />
-        </View>
+        {/* ── Fields ────────────────────────────────────────────────── */}
+        <Text style={s.sectionLbl}>Description</Text>
+        <TextInput
+          style={s.input}
+          value={description}
+          onChangeText={setDescription}
+          placeholder="Transaction description"
+          placeholderTextColor={C.text3}
+        />
 
-        <View style={s.field}>
-          <Text style={s.label}>Amount ({wasCredit ? "credit" : "debit"})</Text>
-          <TextInput
-            style={s.input}
-            value={amountStr}
-            onChangeText={setAmountStr}
-            placeholder="0.00"
-            placeholderTextColor={C.text3}
-            keyboardType={Platform.OS === "web" ? "default" : "decimal-pad"}
-          />
-          {!amountValid && amountStr.length > 0 && (
-            <Text style={s.errorText}>Enter a valid positive amount</Text>
-          )}
-        </View>
+        <Text style={s.sectionLbl}>
+          Amount ({wasCredit ? "credit" : "debit"})
+        </Text>
+        <TextInput
+          style={s.input}
+          value={amountStr}
+          onChangeText={setAmountStr}
+          placeholder="0.00"
+          placeholderTextColor={C.text3}
+          keyboardType={Platform.OS === "web" ? "default" : "decimal-pad"}
+        />
+        {!amountValid && amountStr.length > 0 && (
+          <Text style={s.errorText}>Enter a valid positive amount</Text>
+        )}
 
-        <View style={s.field}>
-          <Text style={s.label}>Date</Text>
-          <DatePicker
-            label=""
-            value={date}
-            onChange={setDate}
-            placeholder="YYYY-MM-DD"
-          />
-        </View>
+        <Text style={s.sectionLbl}>Date</Text>
+        <DatePicker
+          label=""
+          value={date}
+          onChange={setDate}
+          placeholder="YYYY-MM-DD"
+        />
 
-        {/* Show accrued interest projection for loan disbursements */}
-        {linkedLoan && linkedLoan.interestMethod === "reducing_balance" && accruedInterestProjection && (
-          <View style={s.accruedInterestBox}>
-            <Text style={s.accruedInterestLabel}>Projected Accrued Interest</Text>
-            <Text style={s.accruedInterestValue}>
-              {fmtCurrency(accruedInterestProjection.total)} 
+        {linkedLoan &&
+          linkedLoan.interestMethod === "reducing_balance" &&
+          accruedInterestProjection && (
+            <View style={s.accruedInterestBox}>
+              <Text style={s.accruedInterestLabel}>
+                Projected Accrued Interest
+              </Text>
+              <Text style={s.accruedInterestValue}>
+                {fmtCurrency(accruedInterestProjection.total)}
+              </Text>
               <Text style={s.accruedInterestSub}>
-                ({accruedInterestProjection.days} days · +{fmtCurrency(accruedInterestProjection.accrued)})
+                {accruedInterestProjection.days} days · +
+                {fmtCurrency(accruedInterestProjection.accrued)} new
               </Text>
-            </Text>
-          </View>
-        )}
+            </View>
+          )}
 
         {!isLinked && (
-          <View style={s.field}>
-            <Text style={s.label}>Type</Text>
+          <>
+            <Text style={s.sectionLbl}>Type</Text>
             <View style={s.typeRow}>
               {MANUAL_TYPES.map((t) => (
                 <TouchableOpacity
                   key={t}
                   style={[s.typeChip, txType === t && s.typeChipActive]}
                   onPress={() => setTxType(t)}
+                  activeOpacity={0.7}
                 >
                   <Text
                     style={[
@@ -346,17 +368,25 @@ export default function EditTransactionModal() {
                 </TouchableOpacity>
               ))}
             </View>
-          </View>
+          </>
         )}
 
-        <View style={s.summaryBox}>
-          <Text style={s.summaryLabel}>Original</Text>
-          <Text style={s.summaryValue}>
-            {wasCredit ? "+" : "−"}
-            {fmtCurrency(originalAmount)} · {TX_LABEL[tx.type] ?? tx.type} ·{" "}
-            {(tx.date ?? "").slice(0, 10)}
+        {/* ── Bottom save (thumb reach) ─────────────────────────────── */}
+        <TouchableOpacity
+          style={[
+            s.saveBtn,
+            (!canSave || !hasChanges || saving) && s.saveBtnDisabled,
+          ]}
+          onPress={handleSave}
+          disabled={!canSave || !hasChanges || saving}
+          activeOpacity={0.85}
+        >
+          <Text style={s.saveBtnText}>
+            {saving ? "Saving…" : "Save Changes"}
           </Text>
-        </View>
+        </TouchableOpacity>
+
+        <View style={{ height: 20 }} />
       </ScrollView>
 
       <Toast visible={visible} msg={msg} type={type} />
@@ -386,6 +416,7 @@ const s = StyleSheet.create({
   },
   secondaryBtnText: { fontSize: 14, fontWeight: "600", color: C.text },
 
+  // ── Header ──
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -402,42 +433,86 @@ const s = StyleSheet.create({
   headerSave: { fontSize: 14, color: C.primary, fontWeight: "700" },
   headerSaveDisabled: { color: C.text3 },
 
-  body: { padding: 16, paddingBottom: 60, gap: 4 },
+  body: { padding: 16, paddingBottom: 40 },
 
-  noticeBox: {
-    backgroundColor: C.elevated,
-    borderRadius: 10,
+  // ── Summary ──
+  summaryBox: {
+    backgroundColor: C.surface,
     borderWidth: 1,
     borderColor: C.border,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 14,
+  },
+  summaryLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: C.text3,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  summaryValue: { fontSize: 16, fontWeight: "800", color: C.text },
+  summaryDate: { fontSize: 11, color: C.text3, marginTop: 2 },
+
+  // ── Linked notice ──
+  noticeBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    backgroundColor: C.infoBg,
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.2)",
+    borderRadius: 10,
     padding: 12,
     marginBottom: 14,
   },
-  noticeText: { fontSize: 12, color: C.text2, lineHeight: 17 },
+  noticeBannerIcon: { fontSize: 14, marginTop: 1 },
+  noticeBannerText: {
+    flex: 1,
+    fontSize: 12,
+    color: C.text2,
+    lineHeight: 17,
+  },
 
-  field: { marginBottom: 16 },
-  label: {
-    fontSize: 11,
-    fontWeight: "700",
+  // ── Fields ──
+  sectionLbl: {
+    fontSize: 10,
+    fontWeight: "800",
     color: C.text3,
     textTransform: "uppercase",
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
     marginBottom: 6,
+    marginTop: 4,
   },
   input: {
     borderWidth: 1,
     borderColor: C.border,
     backgroundColor: C.surface,
     borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 14,
     color: C.text,
+    marginBottom: 14,
   },
-  errorText: { fontSize: 11, color: C.error, marginTop: 4 },
+  errorText: {
+    fontSize: 11,
+    color: C.error,
+    marginTop: -10,
+    marginBottom: 12,
+  },
 
-  typeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  // ── Type chips ──
+  typeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 14,
+  },
   typeChip: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 16,
     borderWidth: 1,
@@ -448,8 +523,9 @@ const s = StyleSheet.create({
   typeChipText: { fontSize: 12, fontWeight: "600", color: C.text3 },
   typeChipTextActive: { color: "#fff" },
 
+  // ── Accrued interest ──
   accruedInterestBox: {
-    marginTop: 8,
+    marginBottom: 14,
     padding: 12,
     borderRadius: 10,
     backgroundColor: C.elevated,
@@ -464,24 +540,22 @@ const s = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 5,
   },
-  accruedInterestValue: { fontSize: 14, fontWeight: "700", color: C.gold },
-  accruedInterestSub: { fontSize: 11, fontWeight: "400", color: C.text3 },
+  accruedInterestValue: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: C.gold,
+    marginBottom: 2,
+  },
+  accruedInterestSub: { fontSize: 11, color: C.text3 },
 
-  summaryBox: {
-    marginTop: 8,
-    padding: 12,
-    borderRadius: 10,
-    backgroundColor: C.elevated,
-    borderWidth: 1,
-    borderColor: C.border,
+  // ── Bottom save ──
+  saveBtn: {
+    marginTop: 12,
+    backgroundColor: C.primary,
+    borderRadius: 12,
+    paddingVertical: 15,
+    alignItems: "center",
   },
-  summaryLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: C.text3,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  summaryValue: { fontSize: 12, color: C.text2 },
+  saveBtnDisabled: { opacity: 0.45 },
+  saveBtnText: { color: "#fff", fontSize: 15, fontWeight: "800" },
 });

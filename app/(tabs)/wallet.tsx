@@ -249,8 +249,9 @@ export default function WalletScreen() {
       {/* Top action bar */}
       <View style={[wt.topBar, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
         <View>
-          <Text style={wt.pageSummaryLabel}>{canSeeAll ? "Group Vault & Ledger" : "Personal Transactions"}</Text>
-          <Text style={wt.pageSummaryTitle}>{canSeeAll ? " " : " "}</Text>
+          <Text style={wt.pageSummaryLabel}>
+            {canSeeAll ? "Group Vault & Ledger" : "Personal Transactions"}
+          </Text>
         </View>
         <View style={{ flexDirection: "row", gap: 8 }}>
           {permissions.addContribution && (
@@ -390,33 +391,69 @@ function TxRow({ tx, memberName, isAdmin, canEdit, onDelete, onEdit }: {
 }) {
   const isCredit = tx.amount > 0;
   const abbr = TX_ABBR[tx.type] ?? "TX";
+
   return (
-    <View style={wt.txRow}>
-      <View style={[wt.txIcon, { backgroundColor: isCredit ? C.greenBg : C.redBg }]}>
-        <Text style={{ fontSize: 11, fontWeight: "800", color: isCredit ? C.greenText : C.redText, letterSpacing: 0.3 }}>
+    <View
+      style={[
+        wt.txRow,
+        { borderLeftColor: isCredit ? C.success : C.error },
+      ]}
+    >
+      <View
+        style={[
+          wt.txIcon,
+          { backgroundColor: isCredit ? C.greenBg : C.redBg },
+        ]}
+      >
+        <Text
+          style={{
+            fontSize: 11,
+            fontWeight: "800",
+            color: isCredit ? C.greenText : C.redText,
+            letterSpacing: 0.3,
+          }}
+        >
           {abbr}
         </Text>
       </View>
+
       <View style={wt.txMid}>
-        <Text style={wt.txDesc} numberOfLines={1}>{tx.description}</Text>
-        <Text style={wt.txMeta}>
-          {fmtDate(tx.date)}{memberName ? ` · ${memberName}` : ""} · {TX_LABEL[tx.type] ?? tx.type}
+        <Text style={wt.txDesc} numberOfLines={1}>
+          {tx.description}
+        </Text>
+        <Text style={wt.txMeta} numberOfLines={1}>
+          {fmtDate(tx.date)}
+          {memberName ? ` · ${memberName}` : ""}
+          {" · "}
+          {TX_LABEL[tx.type] ?? tx.type}
         </Text>
       </View>
-      <View style={{ alignItems: "flex-end" }}>
-        <Text style={[wt.txAmount, { color: isCredit ? C.accent : C.debit }]}>
-          {isCredit ? "+" : "−"}{fmtCurrency(Math.abs(tx.amount))}
+
+      <View style={{ alignItems: "flex-end", flexShrink: 0 }}>
+        <Text
+          style={[wt.txAmount, { color: isCredit ? C.success : C.error }]}
+          numberOfLines={1}
+        >
+          {isCredit ? "+" : "−"}
+          {fmtCurrency(Math.abs(tx.amount))}
         </Text>
+
         {(canEdit || isAdmin) && (
-          <View style={{ flexDirection: "row", gap: 10, marginTop: 3 }}>
+          <View style={{ flexDirection: "row", gap: 12, marginTop: 4 }}>
             {canEdit && (
-              <TouchableOpacity onPress={onEdit}>
-                <Text style={{ fontSize: 10, color: C.primary, fontWeight: "600" }}>Edit</Text>
+              <TouchableOpacity
+                onPress={onEdit}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={wt.rowAction}>Edit</Text>
               </TouchableOpacity>
             )}
             {isAdmin && (
-              <TouchableOpacity onPress={onDelete}>
-                <Text style={{ fontSize: 10, color: C.debit, fontWeight: "600" }}>Delete</Text>
+              <TouchableOpacity
+                onPress={onDelete}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={[wt.rowAction, { color: C.debit }]}>Delete</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -476,12 +513,22 @@ const wt = StyleSheet.create({
 
   // Mobile card list
   card: { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, marginHorizontal: 16, overflow: "hidden" },
-  txRow: { flexDirection: "row", alignItems: "center", padding: 14, gap: 12 },
+  txRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+    paddingRight: 14,
+    paddingLeft: 12,
+    gap: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: C.border,
+  },
   txIcon: { width: 38, height: 38, borderRadius: 10, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   txMid: { flex: 1 },
   txDesc: { fontSize: 13, fontWeight: "600", color: C.text, marginBottom: 2 },
   txMeta: { fontSize: 11, color: C.text3 },
   txAmount: { fontSize: 14, fontWeight: "700" },
+  rowAction: { fontSize: 10, color: C.primary, fontWeight: "700" },
 
   // Desktop table
   table: {

@@ -288,7 +288,17 @@ export default function InvestmentsScreen() {
             <View style={ivt.list}>
               {paginated.map((investment, i) => (
                 <React.Fragment key={investment.id}>
-                  <InvestmentRow investment={investment} onPress={() => openDetail(investment)} />
+                  <InvestmentRow
+                    investment={investment}
+                    actionLabel={
+                      isAdmin &&
+                      (investment.status === "pending_committee" ||
+                        investment.status === "pending")
+                        ? "Awaiting your review"
+                        : null
+                    }
+                    onPress={() => openDetail(investment)}
+                  />
                   {i < paginated.length - 1 && <Divider />}
                 </React.Fragment>
               ))}
@@ -320,141 +330,488 @@ export default function InvestmentsScreen() {
       {/* ── Detail modal ── */}
       <BottomModal
         visible={showDetail && !!selected}
-        onClose={() => { setShowDetail(false); setSelected(null); }}
+        onClose={() => {
+          setShowDetail(false);
+          setSelected(null);
+        }}
         title="Investment Details"
       >
-        <ScrollView style={{ maxHeight: 500 }}>
-          {selected && (
-            <View style={{ padding: 4 }}>
-              <View style={{ alignItems: "center", marginBottom: 16 }}>
-                <Text style={ivt.modalMember}>{selected.investmentName}</Text>
-                <Text style={ivt.modalAmount}>{fmtCurrency(selected.investmentAmount)}</Text>
-                <View style={{ marginTop: 8 }}>
-                  <Chip
-                    label={INVESTMENT_STATUS_LABEL[selected.status] || selected.status}
-                    bg={INVESTMENT_STATUS_BG[selected.status] || C.mutedBg}
-                    color={INVESTMENT_STATUS_COLOR[selected.status] || C.text3}
-                  />
-                </View>
-              </View>
+        {selected && (() => {
+          const statusLabel =
+            INVESTMENT_STATUS_LABEL[selected.status] || selected.status;
+          const statusColor =
+            INVESTMENT_STATUS_COLOR[selected.status] || C.text3;
+          const statusBg = INVESTMENT_STATUS_BG[selected.status] || C.mutedBg;
+          const typeKey = selected.investmentType ?? "other";
+          const icon = TYPE_ICON[typeKey] ?? "💼";
+          const typeName = TYPE_LABEL[typeKey] ?? "Investment";
 
-              <View style={ivt.detailGrid}>
-                <View style={ivt.detailCell}>
-                  <Text style={ivt.cellLbl}>Type</Text>
-                  <Text style={ivt.cellVal}>{(selected.investmentType ?? "other").replace("_", " ")}</Text>
-                </View>
-                <View style={ivt.detailCell}>
-                  <Text style={ivt.cellLbl}>Start Date</Text>
-                  <Text style={ivt.cellVal}>{fmtDate(selected.startDate)}</Text>
-                </View>
-                <View style={ivt.detailCell}>
-                  <Text style={ivt.cellLbl}>Expected Return</Text>
-                  <Text style={ivt.cellVal}>{fmtCurrency(selected.expectedReturn || 0)}</Text>
-                </View>
-                {!!selected.expectedReturn && !!selected.investmentAmount && (
-                  <View style={ivt.detailCell}>
-                    <Text style={ivt.cellLbl}>Expected ROI</Text>
-                    <Text style={ivt.cellVal}>
-                      {round2(((selected.expectedReturn - selected.investmentAmount) / selected.investmentAmount) * 100)}%
-                    </Text>
-                  </View>
-                )}
-              </View>
+          const expectedROI =
+            selected.expectedReturn && selected.investmentAmount
+              ? round2(
+                  ((selected.expectedReturn - selected.investmentAmount) /
+                    selected.investmentAmount) *
+                    100,
+                )
+              : null;
 
-              {selected.status === "closed" && selected.returnAmount !== undefined && (
-                <View style={[ivt.detailGrid, { marginTop: 8 }]}>
-                  <View style={ivt.detailCell}>
-                    <Text style={ivt.cellLbl}>Actual Return</Text>
-                    <Text style={ivt.cellVal}>{fmtCurrency(selected.returnAmount)}</Text>
-                  </View>
-                  <View style={ivt.detailCell}>
-                    <Text style={ivt.cellLbl}>Profit/Loss</Text>
-                    <Text style={[ivt.cellVal, { color: (selected.profit ?? 0) >= 0 ? C.success : C.error }]}>
-                      {(selected.profit ?? 0) >= 0 ? "📈" : "📉"} {selected.profit !== undefined ? fmtCurrency(selected.profit) : "—"}
-                    </Text>
-                  </View>
-                  {selected.actualReturn !== undefined && selected.investmentAmount > 0 && (
-                    <View style={ivt.detailCell}>
-                      <Text style={ivt.cellLbl}>Actual ROI</Text>
-                      <Text style={[ivt.cellVal, { color: selected.actualReturn >= 0 ? C.success : C.error }]}>
-                        {selected.actualReturn >= 0 ? "+" : ""}{selected.actualReturn}%
-                      </Text>
-                    </View>
-                  )}
-                  {selected.closedAt && (
-                    <View style={ivt.detailCell}>
-                      <Text style={ivt.cellLbl}>Closed</Text>
-                      <Text style={ivt.cellVal}>{fmtDate(selected.closedAt)}</Text>
-                    </View>
-                  )}
-                </View>
-              )}
+          const profitLoss =
+            selected.returnAmount !== undefined
+              ? round2(selected.returnAmount - selected.investmentAmount)
+              : null;
 
-              {selected.description && (
-                <View style={ivt.commentBox}>
-                  <Text style={ivt.commentLabel}>Description</Text>
-                  <Text style={ivt.commentText}>{selected.description}</Text>
-                </View>
-              )}
+          const canActOnThis =
+            isAdmin &&
+            (selected.status === "pending_committee" ||
+              selected.status === "pending");
 
-              {(selected.representativeName || selected.representativeRole) && (
-                <View style={ivt.commentBox}>
-                  <Text style={ivt.commentLabel}>Representative</Text>
-                  <Text style={ivt.commentText}>
-                    {selected.representativeName}
-                    {selected.representativeRole ? ` (${selected.representativeRole})` : ""}
+          const showPrimaryActions =
+            canActOnThis ||
+            (isAdmin && selected.status === "open");
+
+          return (
+            <ScrollView
+              contentContainerStyle={ivt.modalBody}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* ── Header ─────────────────────────────────── */}
+              <View style={ivt.modalHeader}>
+                <View style={ivt.modalHeaderIcon}>
+                  <Text style={{ fontSize: 22 }}>{icon}</Text>
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={ivt.modalHeaderName} numberOfLines={2}>
+                    {selected.investmentName}
+                  </Text>
+                  <Text style={ivt.modalHeaderMeta} numberOfLines={1}>
+                    {typeName} · {fmtDate(selected.startDate)}
                   </Text>
                 </View>
-              )}
+                <View
+                  style={[
+                    ivt.modalStatusChip,
+                    { backgroundColor: statusBg },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      ivt.modalStatusChipText,
+                      { color: statusColor },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {statusLabel}
+                  </Text>
+                </View>
+              </View>
 
-              {/* ── Actions ── */}
-              <View style={{ marginTop: 16, gap: 8 }}>
-                {isAdmin && selected.status === "pending_committee" && (
-                  <View style={{ flexDirection: "row", gap: 8 }}>
-                    <Button
-                      label="Approve"
-                      onPress={() => { setPendingAction({ investmentId: selected.id, step: "committee", approve: true }); setShowApprovalModal(true); }}
-                      style={{ flex: 1 }}
-                    />
-                    <Button
-                      label="Reject"
-                      variant="danger"
-                      onPress={() => { setPendingAction({ investmentId: selected.id, step: "committee", approve: false }); setShowApprovalModal(true); }}
-                      style={{ flex: 1 }}
-                    />
-                  </View>
-                )}
-                {isAdmin && selected.status === "pending" && (
-                  <View style={{ flexDirection: "row", gap: 8 }}>
-                    <Button
-                      label="Approve & Activate"
-                      onPress={() => { setPendingAction({ investmentId: selected.id, step: "accountant", approve: true }); setShowApprovalModal(true); }}
-                      style={{ flex: 1 }}
-                    />
-                    <Button
-                      label="Reject"
-                      variant="danger"
-                      onPress={() => { setPendingAction({ investmentId: selected.id, step: "accountant", approve: false }); setShowApprovalModal(true); }}
-                      style={{ flex: 1 }}
-                    />
-                  </View>
-                )}
-                {isAdmin && selected.status === "open" && (
-                  <Button
-                    label="Close Investment"
-                    onPress={() => {
-                      setCloseReturnAmount(String(selected.investmentAmount));
-                      setShowCloseModal(true);
-                    }}
-                  />
-                )}
-                {isAdmin && ["open", "pending", "pending_committee", "closed"].includes(selected.status) && (
-                  <Button label="🗑 Delete Investment" variant="danger" onPress={() => handleDelete(selected)} />
+              {/* ── Hero (invested amount) ────────────────── */}
+              <View style={ivt.investmentHero}>
+                <Text style={ivt.heroLabel}>INVESTED</Text>
+                <Text
+                  style={ivt.heroValue}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {fmtCurrency(selected.investmentAmount)}
+                </Text>
+              </View>
+
+              {/* ── Metric strip ──────────────────────────── */}
+              <View style={ivt.metricRow}>
+                <View style={ivt.metricCol}>
+                  <Text style={ivt.metricLbl}>Expected</Text>
+                  <Text
+                    style={[ivt.metricVal, { color: C.success }]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                  >
+                    {fmtCurrency(selected.expectedReturn || 0)}
+                  </Text>
+                  <Text style={ivt.metricSub} numberOfLines={1}>
+                    return
+                  </Text>
+                </View>
+
+                <View style={ivt.metricDiv} />
+
+                <View style={ivt.metricCol}>
+                  <Text style={ivt.metricLbl}>Exp. ROI</Text>
+                  <Text
+                    style={[
+                      ivt.metricVal,
+                      {
+                        color:
+                          (expectedROI ?? 0) >= 0
+                            ? C.success
+                            : C.error,
+                      },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {expectedROI !== null
+                      ? `${expectedROI > 0 ? "+" : ""}${expectedROI}%`
+                      : "—"}
+                  </Text>
+                  <Text style={ivt.metricSub} numberOfLines={1}>
+                    estimate
+                  </Text>
+                </View>
+
+                {selected.status === "closed" &&
+                selected.returnAmount !== undefined ? (
+                  <>
+                    <View style={ivt.metricDiv} />
+                    <View style={ivt.metricCol}>
+                      <Text style={ivt.metricLbl}>Actual</Text>
+                      <Text
+                        style={[
+                          ivt.metricVal,
+                          {
+                            color:
+                              (profitLoss ?? 0) >= 0
+                                ? C.success
+                                : C.error,
+                          },
+                        ]}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.7}
+                      >
+                        {fmtCurrency(selected.returnAmount)}
+                      </Text>
+                      <Text style={ivt.metricSub} numberOfLines={1}>
+                        returned
+                      </Text>
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <View style={ivt.metricDiv} />
+                    <View style={ivt.metricCol}>
+                      <Text style={ivt.metricLbl}>Maturity</Text>
+                      <Text
+                        style={[ivt.metricVal, { color: C.text }]}
+                        numberOfLines={1}
+                      >
+                        {selected.maturityDate
+                          ? fmtDate(selected.maturityDate)
+                          : "—"}
+                      </Text>
+                      <Text style={ivt.metricSub} numberOfLines={1}>
+                        date
+                      </Text>
+                    </View>
+                  </>
                 )}
               </View>
-            </View>
-          )}
-        </ScrollView>
+
+              {/* ── Type-specific info ────────────────────── */}
+              {(selected.upiNumber ||
+                selected.locationAddress ||
+                selected.contactPhone) && (
+                <View style={ivt.infoCard}>
+                  <Text style={ivt.infoCardLbl}>INVESTMENT DETAILS</Text>
+
+                  {selected.upiNumber ? (
+                    <View style={ivt.infoRow}>
+                      <Text style={ivt.infoKey}>
+                        {typeKey === "real_estate"
+                          ? "UPI Number"
+                          : typeKey === "stocks"
+                          ? "Ticker"
+                          : typeKey === "fixed_deposit"
+                          ? "Account No."
+                          : typeKey === "business"
+                          ? "Registration"
+                          : "Reference"}
+                      </Text>
+                      <Text
+                        style={ivt.infoVal}
+                        numberOfLines={1}
+                      >
+                        {selected.upiNumber}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {selected.locationAddress ? (
+                    <View style={ivt.infoRow}>
+                      <Text style={ivt.infoKey}>
+                        {typeKey === "stocks" ? "Exchange" : "Location"}
+                      </Text>
+                      <Text
+                        style={[ivt.infoVal, { flex: 1, textAlign: "right" }]}
+                        numberOfLines={2}
+                      >
+                        {selected.locationAddress}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {selected.contactPhone ? (
+                    <View style={ivt.infoRow}>
+                      <Text style={ivt.infoKey}>Contact</Text>
+                      <Text style={ivt.infoVal} numberOfLines={1}>
+                        {selected.contactPhone}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              )}
+
+              {/* ── Representative ────────────────────────── */}
+              {(selected.representativeName ||
+                selected.representativeRole ||
+                selected.representativeId) && (
+                <View style={ivt.infoCard}>
+                  <Text style={ivt.infoCardLbl}>REPRESENTATIVE</Text>
+
+                  {selected.representativeName ? (
+                    <View style={ivt.infoRow}>
+                      <Text style={ivt.infoKey}>Name</Text>
+                      <Text style={ivt.infoVal}>
+                        {selected.representativeName}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {selected.representativeRole ? (
+                    <View style={ivt.infoRow}>
+                      <Text style={ivt.infoKey}>Role</Text>
+                      <Text style={ivt.infoVal}>
+                        {selected.representativeRole}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {selected.representativeId ? (
+                    <View style={ivt.infoRow}>
+                      <Text style={ivt.infoKey}>ID</Text>
+                      <Text style={ivt.infoVal}>
+                        {selected.representativeId}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              )}
+
+              {/* ── Description ───────────────────────────── */}
+              {selected.description ? (
+                <View style={ivt.infoCard}>
+                  <Text style={ivt.infoCardLbl}>DESCRIPTION</Text>
+                  <Text style={ivt.infoBody}>{selected.description}</Text>
+                </View>
+              ) : null}
+
+              {/* ── Closed investment: P/L summary ────────── */}
+              {selected.status === "closed" &&
+                selected.returnAmount !== undefined && (
+                  <View
+                    style={[
+                      ivt.plCard,
+                      {
+                        backgroundColor:
+                          (profitLoss ?? 0) >= 0
+                            ? C.greenBg
+                            : C.redBg,
+                        borderColor:
+                          (profitLoss ?? 0) >= 0
+                            ? "rgba(16,185,129,0.3)"
+                            : "rgba(239,68,68,0.3)",
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        ivt.plLabel,
+                        {
+                          color:
+                            (profitLoss ?? 0) >= 0
+                              ? C.success
+                              : C.error,
+                        },
+                      ]}
+                    >
+                      {(profitLoss ?? 0) >= 0 ? "📈 PROFIT" : "📉 LOSS"}
+                    </Text>
+                    <Text
+                      style={[
+                        ivt.plValue,
+                        {
+                          color:
+                            (profitLoss ?? 0) >= 0
+                              ? C.success
+                              : C.error,
+                        },
+                      ]}
+                    >
+                      {fmtCurrency(Math.abs(profitLoss ?? 0))}
+                    </Text>
+                    {selected.actualReturn !== undefined ? (
+                      <Text style={ivt.plSub}>
+                        Actual ROI: {selected.actualReturn >= 0 ? "+" : ""}
+                        {selected.actualReturn}%
+                      </Text>
+                    ) : null}
+                    {selected.closedAt ? (
+                      <Text style={ivt.plSub}>
+                        Closed {fmtDate(selected.closedAt)}
+                      </Text>
+                    ) : null}
+                  </View>
+                )}
+
+              {/* ── Primary actions ───────────────────────── */}
+              {showPrimaryActions && (
+                <View style={ivt.primaryActions}>
+                  {isAdmin && selected.status === "pending_committee" && (
+                    <>
+                      <TouchableOpacity
+                        style={ivt.rejectBtn}
+                        onPress={() => {
+                          setPendingAction({
+                            investmentId: selected.id,
+                            step: "committee",
+                            approve: false,
+                          });
+                          setShowApprovalModal(true);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={ivt.rejectBtnText}>Reject</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={ivt.approveBtn}
+                        onPress={() => {
+                          setPendingAction({
+                            investmentId: selected.id,
+                            step: "committee",
+                            approve: true,
+                          });
+                          setShowApprovalModal(true);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={ivt.approveBtnText}>
+                          Forward
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+
+                  {isAdmin && selected.status === "pending" && (
+                    <>
+                      <TouchableOpacity
+                        style={ivt.rejectBtn}
+                        onPress={() => {
+                          setPendingAction({
+                            investmentId: selected.id,
+                            step: "accountant",
+                            approve: false,
+                          });
+                          setShowApprovalModal(true);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={ivt.rejectBtnText}>Reject</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={ivt.approveBtn}
+                        onPress={() => {
+                          setPendingAction({
+                            investmentId: selected.id,
+                            step: "accountant",
+                            approve: true,
+                          });
+                          setShowApprovalModal(true);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={ivt.approveBtnText}>
+                          Approve & Activate
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+
+                  {isAdmin && selected.status === "open" && (
+                    <TouchableOpacity
+                      style={ivt.closeBtn}
+                      onPress={() => {
+                        setCloseReturnAmount(
+                          String(selected.investmentAmount),
+                        );
+                        setShowCloseModal(true);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={ivt.closeBtnText}>
+                        💰 Close &amp; Record Return
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+
+              {/* ── Admin zone ────────────────────────────── */}
+              {isAdmin &&
+                ["open", "pending", "pending_committee", "closed"].includes(
+                  selected.status,
+                ) && (
+                  <View style={ivt.adminZone}>
+                    <Text style={ivt.adminZoneLabel}>ADMIN ACTIONS</Text>
+                    <TouchableOpacity
+                      style={ivt.adminBtnNeutral}
+                      onPress={() => {
+                        // Close the detail sheet first. `router.push`
+                        // mounts the edit screen on top without
+                        // unmounting this modal, so leaving it open
+                        // leaves the detail sheet visible behind (and
+                        // back through) the edit form. Same pattern
+                        // handleDelete uses.
+                        const id = selected.id;
+                        setShowDetail(false);
+                        setSelected(null);
+                        router.push({
+                          pathname: "/modals/edit-investment",
+                          params: { id },
+                        });
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={ivt.adminBtnNeutralText}>
+                        Edit Investment
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={ivt.adminBtnDanger}
+                      onPress={() => handleDelete(selected)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={ivt.adminBtnDangerText}>
+                        Delete Investment
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+              {/* ── Close ─────────────────────────────────── */}
+              <TouchableOpacity
+                style={ivt.closeModalBtn}
+                onPress={() => {
+                  setShowDetail(false);
+                  setSelected(null);
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={ivt.closeModalBtnText}>Close</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          );
+        })()}
       </BottomModal>
 
       {/* ── Close investment modal ── */}
@@ -559,28 +916,100 @@ export default function InvestmentsScreen() {
   );
 }
 
+// ── Type metadata ────────────────────────────────────────────
+const TYPE_ICON: Record<string, string> = {
+  real_estate: "🏘️",
+  agriculture: "🌾",
+  business: "🏢",
+  stocks: "📈",
+  fixed_deposit: "🏦",
+  other: "💼",
+};
+
+const TYPE_LABEL: Record<string, string> = {
+  real_estate: "Real Estate",
+  agriculture: "Agriculture",
+  business: "Business",
+  stocks: "Stocks",
+  fixed_deposit: "Fixed Deposit",
+  other: "Other",
+};
+
+// Returns the type-specific reference value to show as row subtext.
+// Land → UPI; stocks → ticker; fixed deposit → account number;
+// business → reg no.; agriculture → location.
+function typeReference(inv: Investment): string | null {
+  const t = inv.investmentType ?? "other";
+  if (t === "real_estate") return inv.upiNumber ?? inv.locationAddress ?? null;
+  if (t === "stocks") return inv.upiNumber ?? null;
+  if (t === "fixed_deposit") return inv.upiNumber ?? null;
+  if (t === "business") return inv.upiNumber ?? null;
+  if (t === "agriculture") return inv.locationAddress ?? null;
+  return inv.upiNumber ?? inv.locationAddress ?? null;
+}
+
 // ── List row ──────────────────────────────────────────────────
-function InvestmentRow({ investment, onPress }: { investment: Investment; onPress: () => void }) {
-  const statusLabel = INVESTMENT_STATUS_LABEL[investment.status] || investment.status;
-  const statusColor = INVESTMENT_STATUS_COLOR[investment.status] || C.text3;
+function InvestmentRow({
+  investment,
+  onPress,
+  actionLabel,
+}: {
+  investment: Investment;
+  onPress: () => void;
+  actionLabel?: string | null;
+}) {
+  const statusLabel =
+    INVESTMENT_STATUS_LABEL[investment.status] || investment.status;
+  const statusColor =
+    INVESTMENT_STATUS_COLOR[investment.status] || C.text3;
   const statusBg = INVESTMENT_STATUS_BG[investment.status] || C.mutedBg;
-  const roi = investment.expectedReturn && investment.investmentAmount
-    ? round2(((investment.expectedReturn - investment.investmentAmount) / investment.investmentAmount) * 100)
-    : null;
+
+  const typeKey = investment.investmentType ?? "other";
+  const icon = TYPE_ICON[typeKey] ?? "💼";
+  const typeName = TYPE_LABEL[typeKey] ?? "Investment";
+
+  const ref = typeReference(investment);
+  const isPending = INVESTMENT_PENDING_STATUSES.includes(investment.status);
+  const showActionPill = !!actionLabel && isPending;
+
+  const stripeColor = showActionPill ? C.gold : statusColor;
 
   return (
-    <TouchableOpacity style={ivt.row} onPress={onPress} activeOpacity={0.7}>
+    <TouchableOpacity
+      style={[
+        ivt.row,
+        { borderLeftColor: stripeColor },
+        showActionPill && ivt.rowActionable,
+      ]}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
       <View style={ivt.rowIcon}>
-        <Text style={{ fontSize: 16 }}>📊</Text>
+        <Text style={{ fontSize: 18 }}>{icon}</Text>
       </View>
+
       <View style={ivt.rowMid}>
-        <Text style={ivt.rowTitle} numberOfLines={1}>{investment.investmentName}</Text>
-        <Text style={ivt.rowMeta}>
-          {(investment.investmentType ?? "other").replace("_", " ")} · {fmtDate(investment.startDate)}
+        <Text style={ivt.rowTitle} numberOfLines={1}>
+          {investment.investmentName}
         </Text>
+        <Text style={ivt.rowMeta} numberOfLines={1}>
+          {typeName}
+          {ref ? ` · ${ref}` : ""} · {fmtDate(investment.startDate)}
+        </Text>
+
+        {showActionPill && (
+          <View style={ivt.actionNeededPill}>
+            <Text style={ivt.actionNeededText}>
+              ⚡ {actionLabel}
+            </Text>
+          </View>
+        )}
       </View>
+
       <View style={{ alignItems: "flex-end" }}>
-        <Text style={ivt.rowAmount}>{fmtCurrency(investment.investmentAmount)}</Text>
+        <Text style={ivt.rowAmount}>
+          {fmtCurrency(investment.investmentAmount)}
+        </Text>
         <View style={{ marginTop: 4 }}>
           <Chip label={statusLabel} bg={statusBg} color={statusColor} />
         </View>
@@ -690,4 +1119,297 @@ const ivt = StyleSheet.create({
   },
   commentLabel: { fontSize: 11, fontWeight: "700", color: C.infoText, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 },
   commentText: { fontSize: 13, color: C.text, lineHeight: 18 },
+
+  // ── Row enhancements ──
+  rowActionable: {
+    backgroundColor: "rgba(245,158,11,0.07)",
+  },
+  actionNeededPill: {
+    marginTop: 6,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: C.goldBg,
+    borderWidth: 1,
+    borderColor: "rgba(245,158,11,0.4)",
+  },
+  actionNeededText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: C.gold,
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+
+  // ── Detail modal ──
+  modalBody: { padding: 16, paddingBottom: 40 },
+
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 16,
+  },
+  modalHeaderIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: C.elevated,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalHeaderName: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: C.text,
+  },
+  modalHeaderMeta: {
+    fontSize: 11,
+    color: C.text3,
+    marginTop: 2,
+  },
+  modalStatusChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    flexShrink: 0,
+    maxWidth: 130,
+  },
+  modalStatusChipText: {
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+
+  investmentHero: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: R.lg,
+    padding: 18,
+    marginBottom: 12,
+  },
+  heroLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: C.text3,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  heroValue: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: C.primary,
+    letterSpacing: -0.8,
+  },
+
+  metricRow: {
+    flexDirection: "row",
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: R.lg,
+    paddingVertical: 14,
+    marginBottom: 12,
+  },
+  metricCol: { flex: 1, alignItems: "center", minWidth: 0, paddingHorizontal: 4 },
+  metricDiv: {
+    width: 1,
+    alignSelf: "stretch",
+    backgroundColor: C.borderLight,
+  },
+  metricLbl: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  metricVal: {
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "center",
+    marginBottom: 2,
+  },
+  metricSub: {
+    fontSize: 9,
+    color: C.text3,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+
+  infoCard: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: R.lg,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 12,
+  },
+  infoCardLbl: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: C.text3,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  },
+  infoRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderLight,
+    gap: 12,
+  },
+  infoKey: {
+    fontSize: 12,
+    color: C.text3,
+    fontWeight: "600",
+    flexShrink: 0,
+  },
+  infoVal: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text,
+    flexShrink: 0,
+  },
+  infoBody: {
+    fontSize: 13,
+    color: C.text2,
+    lineHeight: 19,
+  },
+
+  plCard: {
+    borderRadius: R.lg,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 12,
+    alignItems: "center",
+  },
+  plLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  plValue: {
+    fontSize: 24,
+    fontWeight: "800",
+    letterSpacing: -0.6,
+    marginBottom: 6,
+  },
+  plSub: {
+    fontSize: 11,
+    color: C.text3,
+    marginTop: 2,
+  },
+
+  primaryActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  approveBtn: {
+    flex: 1,
+    backgroundColor: C.success,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  approveBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  rejectBtn: {
+    flex: 1,
+    backgroundColor: C.redBg,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.3)",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  rejectBtnText: {
+    color: C.error,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  closeBtn: {
+    flex: 1,
+    backgroundColor: C.gold,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  closeBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+
+  adminZone: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: R.lg,
+    padding: 14,
+    marginBottom: 12,
+    gap: 8,
+  },
+  adminZoneLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: C.text3,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  adminBtnNeutral: {
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: "center",
+  },
+  adminBtnNeutralText: {
+    color: C.text2,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  adminBtnDanger: {
+    backgroundColor: C.redBg,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.3)",
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: "center",
+  },
+  adminBtnDangerText: {
+    color: C.error,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  closeModalBtn: {
+    backgroundColor: C.mutedBg,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  closeModalBtnText: {
+    color: C.text2,
+    fontSize: 14,
+    fontWeight: "700",
+  },
 });

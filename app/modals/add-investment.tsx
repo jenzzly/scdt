@@ -1,47 +1,205 @@
-// app/modals/add-investment.tsx - Add closing functionality
-
-import React, { useState, useMemo } from "react";
-import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity} from "react-native";
+// app/modals/add-investment.tsx
+//
+// Type-driven investment registration form. Each investment type
+// surfaces its own set of fields — land gets a UPI (Unique Parcel
+// Identifier), stocks get a ticker + broker, fixed deposits get an
+// account number + branch, and so on. The underlying schema is
+// shared (see Investment in types/index.ts): every type-specific
+// value lands in one of upiNumber / locationAddress / contactPhone /
+// representativeId / representativeName / representativeRole, just
+// with a type-appropriate label.
+import React, { useMemo, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+} from "react-native";
 import { useRouter } from "expo-router";
-import { useStore, useActiveGroup, useGroupInvestments } from "../../stores/useStore";
-import { Input, Select, Button, useToast, Toast, BottomModal, DatePicker } from "../../components/ui";
+import { useStore, useActiveGroup } from "../../stores/useStore";
+import {
+  Input,
+  Select,
+  Button,
+  useToast,
+  Toast,
+  DatePicker,
+} from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
-import { Colors, S, R, fmtCurrency, round2, showConfirm } from "../../utils/theme";
+import {
+  Colors,
+  S,
+  R,
+  fmtCurrency,
+  round2,
+} from "../../utils/theme";
 
-const INV_TYPES = [
-  { label: "Real Estate", value: "real_estate" },
-  { label: "Agriculture", value: "agriculture" },
-  { label: "Business / Trade", value: "business" },
-  { label: "Stocks / Securities", value: "stocks" },
-  { label: "Fixed Deposit", value: "fixed_deposit" },
-  { label: "Other", value: "other" },
+// ─────────────────────────────────────────────────────────────────────────
+// Type registry
+// ─────────────────────────────────────────────────────────────────────────
+
+type InvType =
+  | "real_estate"
+  | "agriculture"
+  | "business"
+  | "stocks"
+  | "fixed_deposit"
+  | "other";
+
+interface TypeSpec {
+  value: InvType;
+  label: string;
+  icon: string;
+  sectionTitle: string;
+  sectionHint: string;
+}
+
+const INV_TYPES: TypeSpec[] = [
+  {
+    value: "real_estate",
+    label: "Real Estate / Land",
+    icon: "🏘️",
+    sectionTitle: "Property Details",
+    sectionHint:
+      "Land plots, buildings, and other physical property. UPI is the Unique Parcel Identifier — the plot reference on the land title.",
+  },
+  {
+    value: "agriculture",
+    label: "Agriculture",
+    icon: "🌾",
+    sectionTitle: "Farm Details",
+    sectionHint: "Crops, livestock, or agro-processing ventures.",
+  },
+  {
+    value: "business",
+    label: "Business / Trade",
+    icon: "🏢",
+    sectionTitle: "Business Details",
+    sectionHint: "Trading, retail, or services where the group holds a stake.",
+  },
+  {
+    value: "stocks",
+    label: "Stocks / Securities",
+    icon: "📈",
+    sectionTitle: "Securities Details",
+    sectionHint: "Shares, bonds, or other exchange-traded instruments.",
+  },
+  {
+    value: "fixed_deposit",
+    label: "Fixed Deposit",
+    icon: "🏦",
+    sectionTitle: "Deposit Details",
+    sectionHint: "Term deposits or savings certificates held at a bank.",
+  },
+  {
+    value: "other",
+    label: "Other",
+    icon: "💼",
+    sectionTitle: "Additional Details",
+    sectionHint: "Anything not covered above.",
+  },
 ];
+
+const TYPE_SPECS: Record<InvType, TypeSpec> = INV_TYPES.reduce(
+  (acc, t) => ({ ...acc, [t.value]: t }),
+  {} as Record<InvType, TypeSpec>,
+);
+
+// Which optional fields are relevant for each type. A field is shown
+// only if the current type lists it here. `other` deliberately shows
+// all of them so nothing is ever impossible to record.
+const TYPE_FIELDS: Record<
+  InvType,
+  {
+    upi?: string;
+    location?: string;
+    phone?: string;
+    repId?: string;
+  }
+> = {
+  real_estate: {
+    upi: "UPI Number",
+    location: "Property Address",
+    phone: "Contact Phone",
+    repId: "Owner / Representative ID",
+  },
+  agriculture: {
+    location: "Farm Location",
+    phone: "Contact Phone",
+  },
+  business: {
+    upi: "Business Registration No.",
+    location: "Business Address",
+    phone: "Contact Phone",
+  },
+  stocks: {
+    upi: "Ticker / Symbol",
+    location: "Exchange",
+    phone: "Broker Contact",
+    repId: "Broker License No.",
+  },
+  fixed_deposit: {
+    upi: "Account / Certificate No.",
+    location: "Bank Branch",
+    phone: "Bank Contact",
+  },
+  other: {
+    upi: "Reference Number",
+    location: "Location",
+    phone: "Contact Phone",
+    repId: "Representative ID",
+  },
+};
+
+// Type-appropriate labels for the representative block.
+const REP_LABELS: Record<
+  InvType,
+  { name: string; role: string }
+> = {
+  real_estate: { name: "Owner Name", role: "Owner Role / Title" },
+  agriculture: { name: "Manager Name", role: "Manager Role" },
+  business: { name: "Partner / Director", role: "Position" },
+  stocks: { name: "Broker Name", role: "Brokerage Firm" },
+  fixed_deposit: { name: "Bank Name", role: "Relationship Manager" },
+  other: { name: "Representative Name", role: "Role / Title" },
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// Screen
+// ─────────────────────────────────────────────────────────────────────────
 
 export default function AddInvestmentModal() {
   const router = useRouter();
-  const { createInvestment, closeInvestment } = useStore();
+  const { createInvestment } = useStore();
   const group = useActiveGroup();
-  const investments = useGroupInvestments();
-  // const { show, Toast } = useToast();
   const { show, visible, msg, type } = useToast();
 
   const [name, setName] = useState("");
-  const [ContributionType, setContributionType] = useState("real_estate");
+  const [investmentType, setInvestmentType] = useState<InvType>("real_estate");
   const [desc, setDesc] = useState("");
   const [amount, setAmount] = useState("");
   const [expected, setExpected] = useState("");
-  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [startDate, setStartDate] = useState(
+    new Date().toISOString().slice(0, 10),
+  );
   const [maturityDate, setMaturityDate] = useState("");
+
+  // Type-specific fields — single set of state, reused across types
+  // with type-appropriate labels.
+  const [upiNumber, setUpiNumber] = useState("");
+  const [locationAddress, setLocationAddress] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
+
   const [repName, setRepName] = useState("");
   const [repRole, setRepRole] = useState("");
+  const [repId, setRepId] = useState("");
+
   const [loading, setLoading] = useState(false);
 
-  // Closing investment state
-  const [showCloseModal, setShowCloseModal] = useState(false);
-  const [selectedInvestment, setSelectedInvestment] = useState<any>(null);
-  const [closeReturn, setCloseReturn] = useState("");
-  const [closeActualReturn, setCloseActualReturn] = useState("");
-  const [closingLoading, setClosingLoading] = useState(false);
+  const spec = TYPE_SPECS[investmentType];
+  const fields = TYPE_FIELDS[investmentType];
+  const repLabels = REP_LABELS[investmentType];
 
   const roi = useMemo(() => {
     const a = parseFloat(amount) || 0;
@@ -50,310 +208,333 @@ export default function AddInvestmentModal() {
     return round2(((e - a) / a) * 100);
   }, [amount, expected]);
 
+  const resetTypeSpecificFields = (nextType: InvType) => {
+    setInvestmentType(nextType);
+    // Clear fields that aren't relevant for the new type so stale
+    // values can't accidentally be submitted. Fields that remain
+    // relevant survive the type switch.
+    const nextFields = TYPE_FIELDS[nextType];
+    if (!nextFields.upi) setUpiNumber("");
+    if (!nextFields.location) setLocationAddress("");
+    if (!nextFields.phone) setContactPhone("");
+    if (!nextFields.repId) setRepId("");
+  };
+
   const handleSave = async () => {
-    if (!name.trim()) { show("Investment name required", "error"); return; }
+    if (!name.trim()) {
+      show("Investment name required", "error");
+      return;
+    }
     const amtNum = parseFloat(amount);
-    if (!amtNum || amtNum <= 0) { show("Enter a valid amount", "error"); return; }
+    if (!amtNum || amtNum <= 0) {
+      show("Enter a valid amount", "error");
+      return;
+    }
+    if (!group?.id) {
+      show("No active group", "error");
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+      show("Enter a valid start date", "error");
+      return;
+    }
+
     setLoading(true);
     try {
       await createInvestment({
-        groupId: group?.id!,
+        groupId: group.id,
         investmentName: name.trim(),
-        investmentType: ContributionType,
+        investmentType,
+
         description: desc.trim() || undefined,
-        investmentAmount: amtNum,
-        expectedReturn: parseFloat(expected) || amtNum,
-        startDate: new Date(startDate).toISOString(),
-        maturityDate: maturityDate ? new Date(maturityDate).toISOString() : undefined,
+
+        // Type-specific — only send the ones the type actually uses
+        upiNumber: fields.upi ? upiNumber.trim() || undefined : undefined,
+        locationAddress: fields.location
+          ? locationAddress.trim() || undefined
+          : undefined,
+        contactPhone: fields.phone
+          ? contactPhone.trim() || undefined
+          : undefined,
+
         representativeName: repName.trim() || undefined,
         representativeRole: repRole.trim() || undefined,
+        representativeId: fields.repId
+          ? repId.trim() || undefined
+          : undefined,
+
+        investmentAmount: amtNum,
+        expectedReturn: parseFloat(expected) || amtNum,
+
+        startDate: new Date(startDate).toISOString(),
+        maturityDate: maturityDate
+          ? new Date(maturityDate).toISOString()
+          : undefined,
+
         status: "pending_committee",
       });
+
       show("Investment submitted — awaiting committee approval ✅");
       setTimeout(() => router.back(), 800);
-    } catch {
-      show("Failed to register investment", "error");
-    } finally { setLoading(false); }
-  };
-
-  const handleCloseInvestment = async () => {
-    if (!selectedInvestment) return;
-    
-    const returnAmount = parseFloat(closeReturn);
-    if (!returnAmount || returnAmount <= 0) {
-      show("Enter a valid return amount", "error");
-      return;
-    }
-    
-    const actualReturn = closeActualReturn ? parseFloat(closeActualReturn) : undefined;
-    
-    setClosingLoading(true);
-    try {
-      await closeInvestment(selectedInvestment.id, returnAmount, actualReturn);
-      show(`Investment closed! Return: ${fmtCurrency(returnAmount)}`, "success");
-      setShowCloseModal(false);
-      setSelectedInvestment(null);
-      setCloseReturn("");
-      setCloseActualReturn("");
-      router.back();
-    } catch (error: any) {
-      show(error.message || "Failed to close investment", "error");
+    } catch (e: any) {
+      show(e?.message || "Failed to register investment", "error");
     } finally {
-      setClosingLoading(false);
+      setLoading(false);
     }
   };
-
-  const openCloseModal = (investment: any) => {
-    setSelectedInvestment(investment);
-    setCloseReturn(String(investment.investmentAmount || 0));
-    setCloseActualReturn("");
-    setShowCloseModal(true);
-  };
-
-  const openInvestments = investments.filter(i => i.status === "open");
 
   return (
     <ModalShell title="Add Investment" onClose={() => router.back()}>
-      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
+      <ScrollView
+        contentContainerStyle={styles.body}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── Basic info ──────────────────────────────────────────── */}
         <Text style={styles.sectionLbl}>Basic Info</Text>
-        <Input label="Investment Name *" value={name} onChangeText={setName} placeholder="Real Estate Plot, Agricultural Co-op…" />
-        <Select label="Type" value={ContributionType} options={INV_TYPES} onChange={setContributionType} />
-        <Input label="Description" value={desc} onChangeText={setDesc} placeholder="Brief description" multiline />
 
-        <Text style={styles.sectionLbl}>Financials</Text>
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <View style={{ flex: 1 }}>
-            <Input label={`Amount (${group?.currency ?? "RWF"}) *`} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="300000" prefix={group?.currency ?? "RWF"} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Input label="Expected Return" value={expected} onChangeText={setExpected} keyboardType="numeric" placeholder="360000" prefix={group?.currency ?? "RWF"} />
+        <Input
+          label="Investment Name *"
+          value={name}
+          onChangeText={setName}
+          placeholder={
+            investmentType === "real_estate"
+              ? "e.g. Kigali Plot 42"
+              : investmentType === "stocks"
+              ? "e.g. BOK preference shares"
+              : "Real Estate Plot, Agricultural Co-op…"
+          }
+        />
+
+        <Select
+          label="Type"
+          value={investmentType}
+          options={INV_TYPES.map((t) => ({
+            label: `${t.icon}  ${t.label}`,
+            value: t.value,
+          }))}
+          onChange={(v) => resetTypeSpecificFields(v as InvType)}
+        />
+
+        <Input
+          label="Description"
+          value={desc}
+          onChangeText={setDesc}
+          placeholder="Brief description"
+          multiline
+        />
+
+        {/* ── Type-specific block ─────────────────────────────────── */}
+        <View style={styles.typeBanner}>
+          <Text style={styles.typeBannerIcon}>{spec.icon}</Text>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.typeBannerTitle}>{spec.sectionTitle}</Text>
+            <Text style={styles.typeBannerHint}>{spec.sectionHint}</Text>
           </View>
         </View>
-        {roi !== null && (
+
+        {fields.upi ? (
+          <Input
+            label={fields.upi}
+            value={upiNumber}
+            onChangeText={setUpiNumber}
+            placeholder={
+              investmentType === "real_estate"
+                ? "e.g. 1/02/03/04/567"
+                : investmentType === "stocks"
+                ? "e.g. BOK"
+                : investmentType === "fixed_deposit"
+                ? "e.g. FD-2026-0042"
+                : "Enter reference"
+            }
+            autoCapitalize="characters"
+            autoCorrect={false}
+          />
+        ) : null}
+
+        {fields.location ? (
+          <Input
+            label={fields.location}
+            value={locationAddress}
+            onChangeText={setLocationAddress}
+            placeholder={
+              investmentType === "real_estate"
+                ? "District, Sector, Cell, Village"
+                : investmentType === "stocks"
+                ? "RSE / NYSE / …"
+                : "Enter location"
+            }
+          />
+        ) : null}
+
+        {fields.phone ? (
+          <Input
+            label={fields.phone}
+            value={contactPhone}
+            onChangeText={setContactPhone}
+            placeholder="+250 7XX XXX XXX"
+            keyboardType="phone-pad"
+          />
+        ) : null}
+
+        {/* ── Representative ──────────────────────────────────────── */}
+        <Text style={styles.sectionLbl}>Representative (Optional)</Text>
+
+        <View style={styles.row}>
+          <View style={{ flex: 1 }}>
+            <Input
+              label={repLabels.name}
+              value={repName}
+              onChangeText={setRepName}
+              placeholder="Full name"
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Input
+              label={repLabels.role}
+              value={repRole}
+              onChangeText={setRepRole}
+              placeholder="Role / Title"
+            />
+          </View>
+        </View>
+
+        {fields.repId ? (
+          <Input
+            label={fields.repId}
+            value={repId}
+            onChangeText={setRepId}
+            placeholder="Enter ID"
+            autoCapitalize="characters"
+            autoCorrect={false}
+          />
+        ) : null}
+
+        {/* ── Financials ──────────────────────────────────────────── */}
+        <Text style={styles.sectionLbl}>Financials</Text>
+
+        <View style={styles.row}>
+          <View style={{ flex: 1 }}>
+            <Input
+              label={`Amount (${group?.currency ?? "RWF"}) *`}
+              value={amount}
+              onChangeText={setAmount}
+              keyboardType="numeric"
+              placeholder="300000"
+              prefix={group?.currency ?? "RWF"}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Input
+              label="Expected Return"
+              value={expected}
+              onChangeText={setExpected}
+              keyboardType="numeric"
+              placeholder="360000"
+              prefix={group?.currency ?? "RWF"}
+            />
+          </View>
+        </View>
+
+        {roi !== null ? (
           <View style={styles.roiBadge}>
-            <Text style={{ fontSize: 13, color: roi >= 0 ? Colors.success : Colors.error, fontWeight: "700" }}>
-              {roi >= 0 ? "📈" : "📉"} Estimated ROI: {roi > 0 ? "+" : ""}{roi}%
+            <Text
+              style={{
+                fontSize: 13,
+                color: roi >= 0 ? Colors.success : Colors.error,
+                fontWeight: "700",
+              }}
+            >
+              {roi >= 0 ? "📈" : "📉"} Estimated ROI: {roi > 0 ? "+" : ""}
+              {roi}%
             </Text>
           </View>
-        )}
+        ) : null}
 
+        {/* ── Dates ───────────────────────────────────────────────── */}
         <Text style={styles.sectionLbl}>Dates</Text>
-        <DatePicker label="Start Date" value={startDate} onChange={setStartDate} placeholder="Select start date" />
-        <DatePicker label="Maturity Date (Optional)" value={maturityDate} onChange={setMaturityDate} placeholder="Select maturity date" />
+        <DatePicker
+          label="Start Date *"
+          value={startDate}
+          onChange={setStartDate}
+          placeholder="Select start date"
+        />
+        <DatePicker
+          label="Maturity Date (Optional)"
+          value={maturityDate}
+          onChange={setMaturityDate}
+          placeholder="Select maturity date"
+        />
 
-        <Text style={styles.sectionLbl}>Representative (Optional)</Text>
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <View style={{ flex: 1 }}>
-            <Input label="Name" value={repName} onChangeText={setRepName} placeholder="Full name" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Input label="Role / Title" value={repRole} onChangeText={setRepRole} placeholder="Manager, Director…" />
-          </View>
-        </View>
+        <View style={styles.footerSpacer} />
 
-        <Button label="Register Investment" onPress={handleSave} fullWidth loading={loading} size="lg" />
+        <Button
+          label="Register Investment"
+          onPress={handleSave}
+          fullWidth
+          loading={loading}
+          size="lg"
+        />
 
-        {/* Open Investments Section */}
-        {(openInvestments.length > 0) && (
-          <View style={styles.openInvestmentsSection}>
-            <Text style={styles.sectionLbl}>Open Investments</Text>
-            {openInvestments.map((inv) => (
-              <View key={inv.id} style={styles.investmentItem}>
-                <View style={styles.investmentInfo}>
-                  <Text style={styles.investmentName}>{inv.investmentName}</Text>
-                  <Text style={styles.investmentAmount}>{fmtCurrency(inv.investmentAmount)}</Text>
-                  <Text style={styles.investmentType}>{(inv.investmentType || 'unknown').replace('_', ' ')}</Text>
-                </View>
-                <TouchableOpacity 
-                  style={styles.closeBtn}
-                  onPress={() => openCloseModal(inv)}
-                >
-                  <Text style={styles.closeBtnText}>Close & Return</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-        )}
+        <View style={styles.bottomSpacer} />
       </ScrollView>
 
-      {/* Close Investment Modal */}
-      <BottomModal
-        visible={showCloseModal}
-        onClose={() => { setShowCloseModal(false); setSelectedInvestment(null); setCloseReturn(""); setCloseActualReturn(""); }}
-        title="Close Investment"
-      >
-        <View style={{ padding: 16 }}>
-          {selectedInvestment && (
-            <>
-              <View style={styles.modalInfo}>
-                <Text style={styles.modalMember}>{selectedInvestment.investmentName}</Text>
-                <Text style={styles.modalAmount}>Invested: {fmtCurrency(selectedInvestment.investmentAmount)}</Text>
-                <Text style={styles.modalDetail}>
-                  Expected Return: {fmtCurrency(selectedInvestment.expectedReturn || 0)}
-                </Text>
-                {!!(selectedInvestment.expectedReturn) && !!(selectedInvestment.investmentAmount) && (
-                  <Text style={[styles.modalDetail, { color: Colors.gold }]}>
-                    Expected ROI: {round2(((selectedInvestment.expectedReturn - selectedInvestment.investmentAmount) / selectedInvestment.investmentAmount) * 100)}%
-                  </Text>
-                )}
-              </View>
-
-              <Input
-                label="Total Return Amount *"
-                value={closeReturn}
-                onChangeText={setCloseReturn}
-                keyboardType="numeric"
-                placeholder="Enter total return amount"
-                prefix={group?.currency ?? "RWF"}
-              />
-              
-              <Input
-                label="Actual Profit/Loss (Optional)"
-                value={closeActualReturn}
-                onChangeText={setCloseActualReturn}
-                keyboardType="numeric"
-                placeholder="Enter actual profit or loss"
-                prefix={group?.currency ?? "RWF"}
-                hint="Leave blank to use calculated profit/loss"
-              />
-
-              {!!(closeReturn) && !!(selectedInvestment.investmentAmount) && (
-                <View style={styles.profitPreview}>
-                  <Text style={styles.profitLabel}>
-                    {parseFloat(closeReturn) >= selectedInvestment.investmentAmount ? '📈 Profit' : '📉 Loss'}
-                  </Text>
-                  <Text style={[
-                    styles.profitAmount,
-                    { color: parseFloat(closeReturn) >= selectedInvestment.investmentAmount ? Colors.success : Colors.error }
-                  ]}>
-                    {fmtCurrency(Math.abs(parseFloat(closeReturn) - selectedInvestment.investmentAmount))}
-                  </Text>
-                </View>
-              )}
-
-              <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-                <Button
-                  label="Cancel"
-                  onPress={() => { setShowCloseModal(false); setSelectedInvestment(null); setCloseReturn(""); setCloseActualReturn(""); }}
-                  variant="secondary"
-                  style={{ flex: 1 }}
-                />
-                <Button
-                  label="Close Investment"
-                  onPress={handleCloseInvestment}
-                  variant="primary"
-                  style={{ flex: 1 }}
-                  loading={closingLoading}
-                />
-              </View>
-            </>
-          )}
-        </View>
-      </BottomModal>
-
-      <Toast visible={visible} msg={msg} type={type}/>
+      <Toast visible={visible} msg={msg} type={type} />
     </ModalShell>
   );
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: S.lg, paddingTop: Platform.OS === "ios" ? 56 : 36, paddingBottom: S.lg, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  title: { fontSize: 17, fontWeight: "700", color: Colors.text },
-  cancel: { color: Colors.accent, fontSize: 15, fontWeight: "600" },
   body: { padding: S.lg, paddingBottom: 60 },
-  sectionLbl: { fontSize: 11, fontWeight: "700", color: Colors.text2, textTransform: "uppercase", letterSpacing: 0.8, marginTop: 16, marginBottom: 10 },
-  roiBadge: { backgroundColor: Colors.accentFaint, borderWidth: 1, borderColor: Colors.accentFaint, borderRadius: R.md, padding: S.md, marginBottom: S.md },
-  
-  openInvestmentsSection: {
-    marginTop: 24,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    paddingTop: 16,
+
+  sectionLbl: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: Colors.text2,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginTop: 16,
+    marginBottom: 10,
   },
-  investmentItem: {
+
+  row: { flexDirection: "row", gap: 10 },
+
+  typeBanner: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: Colors.surface,
+    alignItems: "flex-start",
+    gap: 12,
+    backgroundColor: Colors.accentFaint,
+    borderWidth: 1,
+    borderColor: "rgba(16,185,129,0.25)",
     borderRadius: R.md,
     padding: S.md,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    marginTop: S.md,
+    marginBottom: S.sm,
   },
-  investmentInfo: {
-    flex: 1,
-  },
-  investmentName: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: Colors.text,
-  },
-  investmentAmount: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: Colors.primary,
-    marginTop: 2,
-  },
-  investmentType: {
-    fontSize: 11,
-    color: Colors.text3,
-    marginTop: 1,
-  },
-  closeBtn: {
-    backgroundColor: Colors.goldBg,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: R.sm,
-    borderWidth: 1,
-    borderColor: "rgba(245,158,11,0.3)",
-  },
-  closeBtnText: {
-    color: Colors.gold,
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  
-  modalInfo: {
-    backgroundColor: Colors.elevated,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-    alignItems: "center",
-  },
-  modalMember: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: Colors.text,
-  },
-  modalAmount: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: Colors.primary,
-    marginTop: 4,
-  },
-  modalDetail: {
+  typeBannerIcon: { fontSize: 22, marginTop: 1 },
+  typeBannerTitle: {
     fontSize: 12,
-    color: Colors.text3,
-    marginTop: 4,
+    fontWeight: "800",
+    color: Colors.success,
+    marginBottom: 3,
   },
-  
-  profitPreview: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    backgroundColor: Colors.elevated,
-    padding: S.md,
+  typeBannerHint: {
+    fontSize: 11,
+    color: Colors.text2,
+    lineHeight: 16,
+  },
+
+  roiBadge: {
+    backgroundColor: Colors.accentFaint,
+    borderWidth: 1,
+    borderColor: Colors.accentFaint,
     borderRadius: R.md,
-    marginTop: 8,
+    padding: S.md,
+    marginTop: 4,
+    marginBottom: S.md,
   },
-  profitLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: Colors.text,
-  },
-  profitAmount: {
-    fontSize: 16,
-    fontWeight: "700",
-  },
+
+  footerSpacer: { height: 24 },
+  bottomSpacer: { height: 12 },
 });

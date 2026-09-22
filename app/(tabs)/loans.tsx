@@ -85,7 +85,12 @@ const STATUS_COLOR: Record<string, string> = {
   pending_loan_officer: C.gold,
   pending_committee: C.info,
   pending_accountant: C.info,
-  approved: C.teal,
+  // `approved` means "money hasn't moved yet, waiting on the
+  // accountant to click Disburse." Same action-required family as the
+  // "Ready to disburse" pill and the row's amber stripe. Distinct from
+  // `disbursed` (Active) which is the neutral teal that means "in
+  // flight, nothing to do right now."
+  approved: C.gold,
   disbursed: C.teal,
   repaid: C.success,
   rejected: C.text3,
@@ -96,7 +101,8 @@ const STATUS_BG: Record<string, string> = {
   pending_loan_officer: C.goldBg,
   pending_committee: C.infoBg,
   pending_accountant: C.infoBg,
-  approved: C.tealBg,
+  // Gold background pairs with C.gold above; matches the pill bg.
+  approved: C.goldBg,
   disbursed: C.tealBg,
   repaid: C.greenBg,
   rejected: C.mutedBg,
@@ -174,7 +180,7 @@ function dateToYmd(d: Date): string {
   )}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-// ─── Loan Detail Modal ──────────────────────────────────────────────
+// ─── Loan Detail Modal (mobile-first redesign) ─────────────────────────
 function LoanDetailModal({
   visible,
   loan,
@@ -218,7 +224,9 @@ function LoanDetailModal({
 }) {
   const [applyingFeeId, setApplyingFeeId] = useState<string | null>(null);
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
-  const [feesExpanded, setFeesExpanded] = useState(true);
+  const [feesExpanded, setFeesExpanded] = useState(false);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
 
   const { show } = useToast();
 
@@ -229,7 +237,9 @@ function LoanDetailModal({
     const customNum = customStr ? Number(customStr) : undefined;
     setApplyingFeeId(feeId);
     try {
-      await useStore.getState().applyLoanLateFee(row.overdueInstallment, customNum);
+      await useStore
+        .getState()
+        .applyLoanLateFee(row.overdueInstallment, customNum);
       useStore.getState().recalcTotals();
       show("Late fee applied");
     } catch (e: any) {
@@ -280,8 +290,7 @@ function LoanDetailModal({
   const todayAccrued = computeTodayAccrued(loan);
 
   const accruedInterestForDisplay = isRB
-    ? todayAccrued?.total ??
-      round2(Number((loan as any).accruedInterest) || 0)
+    ? todayAccrued?.total ?? round2(Number((loan as any).accruedInterest) || 0)
     : Math.max(
         0,
         round2(loan.totalRepayable - loan.amountRepaid - loan.balance),
@@ -300,308 +309,400 @@ function LoanDetailModal({
   const hasFeesOwed = lateFees.count > 0;
   const shouldRenderLateFeesCard = hasFeesOwed || canManageFees;
 
+  const initials = (member?.fullName ?? "?")
+    .split(" ")
+    .map((w: string) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  const showPrimaryActions =
+    loan.status === "disbursed" ||
+    (loan.status === "approved" && canDisburse) ||
+    (!!actableStep && isPending);
+
+  const showAdminActions =
+    !!onEdit ||
+    !!onDelete ||
+    (loan.status === "rejected" && !!onEditResubmit);
+
   return (
     <BottomModal visible={visible} onClose={onClose} title="Loan Details">
-      <View style={{ padding: 16 }}>
-        <View style={styles.modalInfo}>
-          <Text style={styles.modalMember}>
-            {member?.fullName ?? "Unknown"}
-          </Text>
-          <Text style={styles.modalAmount}>{fmtCurrency(loan.amount)}</Text>
-          <Text style={styles.modalDetail}>
-            Applied: {fmtDate(loan.applicationDate)}
-          </Text>
-          {(loan as any).disbursementDate ? (
-            <Text style={styles.modalDetail}>
-              First payment: {fmtDate((loan as any).disbursementDate)}
+      <ScrollView
+        contentContainerStyle={detailSt.body}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* ── 1. Header ──────────────────────────────────────────── */}
+        <View style={detailSt.header}>
+          <View style={detailSt.avatar}>
+            <Text style={detailSt.avatarText}>{initials}</Text>
+          </View>
+
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={detailSt.memberName} numberOfLines={1}>
+              {member?.fullName ?? "Unknown"}
             </Text>
-          ) : null}
-          <Text style={styles.modalDetail}>
-            {loan.interestRate}%{" "}
-            {(loan as any).interestRatePeriod === "annual"
-              ? "annual"
-              : "monthly"}
-            {isRB ? " · daily accrual" : " flat"} · {loan.repaymentMonths}{" "}
-            months
-          </Text>
-          {!!(loan as any).lateFeeRatePct && (
+            <Text style={detailSt.memberMeta} numberOfLines={1}>
+              {loan.interestRate}%{" "}
+              {isRB ? "monthly · daily accrual" : "flat"} ·{" "}
+              {loan.repaymentMonths} months
+            </Text>
+          </View>
+
+          <View style={[detailSt.statusChip, { backgroundColor: statusBg }]}>
             <Text
-              style={[
-                styles.modalDetail,
-                { fontSize: 12, color: C.text3, marginTop: 2 },
-              ]}
+              style={[detailSt.statusChipText, { color: statusColor }]}
+              numberOfLines={1}
             >
-              Late fee: {(loan as any).lateFeeRatePct}% of overdue
-              installment
-              {(loan as any).lateFeeGraceDays
-                ? ` after ${(loan as any).lateFeeGraceDays}-day grace period`
-                : ""}
-            </Text>
-          )}
-          <View
-            style={[
-              styles.statusBadge,
-              {
-                backgroundColor: statusBg,
-                alignSelf: "center",
-                marginTop: 4,
-              },
-            ]}
-          >
-            <Text style={[styles.statusText, { color: statusColor }]}>
               {statusLabel}
             </Text>
           </View>
         </View>
 
+        {/* ── 2. Hero ─────────────────────────────────────────────── */}
+        <View style={detailSt.loanDetailHero}>
+          <Text style={detailSt.heroLabel}>TOTAL DUE</Text>
+          <Text
+            style={detailSt.heroValue}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.7}
+          >
+            {fmtCurrency(totalDueForDisplay)}
+          </Text>
+
+          <View style={detailSt.heroMeta}>
+            <Text style={detailSt.heroMetaText} numberOfLines={1}>
+              {fmtCurrency(loan.amountRepaid)} of{" "}
+              {fmtCurrency(loan.totalRepayable)}
+            </Text>
+            <Text
+              style={[
+                detailSt.heroMetaPct,
+                { color: pct >= 100 ? C.success : C.primary },
+              ]}
+            >
+              {pct.toFixed(1)}%
+            </Text>
+          </View>
+
+          <View style={detailSt.progressTrack}>
+            <View
+              style={[
+                detailSt.progressFill,
+                {
+                  width: `${Math.min(100, pct)}%` as any,
+                  backgroundColor: pct >= 100 ? C.success : C.primary,
+                },
+              ]}
+            />
+          </View>
+        </View>
+
+        {/* ── 3. Metric strip ─────────────────────────────────────── */}
+        <View style={detailSt.metricRow}>
+          <View style={detailSt.metricCol}>
+            <Text style={detailSt.metricLbl}>Principal</Text>
+            <Text
+              style={[detailSt.metricVal, { color: C.text }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {fmtCurrency(loan.balance)}
+            </Text>
+            <Text style={detailSt.metricSub} numberOfLines={1}>
+              balance
+            </Text>
+          </View>
+
+          <View style={detailSt.metricDiv} />
+
+          <View style={detailSt.metricCol}>
+            <Text style={detailSt.metricLbl}>Interest</Text>
+            <Text
+              style={[detailSt.metricVal, { color: C.gold }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {fmtCurrency(accruedInterestForDisplay)}
+            </Text>
+            <Text style={detailSt.metricSub} numberOfLines={1}>
+              {isRB ? "accrued" : "remaining"}
+            </Text>
+          </View>
+
+          <View style={detailSt.metricDiv} />
+
+          <View style={detailSt.metricCol}>
+            <Text style={detailSt.metricLbl}>Amount</Text>
+            <Text
+              style={[detailSt.metricVal, { color: C.primary }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {fmtCurrency(loan.amount)}
+            </Text>
+            <Text style={detailSt.metricSub} numberOfLines={1}>
+              original
+            </Text>
+          </View>
+        </View>
+
+        {/* ── 4. Accrual line ─────────────────────────────────────── */}
         {isRB && todayAccrued && loan.status === "disbursed" && (
-          <View style={styles.accrualBox}>
-            <Text style={styles.accrualText}>
-              📅 Accruing {todayAccrued.days}d from{" "}
-              {fmtDate(todayAccrued.anchor)} · Daily rate:{" "}
-              {round2(todayAccrued.dailyRatePct * 1000) / 1000}% · Today's
-              accrued: {fmtCurrency(todayAccrued.accrued)}
+          <View style={detailSt.accrualLine}>
+            <Text style={detailSt.accrualLineText} numberOfLines={2}>
+              Accruing {todayAccrued.days}d from{" "}
+              {fmtDate(todayAccrued.anchor)} ·{" "}
+              {round2(todayAccrued.dailyRatePct * 1000) / 1000}%/day ·{" "}
+              {fmtCurrency(todayAccrued.accrued)} today
             </Text>
           </View>
         )}
 
-        {/* ── Late-fees card (redesigned) ──────────────────────────────
-            Structure:
-              • Header: total + status + toggle
-              • When disabled: a single explanatory line + "Enable" toggle
-              • When enabled and fees exist: list + per-row Void action
-              • When enabled and no fees: "No fees currently owed"
-            The whole card is compact by default; the fee list is
-            collapsible so it doesn't dominate the modal on loans with
-            many overdue installments. */}
-        {shouldRenderLateFeesCard && (
-          <View style={styles.lateFeesCard}>
-            {/* ── Header row: title + total ── */}
-            <View style={styles.lateFeesHeader}>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.lateFeesTitle}>
-                  {hasFeesOwed
-                    ? `Late Fees Owed (${lateFees.count})`
-                    : "Late Fees"}
-                </Text>
-                {hasFeesOwed && (
-                  <Text style={styles.lateFeesTotalInline}>
-                    {fmtCurrency(lateFees.total)} total
-                  </Text>
-                )}
-              </View>
-
-            </View>
-
-            {/* ── Body ── */}
-            {!hasFeesOwed ? (
-              <Text style={styles.lateFeesEmptyMsg}>
-                No late fees currently owed on this loan.
-              </Text>
-            ) : (
+        {/* ── 5. Primary actions ──────────────────────────────────── */}
+        {showPrimaryActions && (
+          <View style={detailSt.primaryActions}>
+            {loan.status === "disbursed" && (
               <>
                 <TouchableOpacity
-                  style={styles.lateFeesExpandRow}
-                  onPress={() => setFeesExpanded((v) => !v)}
-                  activeOpacity={0.7}
+                  style={detailSt.repayBtn}
+                  onPress={onRepayment}
+                  activeOpacity={0.8}
                 >
-                  <Text style={styles.lateFeesSubtitle}>
-                    {feesExpanded ? "Hide details" : "Show details"}
-                  </Text>
-                  <Text style={styles.lateFeesExpandChevron}>
-                    {feesExpanded ? "▲" : "▼"}
+                  <Text style={detailSt.repayBtnText}>
+                    💵 Record Payment
                   </Text>
                 </TouchableOpacity>
+                <TouchableOpacity
+                  style={detailSt.scheduleBtn}
+                  onPress={onSchedule}
+                  activeOpacity={0.8}
+                >
+                  <Text style={detailSt.scheduleBtnText}>📅 Schedule</Text>
+                </TouchableOpacity>
+              </>
+            )}
 
-                {feesExpanded && (
-                  <View style={{ marginTop: 4 }}>
-                    {lateFees.rows.map((row, i) => {
-                      const feeId =
-                        row.feeTxId ||
-                        `inst-${row.installmentIndex ?? i}`;
-                      const isSaving = applyingFeeId === feeId;
+            {loan.status === "approved" && canDisburse && (
+              <TouchableOpacity
+                style={detailSt.disburseBtn}
+                onPress={onDisburse}
+                activeOpacity={0.8}
+              >
+                <Text style={detailSt.disburseBtnText}>
+                  ⚡ Disburse Loan
+                </Text>
+              </TouchableOpacity>
+            )}
 
-                      const unappliedAmount =
-                        row.unappliedFeeAmount ?? row.amount;
-
-                      const customVal = customAmounts[feeId] ?? "";
-
-                      return (
-                        <View
-                          key={`${row.kind}-${i}`}
-                          style={[
-                            styles.lateFeeRow,
-                            i === 0 && {
-                              borderTopWidth: 0,
-                              paddingTop: 4,
-                            },
-                          ]}
-                        >
-                          <View style={styles.lateFeeRowTop}>
-                            <View
-                              style={[
-                                styles.lateFeeKindBadge,
-                                row.kind === "applied"
-                                  ? { backgroundColor: C.infoBg }
-                                  : { backgroundColor: C.goldBg },
-                              ]}
-                            >
-                              <Text
-                                style={[
-                                  styles.lateFeeKindText,
-                                  {
-                                    color:
-                                      row.kind === "applied"
-                                        ? C.infoText
-                                        : C.gold,
-                                  },
-                                ]}
-                              >
-                                {row.kind === "applied"
-                                  ? "RECORDED"
-                                  : "ACCRUED"}
-                              </Text>
-                            </View>
-
-                            <Text
-                              style={styles.lateFeeLabel}
-                              numberOfLines={2}
-                            >
-                              {row.label}
-                            </Text>
-                          </View>
-
-                          {row.sublabel ? (
-                            <Text
-                              style={styles.lateFeeSublabel}
-                              numberOfLines={3}
-                            >
-                              {row.sublabel}
-                            </Text>
-                          ) : null}
-
-                          {row.monthlyInterestBase != null && (
-                            <Text
-                              style={[
-                                styles.lateFeeSublabel,
-                                {
-                                  color: C.text2,
-                                  marginTop: 2,
-                                  fontWeight: "600",
-                                },
-                              ]}
-                            >
-                              Monthly interest:{" "}
-                              {fmtCurrency(row.monthlyInterestBase)}
-                            </Text>
-                          )}
-
-                          {row.kind === "accrued" &&
-                            unappliedAmount > 0 &&
-                            unappliedAmount !== row.amount && (
-                              <Text
-                                style={[
-                                  styles.lateFeeSublabel,
-                                  {
-                                    color: C.text2,
-                                    marginTop: 2,
-                                  },
-                                ]}
-                              >
-                                New fee to record:{" "}
-                                {fmtCurrency(unappliedAmount)}
-                              </Text>
-                            )}
-
-                          <View style={styles.lateFeeRowBottom}>
-                            <Text style={styles.lateFeeAmount}>
-                              {fmtCurrency(row.amount)}
-                            </Text>
-
-                            {canManageFees && (
-                              <View
-                                style={styles.lateFeeActionRow}
-                              >
-                                {row.kind === "accrued" && (
-                                  <>
-                                    <TextInput
-                                      style={styles.lateFeeInput}
-                                      placeholder={String(unappliedAmount)}
-                                      placeholderTextColor={C.text3}
-                                      keyboardType="numeric"
-                                      value={customVal}
-                                      onChangeText={(v) =>
-                                        setCustomAmounts((prev) => ({
-                                          ...prev,
-                                          [feeId]: v,
-                                        }))
-                                      }
-                                    />
-                                    <TouchableOpacity
-                                      style={styles.lateFeeApplyBtn}
-                                      onPress={() => handleApplyFee(row)}
-                                      disabled={isSaving}
-                                      activeOpacity={0.8}
-                                    >
-                                      <Text style={styles.lateFeeApplyBtnText}>
-                                        {isSaving ? "…" : "Apply"}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  </>
-                                )}
-
-                                {onWaive && (
-                                  <TouchableOpacity
-                                    style={styles.lateFeeVoidBtn}
-                                    onPress={() =>
-                                      onWaive({
-                                        memberId: loan.memberId,
-                                        periodStart:
-                                          row.overdueInstallment?.dueDate ??
-                                          walletTxs.find(
-                                            (t) => t.id === row.feeTxId,
-                                          )?.date ??
-                                          new Date().toISOString(),
-                                        periodLabel: `Installment #${
-                                          (row.installmentIndex ?? 0) + 1
-                                        }`,
-                                        applied: row.kind === "applied",
-                                        feeTxId: row.feeTxId,
-                                      })
-                                    }
-                                    disabled={isSaving}
-                                    activeOpacity={0.8}
-                                  >
-                                    <Text style={styles.lateFeeVoidBtnText}>
-                                      Waive
-                                    </Text>
-                                  </TouchableOpacity>
-                                )}
-                              </View>
-                            )}
-                          </View>
-                        </View>
-                      );
-                    })}
-
-                    <View style={styles.lateFeeTotalRow}>
-                      <Text style={styles.lateFeeTotalLabel}>
-                        Total late fees owed
-                      </Text>
-                      <Text style={styles.lateFeeTotalValue}>
-                        {fmtCurrency(lateFees.total)}
-                      </Text>
-                    </View>
-                  </View>
-                )}
+            {!!actableStep && isPending && (
+              <>
+                <TouchableOpacity
+                  style={detailSt.rejectBtn}
+                  onPress={onReject}
+                  activeOpacity={0.8}
+                >
+                  <Text style={detailSt.rejectBtnText}>Reject</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={detailSt.approveBtn}
+                  onPress={onApprove}
+                  activeOpacity={0.8}
+                >
+                  <Text style={detailSt.approveBtnText}>Approve</Text>
+                </TouchableOpacity>
               </>
             )}
           </View>
         )}
 
+        {/* ── 6. Late-fees alert ──────────────────────────────────── */}
+        {shouldRenderLateFeesCard && (
+          <View style={detailSt.alertBox}>
+            <TouchableOpacity
+              style={detailSt.alertHeader}
+              onPress={() => setFeesExpanded((v) => !v)}
+              activeOpacity={0.7}
+            >
+              <View style={detailSt.alertIcon}>
+                <Text style={{ fontSize: 14 }}>⚠️</Text>
+              </View>
+
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={detailSt.alertTitle} numberOfLines={1}>
+                  {hasFeesOwed
+                    ? `${lateFees.count} unpaid late fee${
+                        lateFees.count !== 1 ? "s" : ""
+                      }`
+                    : "Late Fees"}
+                </Text>
+                <Text style={detailSt.alertSub} numberOfLines={1}>
+                  {hasFeesOwed
+                    ? `${fmtCurrency(lateFees.total)} owed`
+                    : "No fees currently owed"}
+                </Text>
+              </View>
+
+              {hasFeesOwed && (
+                <Text style={detailSt.alertChevron}>
+                  {feesExpanded ? "▲" : "▼"}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            {feesExpanded && hasFeesOwed && (
+              <View style={detailSt.alertBody}>
+                {lateFees.rows.map((row, i) => {
+                  const feeId =
+                    row.feeTxId || `inst-${row.installmentIndex ?? i}`;
+                  const isSaving = applyingFeeId === feeId;
+                  const unappliedAmount =
+                    row.unappliedFeeAmount ?? row.amount;
+                  const customVal = customAmounts[feeId] ?? "";
+
+                  return (
+                    <View key={`${row.kind}-${i}`} style={detailSt.alertRow}>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <View
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 6,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <View
+                            style={[
+                              detailSt.alertKindBadge,
+                              row.kind === "applied"
+                                ? { backgroundColor: C.infoBg }
+                                : { backgroundColor: C.goldBg },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                detailSt.alertKindText,
+                                {
+                                  color:
+                                    row.kind === "applied"
+                                      ? C.infoText
+                                      : C.gold,
+                                },
+                              ]}
+                            >
+                              {row.kind === "applied"
+                                ? "RECORDED"
+                                : "ACCRUED"}
+                            </Text>
+                          </View>
+                          <Text
+                            style={detailSt.alertRowLabel}
+                            numberOfLines={1}
+                          >
+                            {row.label}
+                          </Text>
+                        </View>
+
+                        {row.sublabel ? (
+                          <Text
+                            style={detailSt.alertRowSub}
+                            numberOfLines={2}
+                          >
+                            {row.sublabel}
+                          </Text>
+                        ) : null}
+                      </View>
+
+                      <View style={{ alignItems: "flex-end" }}>
+                        <Text style={detailSt.alertRowAmount}>
+                          {fmtCurrency(row.amount)}
+                        </Text>
+
+                        {canManageFees && (
+                          <View style={detailSt.alertActions}>
+                            {row.kind === "accrued" && (
+                              <>
+                                <TextInput
+                                  style={detailSt.alertInput}
+                                  placeholder={String(unappliedAmount)}
+                                  placeholderTextColor={C.text3}
+                                  keyboardType="numeric"
+                                  value={customVal}
+                                  onChangeText={(v) =>
+                                    setCustomAmounts((prev) => ({
+                                      ...prev,
+                                      [feeId]: v,
+                                    }))
+                                  }
+                                />
+                                <TouchableOpacity
+                                  style={detailSt.alertMiniBtn}
+                                  onPress={() => handleApplyFee(row)}
+                                  disabled={isSaving}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={detailSt.alertMiniBtnText}>
+                                    {isSaving ? "…" : "Apply"}
+                                  </Text>
+                                </TouchableOpacity>
+                              </>
+                            )}
+                            {onWaive && (
+                              <TouchableOpacity
+                                style={[
+                                  detailSt.alertMiniBtn,
+                                  detailSt.alertMiniBtnDanger,
+                                ]}
+                                onPress={() =>
+                                  onWaive({
+                                    memberId: loan.memberId,
+                                    periodStart:
+                                      row.overdueInstallment?.dueDate ??
+                                      walletTxs.find(
+                                        (t) => t.id === row.feeTxId,
+                                      )?.date ??
+                                      new Date().toISOString(),
+                                    periodLabel: `Installment #${
+                                      (row.installmentIndex ?? 0) + 1
+                                    }`,
+                                    applied: row.kind === "applied",
+                                    feeTxId: row.feeTxId,
+                                  })
+                                }
+                                disabled={isSaving}
+                                activeOpacity={0.8}
+                              >
+                                <Text
+                                  style={[
+                                    detailSt.alertMiniBtnText,
+                                    { color: C.error },
+                                  ]}
+                                >
+                                  Waive
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        )}
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* ── 7. Approval pipeline ────────────────────────────────── */}
         {loan.status !== "rejected" && (
-          <View style={styles.stepsContainer}>
-            <Text style={styles.stepsTitle}>Approval Progress</Text>
+          <View style={detailSt.pipelineCard}>
+            <Text style={detailSt.pipelineTitle}>Approval Progress</Text>
+
             <View style={styles.stepsRow}>
               {APPROVAL_STEPS.map((step, index) => {
                 const currentStepIndex = getApprovalStepIndex(loan.status);
@@ -641,6 +742,7 @@ function LoanDetailModal({
                         isCompleted && styles.stepLabelCompleted,
                         isCurrent && styles.stepLabelCurrent,
                       ]}
+                      numberOfLines={1}
                     >
                       {step.label}
                     </Text>
@@ -656,6 +758,7 @@ function LoanDetailModal({
                 );
               })}
             </View>
+
             <Text style={styles.stepStatus}>
               {loan.status === "pending_loan_officer" &&
                 "⏳ Awaiting Loan Officer review"}
@@ -663,8 +766,8 @@ function LoanDetailModal({
                 "⏳ Awaiting Committee review"}
               {loan.status === "approved" &&
                 "✅ Approved — awaiting disbursement"}
-              {loan.status === "disbursed" && "💰 Loan Disbursed"}
-              {loan.status === "repaid" && "✅ Fully Repaid"}
+              {loan.status === "disbursed" && "💰 Loan disbursed"}
+              {loan.status === "repaid" && "✅ Fully repaid"}
               {loan.status === "defaulted" && "⚠️ Defaulted"}
             </Text>
 
@@ -688,409 +791,743 @@ function LoanDetailModal({
           </View>
         )}
 
-        {loan.purpose ? (
-          <View style={styles.modalInfo}>
-            <Text style={styles.modalDetail}>Purpose: {loan.purpose}</Text>
-          </View>
-        ) : null}
-
-        <View style={detailSt.grid}>
-          <View style={detailSt.cell}>
-            <Text style={detailSt.cellLbl}>Principal</Text>
-            <Text style={detailSt.cellVal}>{fmtCurrency(loan.amount)}</Text>
-          </View>
-          <View style={detailSt.cell}>
-            <Text style={detailSt.cellLbl}>Est. Total Interest</Text>
-            <Text style={detailSt.cellVal}>
-              {fmtCurrency(loan.totalInterest)}
-            </Text>
-          </View>
-          <View style={detailSt.cell}>
-            <Text style={detailSt.cellLbl}>Balance (Principal)</Text>
-            <Text style={[detailSt.cellVal, { color: C.error }]}>
-              {fmtCurrency(loan.balance)}
-            </Text>
-          </View>
-
-          <View style={detailSt.cell}>
-            <Text style={detailSt.cellLbl}>
-              {isRB ? "Accrued Interest" : "Int. Left"}
-            </Text>
-            <Text style={[detailSt.cellVal, { color: C.gold }]}>
-              {fmtCurrency(accruedInterestForDisplay)}
-            </Text>
-          </View>
-
-          <View style={detailSt.cell}>
-            <Text style={detailSt.cellLbl}>Amount Repaid</Text>
-            <Text style={[detailSt.cellVal, { color: C.success }]}>
-              {fmtCurrency(loan.amountRepaid)}
-            </Text>
-          </View>
-          <View style={detailSt.cell}>
-            <Text style={detailSt.cellLbl}>Total Due</Text>
-            <Text
-              style={[
-                detailSt.cellVal,
-                { color: C.primary, fontWeight: "800" },
-              ]}
-            >
-              {fmtCurrency(totalDueForDisplay)}
-            </Text>
-          </View>
-        </View>
-
-        <View style={detailSt.progressWrap}>
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              marginBottom: 4,
-            }}
-          >
-            <Text style={detailSt.progressLbl}>Repayment Progress</Text>
-            <Text
-              style={[
-                detailSt.progressLbl,
-                {
-                  color: pct >= 100 ? C.success : C.primary,
-                  fontWeight: "700",
-                },
-              ]}
-            >
-              {pct.toFixed(1)}%
-            </Text>
-          </View>
-          <View style={detailSt.progressTrack}>
-            <View
-              style={[
-                detailSt.progressFill,
-                {
-                  width: `${Math.min(100, pct)}%` as any,
-                  backgroundColor: pct >= 100 ? C.success : C.primary,
-                },
-              ]}
-            />
-          </View>
-          <Text style={detailSt.progressSub}>
-            {fmtCurrency(loan.amountRepaid)} repaid of{" "}
-            {fmtCurrency(loan.totalRepayable)}
-            {loan.status !== "repaid"
-              ? ` · ${fmtCurrency(
-                  round2(
-                    Math.max(0, loan.totalRepayable - loan.amountRepaid),
-                  ),
-                )} remaining`
-              : " · Fully repaid ✓"}
+        {/* ── 8. Details (collapsible) ────────────────────────────── */}
+        <TouchableOpacity
+          style={detailSt.collapsibleHeader}
+          onPress={() => setDetailsExpanded((v) => !v)}
+          activeOpacity={0.7}
+        >
+          <Text style={detailSt.collapsibleTitle}>Loan Details</Text>
+          <Text style={detailSt.collapsibleChevron}>
+            {detailsExpanded ? "▲" : "▼"}
           </Text>
-        </View>
+        </TouchableOpacity>
 
-        <View style={styles.actionRow}>
-          {loan.status === "disbursed" && (
-            <>
-              <TouchableOpacity
-                style={[styles.scheduleBtn, { flex: 1 }]}
-                onPress={onSchedule}
-              >
-                <Text style={styles.scheduleBtnText}>Schedule</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.repayBtn, { flex: 1 }]}
-                onPress={onRepayment}
-              >
-                <Text style={styles.repayBtnText}>Repayment</Text>
-              </TouchableOpacity>
-            </>
-          )}
-          {loan.status === "approved" && canDisburse && (
-            <TouchableOpacity
-              style={[styles.disburseBtn, { flex: 1 }]}
-              onPress={onDisburse}
-            >
-              <Text style={styles.disburseBtnText}>Disburse</Text>
-            </TouchableOpacity>
-          )}
-          {actableStep && isPending && (
-            <>
-              <TouchableOpacity
-                style={[styles.rejectBtn, { flex: 1 }]}
-                onPress={onReject}
-              >
-                <Text style={styles.rejectBtnText}>Reject</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.approveBtn, { flex: 1 }]}
-                onPress={onApprove}
-              >
-                <Text style={styles.approveBtnText}>Approve</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-
-        {loan.status === "rejected" && onEditResubmit && (
-          <TouchableOpacity
-            style={styles.editResubmitBtn}
-            onPress={onEditResubmit}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.editResubmitBtnText}>
-              ✏️ Edit &amp; Resubmit
-            </Text>
-          </TouchableOpacity>
-        )}
-        {canDisburse && onDelete && (
-          <TouchableOpacity
-            style={styles.deleteBtn}
-            onPress={onDelete}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.deleteBtnText}>🗑 Delete Loan</Text>
-          </TouchableOpacity>
-        )}
-        {canDisburse && onEdit && (
-          <TouchableOpacity
-            style={styles.editBtn}
-            onPress={onEdit}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.editBtnText}>✏️ Edit Loan</Text>
-          </TouchableOpacity>
-        )}
-
-        <Button
-          label="Close"
-          onPress={onClose}
-          fullWidth
-          variant="secondary"
-          style={{ marginTop: 12 }}
-        />
-
-        {paymentTxs && paymentTxs.length > 0 && (
-          <View style={detailSt.histCard}>
-            <Text style={detailSt.histTitle}>
-              Payment History ({paymentTxs.length} transactions)
-            </Text>
-            <View style={detailSt.histHeadRow}>
-              <Text style={[detailSt.histHead, { flex: 1.4 }]}>DATE</Text>
-              <Text
-                style={[detailSt.histHead, { flex: 1, textAlign: "right" }]}
-              >
-                INTEREST
-              </Text>
-              <Text
-                style={[detailSt.histHead, { flex: 1, textAlign: "right" }]}
-              >
-                PRINCIPAL
-              </Text>
-              <Text
-                style={[detailSt.histHead, { flex: 1, textAlign: "right" }]}
-              >
-                TOTAL
+        {detailsExpanded && (
+          <View style={detailSt.detailsBody}>
+            <View style={detailSt.detailRow}>
+              <Text style={detailSt.detailLbl}>Total repayable</Text>
+              <Text style={detailSt.detailVal}>
+                {fmtCurrency(loan.totalRepayable)}
               </Text>
             </View>
-            {paymentTxs.map((row: any, i: number) => (
-              <View
-                key={i}
-                style={[
-                  detailSt.histRow,
-                  i % 2 === 1 && { backgroundColor: C.elevated },
-                ]}
+            <View style={detailSt.detailRow}>
+              <Text style={detailSt.detailLbl}>Est. total interest</Text>
+              <Text style={detailSt.detailVal}>
+                {fmtCurrency(loan.totalInterest)}
+              </Text>
+            </View>
+            <View style={detailSt.detailRow}>
+              <Text style={detailSt.detailLbl}>Amount repaid</Text>
+              <Text
+                style={[detailSt.detailVal, { color: C.success }]}
               >
-                <Text
-                  style={[detailSt.histCell, { flex: 1.4 }]}
-                  numberOfLines={1}
-                >
-                  {new Date(row.date).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "2-digit",
-                    year: "2-digit",
-                  })}
-                </Text>
-                <Text
-                  style={[
-                    detailSt.histCell,
-                    { flex: 1, textAlign: "right", color: C.gold },
-                  ]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.8}
-                >
-                  {fmtCurrency(row.interest)}
-                </Text>
-                <Text
-                  style={[
-                    detailSt.histCell,
-                    { flex: 1, textAlign: "right", color: C.success },
-                  ]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.8}
-                >
-                  {fmtCurrency(row.principal)}
-                </Text>
-                <Text
-                  style={[
-                    detailSt.histCell,
-                    { flex: 1, textAlign: "right", fontWeight: "700" },
-                  ]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.8}
-                >
-                  {fmtCurrency(row.interest + row.principal)}
+                {fmtCurrency(loan.amountRepaid)}
+              </Text>
+            </View>
+            <View style={detailSt.detailRow}>
+              <Text style={detailSt.detailLbl}>Applied</Text>
+              <Text style={detailSt.detailVal}>
+                {fmtDate(loan.applicationDate)}
+              </Text>
+            </View>
+            {(loan as any).disbursementDate ? (
+              <View style={detailSt.detailRow}>
+                <Text style={detailSt.detailLbl}>Disbursed</Text>
+                <Text style={detailSt.detailVal}>
+                  {fmtDate((loan as any).disbursementDate)}
                 </Text>
               </View>
-            ))}
-            <View style={[detailSt.histRow, detailSt.histTotalRow]}>
-              <Text
-                style={[
-                  detailSt.histCell,
-                  { flex: 1.4, fontWeight: "700", color: C.text },
-                ]}
-              >
-                Total
-              </Text>
-              <Text
-                style={[
-                  detailSt.histCell,
-                  {
-                    flex: 1,
-                    textAlign: "right",
-                    fontWeight: "700",
-                    color: C.gold,
-                  },
-                ]}
-              >
-                {fmtCurrency(
-                  paymentTxs.reduce(
-                    (s: number, r: any) => s + r.interest,
-                    0,
-                  ),
-                )}
-              </Text>
-              <Text
-                style={[
-                  detailSt.histCell,
-                  {
-                    flex: 1,
-                    textAlign: "right",
-                    fontWeight: "700",
-                    color: C.success,
-                  },
-                ]}
-              >
-                {fmtCurrency(
-                  paymentTxs.reduce(
-                    (s: number, r: any) => s + r.principal,
-                    0,
-                  ),
-                )}
-              </Text>
-              <Text
-                style={[
-                  detailSt.histCell,
-                  {
-                    flex: 1,
-                    textAlign: "right",
-                    fontWeight: "700",
-                    color: C.text,
-                  },
-                ]}
-              >
-                {fmtCurrency(
-                  paymentTxs.reduce(
-                    (s: number, r: any) => s + r.interest + r.principal,
-                    0,
-                  ),
-                )}
-              </Text>
-            </View>
+            ) : null}
+            {loan.purpose ? (
+              <View style={detailSt.detailRow}>
+                <Text style={detailSt.detailLbl}>Purpose</Text>
+                <Text
+                  style={[
+                    detailSt.detailVal,
+                    { flex: 1, textAlign: "right" },
+                  ]}
+                  numberOfLines={2}
+                >
+                  {loan.purpose}
+                </Text>
+              </View>
+            ) : null}
+            {!!(loan as any).lateFeeRatePct && (
+              <View style={detailSt.detailRow}>
+                <Text style={detailSt.detailLbl}>Late fee rate</Text>
+                <Text style={detailSt.detailVal}>
+                  {(loan as any).lateFeeRatePct}%
+                  {(loan as any).lateFeeGraceDays
+                    ? ` · ${(loan as any).lateFeeGraceDays}d grace`
+                    : ""}
+                </Text>
+              </View>
+            )}
           </View>
         )}
-      </View>
+
+        {/* ── 9. Payment history (collapsible) ────────────────────── */}
+        {paymentTxs && paymentTxs.length > 0 && (
+          <>
+            <TouchableOpacity
+              style={detailSt.collapsibleHeader}
+              onPress={() => setHistoryExpanded((v) => !v)}
+              activeOpacity={0.7}
+            >
+              <Text style={detailSt.collapsibleTitle}>
+                Payment History ({paymentTxs.length})
+              </Text>
+              <Text style={detailSt.collapsibleChevron}>
+                {historyExpanded ? "▲" : "▼"}
+              </Text>
+            </TouchableOpacity>
+
+            {historyExpanded && (
+              <View style={detailSt.histBody}>
+                <View style={detailSt.histHeadRow}>
+                  <Text style={[detailSt.histHead, { flex: 1.4 }]}>
+                    DATE
+                  </Text>
+                  <Text
+                    style={[
+                      detailSt.histHead,
+                      { flex: 1, textAlign: "right" },
+                    ]}
+                  >
+                    INTEREST
+                  </Text>
+                  <Text
+                    style={[
+                      detailSt.histHead,
+                      { flex: 1, textAlign: "right" },
+                    ]}
+                  >
+                    PRINCIPAL
+                  </Text>
+                  <Text
+                    style={[
+                      detailSt.histHead,
+                      { flex: 1, textAlign: "right" },
+                    ]}
+                  >
+                    TOTAL
+                  </Text>
+                </View>
+
+                {paymentTxs.map((row: any, i: number) => (
+                  <View
+                    key={i}
+                    style={[
+                      detailSt.histRow,
+                      i % 2 === 1 && {
+                        backgroundColor: C.elevated,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[detailSt.histCell, { flex: 1.4 }]}
+                      numberOfLines={1}
+                    >
+                      {new Date(row.date).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "2-digit",
+                        year: "2-digit",
+                      })}
+                    </Text>
+                    <Text
+                      style={[
+                        detailSt.histCell,
+                        { flex: 1, textAlign: "right", color: C.gold },
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.8}
+                    >
+                      {fmtCurrency(row.interest)}
+                    </Text>
+                    <Text
+                      style={[
+                        detailSt.histCell,
+                        {
+                          flex: 1,
+                          textAlign: "right",
+                          color: C.success,
+                        },
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.8}
+                    >
+                      {fmtCurrency(row.principal)}
+                    </Text>
+                    <Text
+                      style={[
+                        detailSt.histCell,
+                        {
+                          flex: 1,
+                          textAlign: "right",
+                          fontWeight: "700",
+                        },
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.8}
+                    >
+                      {fmtCurrency(row.interest + row.principal)}
+                    </Text>
+                  </View>
+                ))}
+
+                <View style={[detailSt.histRow, detailSt.histTotalRow]}>
+                  <Text
+                    style={[
+                      detailSt.histCell,
+                      { flex: 1.4, fontWeight: "700", color: C.text },
+                    ]}
+                  >
+                    Total
+                  </Text>
+                  <Text
+                    style={[
+                      detailSt.histCell,
+                      {
+                        flex: 1,
+                        textAlign: "right",
+                        fontWeight: "700",
+                        color: C.gold,
+                      },
+                    ]}
+                  >
+                    {fmtCurrency(
+                      paymentTxs.reduce(
+                        (s: number, r: any) => s + r.interest,
+                        0,
+                      ),
+                    )}
+                  </Text>
+                  <Text
+                    style={[
+                      detailSt.histCell,
+                      {
+                        flex: 1,
+                        textAlign: "right",
+                        fontWeight: "700",
+                        color: C.success,
+                      },
+                    ]}
+                  >
+                    {fmtCurrency(
+                      paymentTxs.reduce(
+                        (s: number, r: any) => s + r.principal,
+                        0,
+                      ),
+                    )}
+                  </Text>
+                  <Text
+                    style={[
+                      detailSt.histCell,
+                      {
+                        flex: 1,
+                        textAlign: "right",
+                        fontWeight: "700",
+                        color: C.text,
+                      },
+                    ]}
+                  >
+                    {fmtCurrency(
+                      paymentTxs.reduce(
+                        (s: number, r: any) =>
+                          s + r.interest + r.principal,
+                        0,
+                      ),
+                    )}
+                  </Text>
+                </View>
+              </View>
+            )}
+          </>
+        )}
+
+        {/* ── 10. Admin actions ───────────────────────────────────── */}
+        {showAdminActions && (
+          <View style={detailSt.adminZone}>
+            <Text style={detailSt.adminZoneLabel}>ADMIN ACTIONS</Text>
+
+            {loan.status === "rejected" && onEditResubmit && (
+              <TouchableOpacity
+                style={detailSt.adminBtnAmber}
+                onPress={onEditResubmit}
+                activeOpacity={0.8}
+              >
+                <Text style={detailSt.adminBtnAmberText}>
+                  ✏️ Edit & Resubmit
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {onEdit && (
+              <TouchableOpacity
+                style={detailSt.adminBtnNeutral}
+                onPress={onEdit}
+                activeOpacity={0.8}
+              >
+                <Text style={detailSt.adminBtnNeutralText}>Edit Loan</Text>
+              </TouchableOpacity>
+            )}
+
+            {onDelete && (
+              <TouchableOpacity
+                style={detailSt.adminBtnDanger}
+                onPress={onDelete}
+                activeOpacity={0.8}
+              >
+                <Text style={detailSt.adminBtnDangerText}>Delete Loan</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {/* ── 11. Close ───────────────────────────────────────────── */}
+        <TouchableOpacity
+          style={detailSt.closeBtn}
+          onPress={onClose}
+          activeOpacity={0.8}
+        >
+          <Text style={detailSt.closeBtnText}>Close</Text>
+        </TouchableOpacity>
+      </ScrollView>
     </BottomModal>
   );
 }
 
 // ─── Loan Detail Modal styles ─────────────────────────────────────────────────
 const detailSt = StyleSheet.create({
-  grid: {
+  body: { padding: 16, paddingBottom: 40 },
+
+  // ── Header ──
+  header: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    borderWidth: 1,
-    borderColor: C.border,
-    borderRadius: 12,
-    overflow: "hidden",
+    alignItems: "center",
+    gap: 12,
     marginBottom: 16,
   },
-  cell: {
-    width: "50%",
-    padding: 12,
-    borderRightWidth: 1,
-    borderRightColor: C.border,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: C.pill,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  cellLbl: {
-    fontSize: 10,
+  avatarText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: C.primary,
+  },
+  memberName: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: C.text,
+  },
+  memberMeta: {
+    fontSize: 11,
     color: C.text3,
+    marginTop: 2,
+  },
+  statusChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    flexShrink: 0,
+    maxWidth: 130,
+  },
+  statusChipText: {
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+
+  // ── Hero ──
+  loanDetailHero: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: R.lg,
+    padding: 18,
+    marginBottom: 12,
+  },
+  heroLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: C.text3,
+    letterSpacing: 1,
+    textTransform: "uppercase",
     marginBottom: 4,
+  },
+  heroValue: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: C.error,
+    letterSpacing: -0.8,
+    marginBottom: 12,
+  },
+  heroMeta: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  heroMetaText: {
+    fontSize: 11,
+    color: C.text3,
+    flex: 1,
+    minWidth: 0,
+  },
+  heroMetaPct: {
+    fontSize: 12,
+    fontWeight: "800",
+    marginLeft: 8,
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: C.border,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%" as any,
+    borderRadius: 3,
+  },
+
+  // ── Metric strip ──
+  metricRow: {
+    flexDirection: "row",
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: R.lg,
+    paddingVertical: 14,
+    marginBottom: 12,
+  },
+  metricCol: { flex: 1, alignItems: "center", minWidth: 0, paddingHorizontal: 4 },
+  metricDiv: {
+    width: 1,
+    alignSelf: "stretch",
+    backgroundColor: C.borderLight,
+  },
+  metricLbl: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: C.text3,
     textTransform: "uppercase",
     letterSpacing: 0.5,
+    marginBottom: 4,
   },
-  cellVal: { fontSize: 14, fontWeight: "700", color: C.text },
+  metricVal: {
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "center",
+    marginBottom: 2,
+  },
+  metricSub: {
+    fontSize: 9,
+    color: C.text3,
+    fontWeight: "600",
+    textAlign: "center",
+  },
 
+  // ── Accrual line ──
+  accrualLine: {
+    backgroundColor: C.goldBg,
+    borderRadius: R.md,
+    padding: 10,
+    marginBottom: 12,
+  },
+  accrualLineText: {
+    fontSize: 11,
+    color: C.gold,
+    lineHeight: 15,
+    textAlign: "center",
+    fontWeight: "600",
+  },
+
+  // ── Primary actions ──
+  primaryActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 16,
+    flexWrap: "wrap",
+  },
+  repayBtn: {
+    flex: 1,
+    minWidth: 140,
+    backgroundColor: C.primary,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  repayBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  scheduleBtn: {
+    flex: 1,
+    minWidth: 120,
+    backgroundColor: C.tealBg,
+    borderWidth: 1,
+    borderColor: "rgba(13,148,136,0.3)",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  scheduleBtnText: { color: C.teal, fontSize: 13, fontWeight: "700" },
+  disburseBtn: {
+    flex: 1,
+    backgroundColor: C.gold,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  disburseBtnText: { color: "#fff", fontSize: 14, fontWeight: "800" },
+  approveBtn: {
+    flex: 1,
+    backgroundColor: C.success,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  approveBtnText: { color: "#fff", fontSize: 14, fontWeight: "800" },
+  rejectBtn: {
+    flex: 1,
+    backgroundColor: C.redBg,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.3)",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  rejectBtnText: { color: C.error, fontSize: 14, fontWeight: "800" },
+
+  // ── Late fee alert ──
+  alertBox: {
+    backgroundColor: C.redBg,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.25)",
+    borderRadius: R.lg,
+    marginBottom: 16,
+    overflow: "hidden",
+  },
+  alertHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 12,
+  },
+  alertIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: "rgba(239,68,68,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  alertTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: C.error,
+  },
+  alertSub: {
+    fontSize: 11,
+    color: C.text2,
+    marginTop: 1,
+  },
+  alertChevron: {
+    fontSize: 10,
+    color: C.text3,
+    marginLeft: 6,
+  },
+  alertBody: {
+    borderTopWidth: 1,
+    borderTopColor: "rgba(239,68,68,0.15)",
+    paddingHorizontal: 12,
+  },
+  alertRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(239,68,68,0.1)",
+  },
+  alertKindBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 3,
+    flexShrink: 0,
+  },
+  alertKindText: {
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  alertRowLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text,
+    flexShrink: 1,
+  },
+  alertRowSub: {
+    fontSize: 10,
+    color: C.text3,
+    marginTop: 2,
+    lineHeight: 13,
+  },
+  alertRowAmount: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: C.error,
+    flexShrink: 0,
+  },
+  alertActions: {
+    flexDirection: "row",
+    gap: 5,
+    marginTop: 6,
+    alignItems: "center",
+  },
+  alertInput: {
+    height: 26,
+    width: 68,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 5,
+    paddingHorizontal: 6,
+    fontSize: 11,
+    color: C.text,
+    textAlign: "right",
+  },
+  alertMiniBtn: {
+    backgroundColor: C.primary,
+    borderRadius: 5,
+    paddingHorizontal: 10,
+    height: 26,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  alertMiniBtnDanger: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.error,
+  },
+  alertMiniBtnText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+
+  // ── Pipeline ──
+  pipelineCard: {
+    backgroundColor: C.elevated,
+    borderRadius: R.lg,
+    padding: 14,
+    marginBottom: 12,
+  },
+  pipelineTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text2,
+    marginBottom: 12,
+    textAlign: "center",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+
+  // ── Approval comments ──
   commentBox: {
     marginTop: 10,
-    padding: 12,
-    borderRadius: 10,
+    padding: 10,
+    borderRadius: 8,
     backgroundColor: C.infoBg,
     borderWidth: 1,
     borderColor: "rgba(59,130,246,0.2)",
   },
   commentLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "700",
     color: C.infoText,
     marginBottom: 3,
     textTransform: "uppercase",
     letterSpacing: 0.4,
   },
-  commentText: { fontSize: 13, color: C.text, lineHeight: 18 },
+  commentText: { fontSize: 12, color: C.text, lineHeight: 17 },
 
-  progressWrap: { marginBottom: 16 },
-  progressLbl: { fontSize: 12, color: C.text3, fontWeight: "600" },
-  progressTrack: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: C.border,
-    overflow: "hidden",
-    marginVertical: 6,
-  },
-  progressFill: { height: "100%" as any, borderRadius: 4 },
-  progressSub: { fontSize: 11, color: C.text3 },
-
-  histCard: {
-    marginTop: 16,
+  // ── Collapsibles ──
+  collapsibleHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: C.surface,
     borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 12,
-    overflow: "hidden",
+    borderRadius: R.md,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 8,
   },
-  histTitle: {
-    fontSize: 13,
+  collapsibleTitle: {
+    fontSize: 12,
     fontWeight: "700",
     color: C.text,
-    padding: 12,
-    backgroundColor: C.elevated,
+  },
+  collapsibleChevron: {
+    fontSize: 10,
+    color: C.text3,
+  },
+
+  // ── Details body ──
+  detailsBody: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: R.md,
+    paddingHorizontal: 14,
+    paddingVertical: 4,
+    marginBottom: 8,
+  },
+  detailRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 9,
     borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    borderBottomColor: C.borderLight,
+    gap: 10,
+  },
+  detailLbl: {
+    fontSize: 12,
+    color: C.text3,
+    fontWeight: "600",
+    flexShrink: 0,
+  },
+  detailVal: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text,
+    flexShrink: 0,
+  },
+
+  // ── History body ──
+  histBody: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: R.md,
+    overflow: "hidden",
+    marginBottom: 8,
   },
   histHeadRow: {
     flexDirection: "row",
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 8,
     backgroundColor: C.elevated,
   },
   histHead: {
@@ -1098,21 +1535,92 @@ const detailSt = StyleSheet.create({
     fontWeight: "700",
     color: C.text3,
     textTransform: "uppercase",
-    letterSpacing: 0.6,
+    letterSpacing: 0.5,
   },
   histRow: {
     flexDirection: "row",
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingVertical: 10,
     borderTopWidth: 1,
     borderTopColor: C.borderLight,
-    gap: 4,
   },
-  histCell: { fontSize: 12, color: C.text2, minWidth: 0 },
+  histCell: { fontSize: 11, color: C.text2, minWidth: 0 },
   histTotalRow: {
     backgroundColor: C.elevated,
     borderTopWidth: 1,
     borderTopColor: C.border,
+  },
+
+  // ── Admin zone ──
+  adminZone: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: R.lg,
+    padding: 14,
+    marginTop: 4,
+    marginBottom: 12,
+    gap: 8,
+  },
+  adminZoneLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: C.text3,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  adminBtnAmber: {
+    backgroundColor: C.goldBg,
+    borderWidth: 1,
+    borderColor: "rgba(245,158,11,0.4)",
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: "center",
+  },
+  adminBtnAmberText: {
+    color: C.gold,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  adminBtnNeutral: {
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: "center",
+  },
+  adminBtnNeutralText: {
+    color: C.text2,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  adminBtnDanger: {
+    backgroundColor: C.redBg,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.3)",
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: "center",
+  },
+  adminBtnDangerText: {
+    color: C.error,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  // ── Close ──
+  closeBtn: {
+    backgroundColor: C.mutedBg,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  closeBtnText: {
+    color: C.text2,
+    fontSize: 14,
+    fontWeight: "700",
   },
 });
 
@@ -1365,7 +1873,7 @@ export default function LoansScreen() {
     const today = new Date();
     setDisburseLoanTarget(loan);
     setDisburseApplicationDate(today);
-    setDisburseDateText(dateToYmd(today));
+    setDisburseDateText("");
     setShowDisburseModal(true);
   };
 
@@ -1607,19 +2115,29 @@ export default function LoansScreen() {
             </View>
           ) : (
             <View style={styles.rowList}>
-              {paginatedLoans.map((loan, i) => (
-                <React.Fragment key={loan.id}>
-                  <LoanRow
-                    loan={loan}
-                    member={getMember(loan.memberId)}
-                    onPress={() => {
-                      setSelectedLoan(loan);
-                      setShowLoanDetail(true);
-                    }}
-                  />
-                  {i < paginatedLoans.length - 1 && <Divider />}
-                </React.Fragment>
-              ))}
+              {paginatedLoans.map((loan, i) => {
+                const isOwn =
+                  myIds.has(loan.memberId) ||
+                  myIds.has((loan as any).userId);
+                const canActOnThis = !!getActableStep(loan.status, role);
+
+                return (
+                  <React.Fragment key={loan.id}>
+                    <LoanRow
+                      loan={loan}
+                      member={getMember(loan.memberId)}
+                      isOwn={isOwn}
+                      canActOnThis={canActOnThis}
+                      onPress={() => {
+                        setSelectedLoan(loan);
+                        setShowLoanDetail(true);
+                      }}
+                    />
+                    {i < paginatedLoans.length - 1 && <Divider />}
+                  </React.Fragment>
+                );
+              })}
+
             </View>
           )}
 
@@ -2010,8 +2528,16 @@ export default function LoansScreen() {
             </Text>
           </View>
 
-          <Input
-            label="First Payment Date *"
+          {/* First Payment Date — raw TextInput instead of the shared
+              Input component. The shared Input was rendering "" as
+              today's date on web (likely an <input type="date"> under
+              the hood, which browsers initialise to today when the
+              controlled value is empty). TextInput is a plain text box
+              and honours value="" exactly, so the field opens clean. */}
+          <Text style={styles.disburseDateLabel}>First Payment Date *</Text>
+
+          <TextInput
+            style={styles.disburseDateInput}
             value={disburseDateText}
             onChangeText={(v) => {
               setDisburseDateText(v);
@@ -2019,11 +2545,18 @@ export default function LoansScreen() {
               if (parsed) setDisburseApplicationDate(parsed);
             }}
             placeholder="YYYY-MM-DD"
+            placeholderTextColor={C.text3}
             keyboardType="numbers-and-punctuation"
+            inputMode="numeric"
             autoCapitalize="none"
             autoCorrect={false}
-            hint="Required. May be a past, present, or future date — the money is recorded as leaving the wallet on this day."
+            autoComplete="off"
           />
+
+          <Text style={styles.disburseDateHint}>
+            Required. May be a past, present, or future date — the money
+            is recorded as leaving the wallet on this day.
+          </Text>
 
           <Text
             style={{
@@ -2056,19 +2589,33 @@ export default function LoansScreen() {
               variant="secondary"
               style={{ flex: 1 }}
             />
-            <Button
-              label={
-                isDisbursing ? "Disbursing…" : "Confirm Disbursement"
-              }
+
+            {/* Confirm uses a plain TouchableOpacity instead of the
+                shared Button component so its amber background matches
+                the "Ready to disburse" row highlight — the Button
+                component's variant set doesn't include a gold option.
+                Height matches Button's default via minHeight so the
+                Cancel button beside it lines up. */}
+            <TouchableOpacity
+              style={[
+                styles.confirmDisburseBtn,
+                (isDisbursing ||
+                  !disburseDateText.trim() ||
+                  !parseYmdToDate(disburseDateText)) &&
+                  styles.confirmDisburseBtnDisabled,
+              ]}
               onPress={confirmDisbursement}
-              variant="primary"
-              style={{ flex: 1 }}
               disabled={
                 isDisbursing ||
                 !disburseDateText.trim() ||
                 !parseYmdToDate(disburseDateText)
               }
-            />
+              activeOpacity={0.8}
+            >
+              <Text style={styles.confirmDisburseBtnText}>
+                {isDisbursing ? "Disbursing…" : "Confirm Disbursement"}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </BottomModal>
@@ -2219,14 +2766,19 @@ function LoanRow({
   loan,
   member,
   onPress,
+  isOwn,
+  canActOnThis,
 }: {
   loan: Loan;
   member: any;
   onPress: () => void;
+  isOwn?: boolean;
+  canActOnThis?: boolean;
 }) {
   const statusColor = STATUS_COLOR[loan.status] || C.infoText;
   const statusBg = STATUS_BG[loan.status] || C.mutedBg;
   const statusLabel = STATUS_LABEL[loan.status] || loan.status;
+
   const pct =
     loan.status === "repaid"
       ? 100
@@ -2234,8 +2786,25 @@ function LoanRow({
         ? Math.min(100, (loan.amountRepaid / loan.totalRepayable) * 100)
         : 0;
 
+  const isPending = PENDING_STATUSES.includes(loan.status);
+  const showTracker = !!isOwn && isPending;
+  const showActionPill = !!canActOnThis && isPending;
+
+  // Left-edge stripe: amber when the current user needs to act on this
+  // specific loan, otherwise the status color. This is the primary
+  // "scan me" affordance for approvers working down the list.
+  const stripeColor = showActionPill ? C.gold : statusColor;
+
   return (
-    <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.7}>
+    <TouchableOpacity
+      style={[
+        styles.row,
+        { borderLeftColor: stripeColor },
+        showActionPill && styles.rowActionable,
+      ]}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
       <View style={styles.rowAvatar}>
         <Text style={styles.rowAvatarText}>
           {(member?.fullName ?? "?")
@@ -2246,17 +2815,30 @@ function LoanRow({
             .toUpperCase()}
         </Text>
       </View>
+
       <View style={styles.rowMid}>
         <Text style={styles.rowTitle} numberOfLines={1}>
           {member?.fullName ?? "Unknown"}
         </Text>
-        <Text style={styles.rowMeta}>
+
+        <Text style={styles.rowMeta} numberOfLines={1}>
           {fmtDate(loan.applicationDate)}
           {["disbursed", "repaid"].includes(loan.status)
             ? ` · ${pct.toFixed(0)}% repaid`
             : ""}
         </Text>
+
+        {showActionPill && (
+          <View style={styles.actionNeededPill}>
+            <Text style={styles.actionNeededText}>
+              ⚡ Awaiting your review
+            </Text>
+          </View>
+        )}
+
+        {showTracker && <PendingProgress status={loan.status} />}
       </View>
+
       <View style={{ alignItems: "flex-end" }}>
         <Text style={styles.rowAmount}>{fmtCurrency(loan.amount)}</Text>
         <View style={{ marginTop: 4 }}>
@@ -2264,6 +2846,70 @@ function LoanRow({
         </View>
       </View>
     </TouchableOpacity>
+  );
+}
+
+// ─── Compact pipeline tracker shown on the applicant's own pending loans
+//
+// Three nodes: Officer → Committee → Approved. Filled dot = completed
+// stage, ringed amber dot = current stage, empty dot = future stage.
+// Rejected / defaulted loans never reach here (not in PENDING_STATUSES).
+function PendingProgress({ status }: { status: string }) {
+  const steps = [
+    { key: "pending_loan_officer", label: "Officer" },
+    { key: "pending_committee", label: "Committee" },
+    { key: "approved", label: "Approved" },
+  ];
+
+  const currentIdx = Math.max(
+    0,
+    steps.findIndex((s) => s.key === status),
+  );
+
+  return (
+    <View style={styles.pendingTracker}>
+      {steps.map((step, i) => {
+        const isDone = i < currentIdx;
+        const isCurrent = i === currentIdx;
+
+        return (
+          <React.Fragment key={step.key}>
+            <View style={styles.pendingTrackerNode}>
+              <View
+                style={[
+                  styles.pendingDot,
+                  isDone && styles.pendingDotDone,
+                  isCurrent && styles.pendingDotCurrent,
+                ]}
+              >
+                {isDone ? (
+                  <Text style={styles.pendingCheck}>✓</Text>
+                ) : null}
+              </View>
+
+              <Text
+                style={[
+                  styles.pendingLabel,
+                  (isDone || isCurrent) && styles.pendingLabelActive,
+                ]}
+                numberOfLines={1}
+              >
+                {step.label}
+              </Text>
+            </View>
+
+            {i < steps.length - 1 && (
+              <View
+                style={[
+                  styles.pendingConnector,
+                  isDone && styles.pendingConnectorDone,
+                ]}
+              />
+            )}
+          </React.Fragment>
+        );
+      })}
+    </View>
   );
 }
 
@@ -2541,7 +3187,7 @@ const styles = StyleSheet.create({
   rejectBtnText: { color: C.error, fontSize: 12, fontWeight: "700" },
   disburseBtn: {
     flex: 1,
-    backgroundColor: C.primary,
+    backgroundColor: C.gold,
     borderRadius: 10,
     paddingVertical: 10,
     alignItems: "center",
@@ -2981,6 +3627,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 13,
+    borderLeftWidth: 4,
+    borderLeftColor: C.border,
   },
   rowAvatar: {
     width: 36,
@@ -2996,6 +3644,143 @@ const styles = StyleSheet.create({
   rowTitle: { fontSize: 14, fontWeight: "700", color: C.text },
   rowMeta: { fontSize: 12, color: C.text3, marginTop: 2 },
   rowAmount: { fontSize: 14, fontWeight: "800", color: C.text },
+
+  disburseDateLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.text2,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+
+  disburseDateInput: {
+    minHeight: 46,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: C.text,
+  },
+
+  disburseDateHint: {
+    fontSize: 11,
+    color: C.text3,
+    lineHeight: 16,
+    marginTop: 6,
+  },
+  confirmDisburseBtn: {
+    flex: 1,
+    minHeight: 46,
+    backgroundColor: C.gold,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  confirmDisburseBtnDisabled: {
+    opacity: 0.45,
+  },
+
+  confirmDisburseBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+
+  rowActionable: {
+    backgroundColor: "rgba(245,158,11,0.07)",
+  },
+
+  actionNeededPill: {
+    marginTop: 6,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: C.goldBg,
+    borderWidth: 1,
+    borderColor: "rgba(245,158,11,0.4)",
+  },
+
+  actionNeededText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: C.gold,
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+
+  pendingTracker: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginTop: 10,
+  },
+
+  pendingTrackerNode: {
+    alignItems: "center",
+    minWidth: 58,
+    gap: 3,
+  },
+
+  pendingDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: C.border,
+    backgroundColor: C.surface,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  pendingDotDone: {
+    backgroundColor: C.success,
+    borderColor: C.success,
+  },
+
+  pendingDotCurrent: {
+    borderColor: C.gold,
+    backgroundColor: C.goldBg,
+  },
+
+  pendingCheck: {
+    fontSize: 8,
+    color: "#fff",
+    fontWeight: "800",
+    lineHeight: 10,
+  },
+
+  pendingLabel: {
+    fontSize: 8,
+    color: C.text3,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.2,
+    textAlign: "center",
+  },
+
+  pendingLabelActive: {
+    color: C.text2,
+  },
+
+  pendingConnector: {
+    flex: 1,
+    height: 2,
+    backgroundColor: C.border,
+    marginTop: 6,
+    marginHorizontal: -4,
+  },
+
+  pendingConnectorDone: {
+    backgroundColor: C.success,
+  },
 
   pagination: {
     flexDirection: "row",

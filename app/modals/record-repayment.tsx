@@ -252,6 +252,7 @@ export default function RecordRepaymentModal() {
   const submitting = useRef(false);
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showLateFees, setShowLateFees] = useState(false);
 
   if (!loan) {
     return (
@@ -337,448 +338,329 @@ export default function RecordRepaymentModal() {
 
   return (
     <ModalShell title="Record Payment" onClose={() => router.back()}>
-      <View style={st.infoCard}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={st.cancel}>Cancel</Text>
-        </TouchableOpacity>
-        <View style={{ width: 60 }} />
-      </View>
-
       <ScrollView
         contentContainerStyle={st.body}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        <View style={st.infoCard}>
-          <Text style={st.memberName}>{member?.fullName ?? "Unknown"}</Text>
-          {loan.purpose ? (
-            <Text style={st.purpose}>{loan.purpose}</Text>
-          ) : null}
-
-          <View style={st.section}>
-            <Text style={st.sectionLabel}>LOAN TERMS</Text>
-            <View style={st.cols3}>
-              <View style={st.col}>
-                <Text style={st.colLbl}>Principal</Text>
-                <Text style={st.colVal}>{fmtCurrency(loan.amount)}</Text>
-              </View>
-              <View style={st.colDiv} />
-              <View style={st.col}>
-                <Text style={st.colLbl}>Rate</Text>
-                <Text style={st.colVal}>
-                  {loan.interestRate}% {isRB ? "p.a." : "flat"}
-                </Text>
-              </View>
-              <View style={st.colDiv} />
-              <View style={st.col}>
-                <Text style={st.colLbl}>Term</Text>
-                <Text style={st.colVal}>{loan.repaymentMonths}mo</Text>
-              </View>
-            </View>
+        {/* ── 1. Header: member + context ───────────────────────────── */}
+        <View style={st.header}>
+          <View style={st.avatar}>
+            <Text style={st.avatarText}>
+              {(member?.fullName ?? "?")
+                .split(" ")
+                .map((w: string) => w[0])
+                .join("")
+                .slice(0, 2)
+                .toUpperCase()}
+            </Text>
           </View>
 
-          <View
-            style={[
-              st.section,
-              { borderTopWidth: 1, borderTopColor: Colors.borderLight },
-            ]}
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={st.memberName} numberOfLines={1}>
+              {member?.fullName ?? "Unknown"}
+            </Text>
+            <Text style={st.memberMeta} numberOfLines={1}>
+              {loan.interestRate}%{" "}
+              {isRB ? "monthly · daily accrual" : "flat"} ·{" "}
+              {loan.repaymentMonths} months
+            </Text>
+            {loan.purpose ? (
+              <Text style={st.purpose} numberOfLines={1}>
+                {loan.purpose}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+
+        {/* ── 2. Outstanding hero ───────────────────────────────────── */}
+        <View style={st.outstanding}>
+          <Text style={st.outstandingLabel}>TOTAL DUE TODAY</Text>
+          <Text
+            style={st.outstandingValue}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.7}
           >
-            <Text style={st.sectionLabel}>OUTSTANDING</Text>
-            <View style={st.cols3}>
-              <View style={st.col}>
-                <Text style={st.colLbl}>Principal</Text>
-                <Text style={[st.colVal, { color: Colors.error }]}>
-                  {fmtCurrency(loan.balance)}
-                </Text>
-              </View>
-              <View style={st.colDiv} />
-              <View style={st.col}>
-                <Text style={st.colLbl}>Accrued int.</Text>
-                <Text style={[st.colVal, { color: Colors.gold }]}>
-                  {isRB
-                    ? fmtCurrency(
-                        todayAccrued?.total ??
-                          (loan as any).accruedInterest ??
-                          0,
-                      )
-                    : fmtCurrency(
-                        round2(
-                          loan.totalRepayable -
-                            loan.amountRepaid -
-                            loan.balance,
-                        ),
-                      )}
-                </Text>
-              </View>
-              <View style={st.colDiv} />
-              <View style={st.col}>
-                <Text style={st.colLbl}>Total due</Text>
-                <Text
-                  style={[
-                    st.colVal,
-                    { color: Colors.error, fontWeight: "800" },
-                  ]}
-                >
-                  {isRB
-                    ? fmtCurrency(
-                        round2(loan.balance + (todayAccrued?.total ?? 0)),
-                      )
-                    : fmtCurrency(
-                        round2(loan.totalRepayable - loan.amountRepaid),
-                      )}
-                </Text>
-              </View>
+            {isRB
+              ? fmtCurrency(round2(loan.balance + (todayAccrued?.total ?? 0)))
+              : fmtCurrency(round2(loan.totalRepayable - loan.amountRepaid))}
+          </Text>
+
+          <View style={st.outstandingGrid}>
+            <View style={st.outCol}>
+              <Text style={st.outLbl}>Principal</Text>
+              <Text
+                style={[st.outVal, { color: Colors.error }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                {fmtCurrency(loan.balance)}
+              </Text>
+            </View>
+            <View style={st.outDiv} />
+            <View style={st.outCol}>
+              <Text style={st.outLbl}>Interest</Text>
+              <Text
+                style={[st.outVal, { color: Colors.gold }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                {isRB
+                  ? fmtCurrency(
+                      todayAccrued?.total ??
+                        (loan as any).accruedInterest ??
+                        0,
+                    )
+                  : fmtCurrency(
+                      round2(
+                        loan.totalRepayable -
+                          loan.amountRepaid -
+                          loan.balance,
+                      ),
+                    )}
+              </Text>
+            </View>
+            <View style={st.outDiv} />
+            <View style={st.outCol}>
+              <Text style={st.outLbl}>Repaid</Text>
+              <Text
+                style={[st.outVal, { color: Colors.primary }]}
+                numberOfLines={1}
+              >
+                {pct.toFixed(0)}%
+              </Text>
             </View>
           </View>
 
           {isRB && todayAccrued && (
-            <View style={st.accrualBox}>
-              <Text style={st.accrualText}>
-                📅 Accruing {todayAccrued.days}d from{" "}
-                {fmtDate(todayAccrued.anchor)} · Daily rate:{" "}
-                {round2(todayAccrued.dailyRatePct * 1000) / 1000}% · Today's
-                accrued: {fmtCurrency(todayAccrued.accrued)}
-              </Text>
-            </View>
-          )}
-
-          <View style={st.progressWrap}>
-            <View style={st.progressTrack}>
-              <View style={[st.progressFill, { width: `${pct}%` as any }]} />
-            </View>
-            <Text style={st.progressText}>
-              {loan.status === "repaid" ? "100.0%" : `${pct.toFixed(1)}%`}{" "}
-              repaid
-              {" · "}
-              {fmtCurrency(loan.amountRepaid)} of{" "}
-              {fmtCurrency(loan.totalRepayable)}
+            <Text style={st.accrualLine} numberOfLines={2}>
+              Accruing {todayAccrued.days}d @{" "}
+              {round2(todayAccrued.dailyRatePct * 1000) / 1000}%/day ·{" "}
+              {fmtCurrency(todayAccrued.accrued)} added today
             </Text>
-            {loan.status !== "repaid" && (
-              <Text style={[st.progressText, { marginTop: 2 }]}>
-                {fmtCurrency(round2(loan.totalRepayable - loan.amountRepaid))}{" "}
-                remaining
-              </Text>
-            )}
-          </View>
+          )}
         </View>
 
-        {/* ── Late fees owed on this loan ─────────────────────────────
-            Two sources combined:
-              - APPLIED: late_fee wallet txs already on the ledger for
-                this loan that haven't been marked as paid.
-              - ACCRUED: fees computed live from overdue installments
-                that haven't been applied to the ledger yet.
-            Shown only when there's something to display. */}
+        {/* ── 3. Late-fees alert (compact, expandable) ──────────────── */}
         {lateFees.count > 0 && (
-          <View style={st.lateFeesCard}>
-            <Text style={st.lateFeesTitle}>
-              ⚠️ Late Fees Owed ({lateFees.count})
-            </Text>
-            <Text style={st.lateFeesSubtitle}>
-              Overdue installments past their grace period, plus any fees
-              already recorded but not yet paid.
-            </Text>
-
-            {lateFees.rows.map((row, i) => (
-              <View
-                key={`${row.kind}-${i}`}
-                style={[
-                  st.lateFeeRow,
-                  i === 0 && { borderTopWidth: 0, paddingTop: 4 },
-                ]}
-              >
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 6,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <Text style={st.lateFeeLabel} numberOfLines={1}>
-                      {row.label}
-                    </Text>
-                    <View
-                      style={[
-                        st.lateFeeKind,
-                        row.kind === "applied"
-                          ? { backgroundColor: Colors.infoBg }
-                          : { backgroundColor: Colors.goldBg },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          st.lateFeeKindText,
-                          {
-                            color:
-                              row.kind === "applied"
-                                ? Colors.infoText
-                                : Colors.gold,
-                          },
-                        ]}
-                      >
-                        {row.kind === "applied" ? "RECORDED" : "ACCRUED"}
-                      </Text>
-                    </View>
-                  </View>
-                  {row.sublabel ? (
-                    <Text style={st.lateFeeSublabel} numberOfLines={2}>
-                      {row.sublabel}
-                    </Text>
-                  ) : null}
-                </View>
-                <Text style={st.lateFeeAmount}>
-                  {fmtCurrency(row.amount)}
+          <View style={st.alertBox}>
+            <TouchableOpacity
+              style={st.alertHeader}
+              onPress={() => setShowLateFees((v) => !v)}
+              activeOpacity={0.7}
+            >
+              <View style={st.alertIcon}>
+                <Text style={{ fontSize: 14 }}>⚠️</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={st.alertTitle} numberOfLines={1}>
+                  {lateFees.count} unpaid late fee
+                  {lateFees.count !== 1 ? "s" : ""}
+                </Text>
+                <Text style={st.alertSub} numberOfLines={1}>
+                  {fmtCurrency(lateFees.total)} owed on overdue
+                  installments
                 </Text>
               </View>
-            ))}
+              <Text style={st.alertChevron}>
+                {showLateFees ? "▲" : "▼"}
+              </Text>
+            </TouchableOpacity>
 
-            <View style={st.lateFeeTotalRow}>
-              <Text style={st.lateFeeTotalLabel}>
-                Total late fees owed
-              </Text>
-              <Text style={st.lateFeeTotalValue}>
-                {fmtCurrency(lateFees.total)}
-              </Text>
-            </View>
+            {showLateFees && (
+              <View style={st.alertBody}>
+                {lateFees.rows.map((row, i) => (
+                  <View
+                    key={`${row.kind}-${i}`}
+                    style={[
+                      st.alertRow,
+                      i === lateFees.rows.length - 1 && {
+                        borderBottomWidth: 0,
+                      },
+                    ]}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text
+                        style={st.alertRowLabel}
+                        numberOfLines={1}
+                      >
+                        {row.label}
+                      </Text>
+                      {row.sublabel ? (
+                        <Text
+                          style={st.alertRowSub}
+                          numberOfLines={2}
+                        >
+                          {row.sublabel}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Text style={st.alertRowAmount}>
+                      {fmtCurrency(row.amount)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
         )}
 
+        {/* ── 4. Payment form ───────────────────────────────────────── */}
+        <Text style={st.sectionHeading}>Payment</Text>
+
         <View style={st.inputGroup}>
-          <Text style={st.inputLabel}>Payment Amount ({currency}) *</Text>
-          <View style={st.inputRow}>
-            <Text style={st.inputPrefix}>{currency}</Text>
+          <Text style={st.inputLabel}>Amount ({currency})</Text>
+          <View style={st.amountRow}>
+            <Text style={st.amountPrefix}>{currency}</Text>
             <TextInput
-              style={st.input}
+              style={st.amountInput}
               value={amount}
               onChangeText={setAmount}
               keyboardType="numeric"
               placeholder="0"
               placeholderTextColor={Colors.text3}
-              returnKeyType="next"
+              returnKeyType="done"
             />
           </View>
         </View>
 
         <DatePicker
-          label="Payment Date *"
+          label="Payment Date"
           value={date}
           onChange={setDate}
           placeholder="Select payment date"
         />
 
+        {/* ── 5. Live preview ───────────────────────────────────────── */}
         {split && amtNum > 0 && (
           <View
             style={[
-              st.breakdown,
-              split.isRepaid && {
-                borderColor: Colors.success + "55",
-                backgroundColor: Colors.success + "08",
-              },
-              split.isOverpaid && {
-                borderColor: Colors.gold + "55",
-                backgroundColor: Colors.gold + "08",
-              },
+              st.preview,
+              split.isRepaid && st.previewSuccess,
+              split.isOverpaid && !split.isRepaid && st.previewWarn,
             ]}
           >
-            <Text style={st.breakdownTitle}>
-              {split.isRepaid
-                ? "✅ This payment closes the loan"
-                : split.isOverpaid
+            <View style={st.previewHeader}>
+              <Text style={st.previewTitle} numberOfLines={1}>
+                {split.isRepaid
+                  ? "🎉 This closes the loan"
+                  : split.isOverpaid
                   ? "⚠️ Overpayment"
-                  : "Payment Breakdown"}
-            </Text>
+                  : "This payment"}
+              </Text>
+              <Text style={st.previewAmount} numberOfLines={1}>
+                {fmtCurrency(amtNum)}
+              </Text>
+            </View>
 
-            {isRB && (
-              <View style={st.bSection}>
-                <Text style={st.bSectionLabel}>INTEREST ACCRUAL</Text>
-                <View style={st.bRow}>
-                  <Text style={st.bLbl}>Days since last payment</Text>
-                  <Text style={st.bVal}>{split.daysAccrued} days</Text>
-                </View>
-                <View style={st.bRow}>
-                  <Text style={st.bLbl}>
-                    Daily rate ({loan.interestRate}%{" "}
-                    {loan.interestRatePeriod === "monthly"
-                      ? "monthly"
-                      : "p.a."}{" "}
-                    → {round2(split.annualRatePct * 100) / 100}% p.a. ÷ 365)
-                  </Text>
-                  <Text style={st.bVal}>
-                    {round2(split.dailyRatePct * 1000) / 1000}% / day
-                  </Text>
-                </View>
-                <View style={st.bRow}>
-                  <Text style={st.bLbl}>Interest this period</Text>
-                  <Text style={[st.bVal, { color: Colors.gold }]}>
-                    {fmtCurrency(split.newInterestAccrued)}
-                  </Text>
-                </View>
-                {split.priorAccruedInterest > 0 && (
-                  <View style={st.bRow}>
-                    <Text style={st.bLbl}>Prior unpaid interest</Text>
-                    <Text style={[st.bVal, { color: Colors.gold }]}>
-                      {fmtCurrency(split.priorAccruedInterest)}
-                    </Text>
-                  </View>
-                )}
-                <View
-                  style={[
-                    st.bRow,
-                    {
-                      borderTopWidth: 1,
-                      borderTopColor: Colors.borderLight,
-                      marginTop: 4,
-                      paddingTop: 6,
-                    },
-                  ]}
-                >
-                  <Text style={st.bLblBold}>Total accrued interest</Text>
-                  <Text style={[st.bValBold, { color: Colors.gold }]}>
-                    {fmtCurrency(split.totalAccruedBefore)}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            <View style={st.bSection}>
-              <Text style={st.bSectionLabel}>PAYMENT APPLICATION</Text>
-              <View style={st.bRow}>
-                <Text style={st.bLbl}>Total payment</Text>
-                <Text style={[st.bValBold]}>{fmtCurrency(amtNum)}</Text>
-              </View>
-              <View style={st.bIndentRow}>
-                <Text style={st.bIndentLbl}>↳ Applied to interest</Text>
-                <Text style={[st.bVal, { color: Colors.gold }]}>
+            {/* Allocation */}
+            <View style={st.previewSection}>
+              <View style={st.previewRow}>
+                <Text style={st.previewLbl}>→ Interest</Text>
+                <Text style={[st.previewVal, { color: Colors.gold }]}>
                   {fmtCurrency(split.interestPortion)}
                 </Text>
               </View>
-              <View style={st.bIndentRow}>
-                <Text style={st.bIndentLbl}>↳ Applied to principal</Text>
-                <Text style={[st.bVal, { color: Colors.accent }]}>
+              <View style={st.previewRow}>
+                <Text style={st.previewLbl}>→ Principal</Text>
+                <Text style={[st.previewVal, { color: Colors.accent }]}>
                   {fmtCurrency(split.principalPortion)}
                 </Text>
               </View>
               {split.isOverpaid && (
-                <View style={st.bIndentRow}>
-                  <Text style={st.bIndentLbl}>
-                    ↳ Overpayment (credited)
+                <View style={st.previewRow}>
+                  <Text style={st.previewLbl}>
+                    → Overpayment (credited)
                   </Text>
-                  <Text style={[st.bVal, { color: Colors.success }]}>
+                  <Text
+                    style={[st.previewVal, { color: Colors.success }]}
+                  >
                     {fmtCurrency(split.overpaidAmount)}
                   </Text>
                 </View>
               )}
             </View>
 
-            <View
-              style={[
-                st.bSection,
-                { borderTopWidth: 1, borderTopColor: Colors.borderLight },
-              ]}
-            >
-              <Text style={st.bSectionLabel}>AFTER THIS PAYMENT</Text>
-              <View style={st.bRow}>
-                <Text style={st.bLbl}>Principal remaining</Text>
-                <Text
-                  style={[
-                    st.bVal,
-                    {
-                      color:
-                        split.newBalance === 0
-                          ? Colors.success
-                          : Colors.error,
-                    },
-                  ]}
-                >
-                  {split.newBalance === 0
-                    ? "✓ Cleared"
-                    : fmtCurrency(split.newBalance)}
-                </Text>
-              </View>
-              {isRB && (
-                <View style={st.bRow}>
-                  <Text style={st.bLbl}>Unpaid interest remaining</Text>
+            {/* After */}
+            <View style={st.previewAfter}>
+              <Text style={st.previewAfterLabel}>
+                AFTER THIS PAYMENT
+              </Text>
+              <View style={st.previewAfterGrid}>
+                <View style={st.previewAfterCell}>
+                  <Text style={st.previewAfterLbl}>Principal</Text>
                   <Text
                     style={[
-                      st.bVal,
+                      st.previewAfterVal,
                       {
                         color:
-                          split.accruedAfter === 0
+                          split.newBalance === 0
                             ? Colors.success
-                            : Colors.gold,
+                            : Colors.error,
                       },
                     ]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
                   >
-                    {split.accruedAfter === 0
+                    {split.newBalance === 0
                       ? "✓ Cleared"
-                      : fmtCurrency(split.accruedAfter)}
+                      : fmtCurrency(split.newBalance)}
                   </Text>
                 </View>
-              )}
-              <View
-                style={[
-                  st.bRow,
-                  {
-                    borderTopWidth: 1,
-                    borderTopColor: Colors.borderLight,
-                    marginTop: 4,
-                    paddingTop: 6,
-                  },
-                ]}
-              >
-                <Text style={st.bLblBold}>Loan status after</Text>
-                <Text
-                  style={[
-                    st.bValBold,
-                    {
-                      color: split.isRepaid
-                        ? Colors.success
-                        : Colors.error,
-                    },
-                  ]}
-                >
-                  {split.isRepaid ? "✓ FULLY REPAID" : "Active"}
-                </Text>
+                {isRB && (
+                  <View style={st.previewAfterCell}>
+                    <Text style={st.previewAfterLbl}>
+                      Unpaid interest
+                    </Text>
+                    <Text
+                      style={[
+                        st.previewAfterVal,
+                        {
+                          color:
+                            split.accruedAfter === 0
+                              ? Colors.success
+                              : Colors.gold,
+                        },
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.7}
+                    >
+                      {split.accruedAfter === 0
+                        ? "✓ Cleared"
+                        : fmtCurrency(split.accruedAfter)}
+                    </Text>
+                  </View>
+                )}
+                <View style={st.previewAfterCell}>
+                  <Text style={st.previewAfterLbl}>Progress</Text>
+                  <Text
+                    style={[
+                      st.previewAfterVal,
+                      { color: Colors.primary },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {split.isRepaid
+                      ? "100%"
+                      : `${Math.min(
+                          100,
+                          (split.newAmountRepaid /
+                            loan.totalRepayable) *
+                            100,
+                        ).toFixed(0)}%`}
+                  </Text>
+                </View>
               </View>
-            </View>
-
-            <View style={{ marginTop: 12 }}>
-              <View style={st.progressTrack}>
-                <View
-                  style={[
-                    st.progressFill,
-                    {
-                      width: `${
-                        split.isRepaid
-                          ? 100
-                          : Math.min(
-                              100,
-                              (split.newAmountRepaid /
-                                loan.totalRepayable) *
-                                100,
-                            )
-                      }%` as any,
-                      backgroundColor: split.isRepaid
-                        ? Colors.success
-                        : Colors.primary,
-                    },
-                  ]}
-                />
-              </View>
-              <Text style={st.progressText}>
-                {split.isRepaid
-                  ? "100.0"
-                  : Math.min(
-                      100,
-                      (split.newAmountRepaid / loan.totalRepayable) * 100,
-                    ).toFixed(1)}
-                % complete after this payment
-              </Text>
             </View>
           </View>
         )}
 
+        {/* ── 6. History (collapsible) ──────────────────────────────── */}
         {pairedPayments.length > 0 && (
           <View style={st.histCard}>
             <TouchableOpacity
@@ -787,9 +669,11 @@ export default function RecordRepaymentModal() {
               activeOpacity={0.7}
             >
               <Text style={st.histTitle}>
-                📜 Payment History ({pairedPayments.length})
+                Payment History ({pairedPayments.length})
               </Text>
-              <Text style={st.histChevron}>{showHistory ? "▲" : "▼"}</Text>
+              <Text style={st.histChevron}>
+                {showHistory ? "▲" : "▼"}
+              </Text>
             </TouchableOpacity>
 
             {showHistory && (
@@ -797,17 +681,26 @@ export default function RecordRepaymentModal() {
                 <View style={st.histHeadRow}>
                   <Text style={[st.histHead, { flex: 1.2 }]}>DATE</Text>
                   <Text
-                    style={[st.histHead, { flex: 1, textAlign: "right" }]}
+                    style={[
+                      st.histHead,
+                      { flex: 1, textAlign: "right" },
+                    ]}
                   >
                     INTEREST
                   </Text>
                   <Text
-                    style={[st.histHead, { flex: 1, textAlign: "right" }]}
+                    style={[
+                      st.histHead,
+                      { flex: 1, textAlign: "right" },
+                    ]}
                   >
                     PRINCIPAL
                   </Text>
                   <Text
-                    style={[st.histHead, { flex: 1, textAlign: "right" }]}
+                    style={[
+                      st.histHead,
+                      { flex: 1, textAlign: "right" },
+                    ]}
                   >
                     TOTAL
                   </Text>
@@ -817,7 +710,9 @@ export default function RecordRepaymentModal() {
                     key={i}
                     style={[
                       st.histRow,
-                      i % 2 === 1 && { backgroundColor: Colors.elevated },
+                      i % 2 === 1 && {
+                        backgroundColor: Colors.elevated,
+                      },
                     ]}
                   >
                     <Text
@@ -893,7 +788,10 @@ export default function RecordRepaymentModal() {
                     ]}
                   >
                     {fmtCurrency(
-                      pairedPayments.reduce((s, p) => s + p.interest, 0),
+                      pairedPayments.reduce(
+                        (s, p) => s + p.interest,
+                        0,
+                      ),
                     )}
                   </Text>
                   <Text
@@ -908,7 +806,10 @@ export default function RecordRepaymentModal() {
                     ]}
                   >
                     {fmtCurrency(
-                      pairedPayments.reduce((s, p) => s + p.principal, 0),
+                      pairedPayments.reduce(
+                        (s, p) => s + p.principal,
+                        0,
+                      ),
                     )}
                   </Text>
                   <Text
@@ -932,9 +833,12 @@ export default function RecordRepaymentModal() {
           </View>
         )}
 
+        {/* ── 7. CTA ────────────────────────────────────────────────── */}
         <Button
           label={
-            split?.isRepaid ? "Close Loan — Final Payment" : "Record Payment"
+            split?.isRepaid
+              ? "Close Loan — Final Payment"
+              : "Record Payment"
           }
           onPress={handleSave}
           fullWidth
@@ -943,280 +847,312 @@ export default function RecordRepaymentModal() {
         />
 
         {isRB && (
-          <View style={st.note}>
-            <Text style={st.noteTitle}>How daily accrual works</Text>
-            <Text style={st.noteLine}>
-              Interest accrues daily: balance × ({loan.interestRate}% ÷ 365)
-              × exact days since the last payment (or since disbursement for
-              a new loan). Each payment covers all accrued interest first;
-              the remainder reduces principal. The next period's interest is
-              then calculated on the lower principal.
-            </Text>
-          </View>
+          <Text style={st.footnote}>
+            Interest accrues daily at balance × {loan.interestRate}% ÷ 365.
+            Payments cover interest first; the remainder reduces principal.
+          </Text>
         )}
       </ScrollView>
+
       <Toast visible={visible} msg={msg} type={type} />
     </ModalShell>
   );
 }
 
 const st = StyleSheet.create({
+  body: { padding: S.lg, paddingBottom: 60 },
+
+  // ── Header ──────────────────────────────────────────────────────
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: S.lg,
-    paddingTop: Platform.OS === "ios" ? 56 : 36,
-    paddingBottom: S.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    backgroundColor: Colors.surface,
+    gap: 12,
+    marginBottom: S.lg,
   },
-  title: { fontSize: 17, fontWeight: "700", color: Colors.text },
-  cancel: { color: Colors.accent, fontSize: 15, fontWeight: "600" },
-  body: { padding: S.lg, paddingBottom: 60 },
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: Colors.primaryFaint,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: Colors.primary,
+  },
+  memberName: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: Colors.text,
+  },
+  memberMeta: {
+    fontSize: 11,
+    color: Colors.text3,
+    marginTop: 2,
+  },
+  purpose: {
+    fontSize: 11,
+    color: Colors.text3,
+    marginTop: 1,
+    fontStyle: "italic",
+  },
 
-  infoCard: {
-    backgroundColor: Colors.elevated,
+  // ── Outstanding hero ────────────────────────────────────────────
+  outstanding: {
+    backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: R.lg,
     padding: S.lg,
-    marginBottom: S.xl,
+    marginBottom: S.lg,
   },
-  memberName: { fontSize: 17, fontWeight: "700", color: Colors.text },
-  purpose: {
-    fontSize: 12,
-    color: Colors.text3,
-    marginTop: 2,
-    marginBottom: 10,
-  },
-  section: { paddingVertical: 12 },
-  sectionLabel: {
+  outstandingLabel: {
     fontSize: 9,
-    fontWeight: "700",
+    fontWeight: "800",
     color: Colors.text3,
-    letterSpacing: 1.1,
+    letterSpacing: 1,
     textTransform: "uppercase",
-    marginBottom: 10,
-  },
-  cols3: { flexDirection: "row" },
-  col: { flex: 1, alignItems: "center" },
-  colDiv: {
-    width: 1,
-    backgroundColor: Colors.borderLight,
-    marginHorizontal: 4,
-    alignSelf: "stretch",
-  },
-  colLbl: {
-    fontSize: 10,
-    color: Colors.text3,
     marginBottom: 4,
-    textAlign: "center",
   },
-  colVal: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: Colors.text,
-    textAlign: "center",
-  },
-
-  accrualBox: {
-    backgroundColor: Colors.elevated,
-    borderRadius: 8,
-    padding: 10,
-    marginTop: 4,
-  },
-  accrualText: { fontSize: 11, color: Colors.gold, lineHeight: 16 },
-
-  progressWrap: { marginTop: 12 },
-  progressTrack: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: Colors.border,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%" as any,
-    backgroundColor: Colors.primary,
-    borderRadius: 3,
-  },
-  progressText: {
-    fontSize: 11,
-    color: Colors.text3,
-    marginTop: 4,
-    textAlign: "center",
-  },
-
-  // ── Late fees card ───────────────────────────────────────────────
-  lateFeesCard: {
-    backgroundColor: Colors.redBg,
-    borderRadius: R.lg,
-    borderWidth: 1,
-    borderColor: "rgba(239,68,68,0.25)",
-    padding: S.lg,
-    marginBottom: S.xl,
-  },
-  lateFeesTitle: {
-    fontSize: 13,
+  outstandingValue: {
+    fontSize: 28,
     fontWeight: "800",
     color: Colors.error,
-    marginBottom: 4,
+    letterSpacing: -0.8,
+    marginBottom: 14,
   },
-  lateFeesSubtitle: {
-    fontSize: 11,
-    color: Colors.text3,
-    marginBottom: 10,
-    lineHeight: 15,
-  },
-  lateFeeRow: {
+  outstandingGrid: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 8,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
+  },
+  outCol: { flex: 1, alignItems: "center", minWidth: 0 },
+  outDiv: {
+    width: 1,
+    alignSelf: "stretch",
+    backgroundColor: Colors.borderLight,
+    marginHorizontal: 4,
+  },
+  outLbl: {
+    fontSize: 9,
+    color: Colors.text3,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 3,
+  },
+  outVal: { fontSize: 13, fontWeight: "800" },
+  accrualLine: {
+    fontSize: 10,
+    color: Colors.gold,
+    marginTop: 12,
+    textAlign: "center",
+    lineHeight: 14,
+  },
+
+  // ── Late-fee alert ──────────────────────────────────────────────
+  alertBox: {
+    backgroundColor: Colors.redBg,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.25)",
+    borderRadius: R.lg,
+    marginBottom: S.lg,
+    overflow: "hidden",
+  },
+  alertHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: S.md,
+  },
+  alertIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: "rgba(239,68,68,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  alertTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: Colors.error,
+  },
+  alertSub: {
+    fontSize: 11,
+    color: Colors.text2,
+    marginTop: 1,
+  },
+  alertChevron: {
+    fontSize: 10,
+    color: Colors.text3,
+    marginLeft: 6,
+  },
+  alertBody: {
     borderTopWidth: 1,
     borderTopColor: "rgba(239,68,68,0.15)",
-    gap: 10,
+    paddingHorizontal: S.md,
   },
-  lateFeeLabel: {
+  alertRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(239,68,68,0.1)",
+  },
+  alertRowLabel: {
     fontSize: 12,
     fontWeight: "700",
     color: Colors.text,
-    flexShrink: 1,
   },
-  lateFeeSublabel: {
-    fontSize: 11,
+  alertRowSub: {
+    fontSize: 10,
     color: Colors.text3,
-    marginTop: 2,
+    marginTop: 1,
+    lineHeight: 14,
   },
-  lateFeeAmount: {
-    fontSize: 13,
+  alertRowAmount: {
+    fontSize: 12,
     fontWeight: "800",
     color: Colors.error,
     flexShrink: 0,
   },
-  lateFeeKind: {
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 3,
-  },
-  lateFeeKindText: {
-    fontSize: 8,
+
+  // ── Section heading ─────────────────────────────────────────────
+  sectionHeading: {
+    fontSize: 10,
     fontWeight: "800",
-    letterSpacing: 0.5,
-  },
-  lateFeeTotalRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingTop: 10,
-    marginTop: 6,
-    borderTopWidth: 2,
-    borderTopColor: "rgba(239,68,68,0.25)",
-  },
-  lateFeeTotalLabel: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: Colors.text,
-  },
-  lateFeeTotalValue: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: Colors.error,
+    color: Colors.text3,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: 10,
+    marginTop: 4,
   },
 
+  // ── Inputs ──────────────────────────────────────────────────────
   inputGroup: { marginBottom: 14 },
   inputLabel: {
-    fontSize: 12,
-    fontWeight: "600",
+    fontSize: 11,
+    fontWeight: "700",
     color: Colors.text2,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
     marginBottom: 6,
   },
-  inputRow: {
+  amountRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "stretch",
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: 10,
+    borderRadius: 12,
     backgroundColor: Colors.surface,
     overflow: "hidden",
   },
-  inputPrefix: {
+  amountPrefix: {
     paddingHorizontal: 14,
-    paddingVertical: 13,
+    paddingVertical: 14,
     fontSize: 14,
     color: Colors.text3,
-    fontWeight: "600",
-    borderRightWidth: 1,
-    borderRightColor: Colors.border,
+    fontWeight: "700",
     backgroundColor: Colors.elevated,
+    textAlignVertical: "center",
   },
-  input: {
+  amountInput: {
     flex: 1,
     paddingHorizontal: 14,
-    paddingVertical: 13,
-    fontSize: 15,
-    fontWeight: "600",
+    paddingVertical: 14,
+    fontSize: 18,
+    fontWeight: "700",
     color: Colors.text,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 10,
-    backgroundColor: Colors.surface,
   },
 
-  breakdown: {
+  // ── Payment preview ─────────────────────────────────────────────
+  preview: {
     backgroundColor: Colors.elevated,
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: R.lg,
     padding: S.lg,
-    marginBottom: S.xl,
+    marginTop: S.lg,
+    marginBottom: S.lg,
   },
-  breakdownTitle: {
+  previewSuccess: {
+    borderColor: "rgba(16,185,129,0.4)",
+    backgroundColor: "rgba(16,185,129,0.06)",
+  },
+  previewWarn: {
+    borderColor: "rgba(217,119,6,0.4)",
+    backgroundColor: "rgba(217,119,6,0.06)",
+  },
+  previewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+    gap: 10,
+  },
+  previewTitle: {
     fontSize: 13,
-    fontWeight: "700",
+    fontWeight: "800",
     color: Colors.text,
-    textAlign: "center",
-    marginBottom: 14,
   },
-  bSection: { marginBottom: 10 },
-  bSectionLabel: {
+  previewAmount: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: Colors.text,
+  },
+  previewSection: { marginBottom: 12 },
+  previewRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 3,
+  },
+  previewLbl: {
+    fontSize: 12,
+    color: Colors.text2,
+    fontWeight: "600",
+  },
+  previewVal: { fontSize: 12, fontWeight: "700" },
+  previewAfter: {
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  previewAfterLabel: {
     fontSize: 9,
-    fontWeight: "700",
+    fontWeight: "800",
     color: Colors.text3,
+    letterSpacing: 0.8,
     textTransform: "uppercase",
-    letterSpacing: 1,
     marginBottom: 8,
   },
-  bRow: {
+  previewAfterGrid: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 4,
+    gap: 8,
   },
-  bIndentRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 3,
-    paddingLeft: 16,
-  },
-  bLbl: { fontSize: 12, color: Colors.text2 },
-  bLblBold: { fontSize: 13, fontWeight: "700", color: Colors.text },
-  bIndentLbl: {
-    fontSize: 11,
+  previewAfterCell: { flex: 1, minWidth: 0 },
+  previewAfterLbl: {
+    fontSize: 9,
     color: Colors.text3,
-    fontStyle: "italic",
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginBottom: 3,
   },
-  bVal: { fontSize: 12, fontWeight: "600", color: Colors.text },
-  bValBold: { fontSize: 13, fontWeight: "800", color: Colors.text },
+  previewAfterVal: { fontSize: 13, fontWeight: "800" },
 
+  // ── History ─────────────────────────────────────────────────────
   histCard: {
-    backgroundColor: Colors.elevated,
+    backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: R.lg,
-    marginBottom: S.xl,
+    marginBottom: S.lg,
     overflow: "hidden",
   },
   histHeader: {
@@ -1224,51 +1160,41 @@ const st = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     padding: S.md,
-    backgroundColor: Colors.surface,
   },
-  histTitle: { fontSize: 13, fontWeight: "600", color: Colors.text },
-  histChevron: { fontSize: 11, color: Colors.text3 },
+  histTitle: { fontSize: 12, fontWeight: "700", color: Colors.text },
+  histChevron: { fontSize: 10, color: Colors.text3 },
   histHeadRow: {
     flexDirection: "row",
     paddingHorizontal: 12,
     paddingVertical: 6,
     backgroundColor: Colors.elevated,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
   },
   histHead: {
     fontSize: 9,
     fontWeight: "700",
     color: Colors.text3,
     textTransform: "uppercase",
-    letterSpacing: 0.6,
+    letterSpacing: 0.5,
   },
   histRow: {
     flexDirection: "row",
     paddingHorizontal: 12,
     paddingVertical: 9,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
   },
   histCell: { fontSize: 12, color: Colors.text2 },
-  histTotalRow: {
-    backgroundColor: Colors.surface,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    borderBottomWidth: 0,
-  },
+  histTotalRow: { backgroundColor: Colors.elevated },
 
-  note: {
-    backgroundColor: Colors.elevated,
-    borderRadius: R.md,
-    padding: S.md,
+  // ── Footnote ────────────────────────────────────────────────────
+  footnote: {
+    fontSize: 11,
+    color: Colors.text3,
+    lineHeight: 16,
     marginTop: S.md,
+    textAlign: "center",
+    fontStyle: "italic",
   },
-  noteTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: Colors.primary,
-    marginBottom: 6,
-  },
-  noteLine: { fontSize: 11, color: Colors.text3, lineHeight: 16 },
 });
