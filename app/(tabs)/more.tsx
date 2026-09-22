@@ -1,76 +1,109 @@
-// app/(tabs)/more.tsx - Fixed Toast rendering
-import React, { useState, useMemo, useCallback} from "react";
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Platform, useWindowDimensions } from "react-native";
+// app/(tabs)/more.tsx
+//
+// Profile + settings screen. Previously written twice — one JSX tree
+// gated on `width >= 768`, one below — which meant every tweak to the
+// profile card or admin section had to be made in two places and could
+// drift. This version is a single responsive layout: `isWide` only
+// controls the outer content width, and the shared pieces (profile
+// header, section cards, admin rows, edit modal) are defined once.
+import React, { useCallback, useState } from "react";
+import {
+  ScrollView,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  useWindowDimensions,
+} from "react-native";
 import { useRouter } from "expo-router";
 import {
-  useStore, useGroupMembers, useGroupContributions, useGroupLoans,
-  useCurrentUserRole, useCurrentMember, useGroupWallet,
-  useIsAdminView,
+  useStore,
+  useCurrentUserRole,
+  useCurrentMember,
 } from "../../stores/useStore";
 import {
-  Card, Button, BottomModal, Input, Select, useToast, Toast, InfoRow,
+  Card,
+  Button,
+  BottomModal,
+  Input,
+  Select,
+  useToast,
+  Toast,
+  InfoRow,
 } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
-import { Colors, S, R, fmtCurrency, fmtDate, showConfirm, round2 } from "../../utils/theme";
-import type { Member } from "../../types";
+import {
+  Colors,
+  S,
+  R,
+  fmtCurrency,
+  showConfirm,
+  round2,
+} from "../../utils/theme";
 
-const ROLES = [
-  { label: "Member",       value: "member"       },
-  { label: "Committee",    value: "committee"    },
-  { label: "Loan Officer", value: "loan_officer" },
-  { label: "Accountant",   value: "accountant"   },
-  { label: "Admin",        value: "admin"        },
+// ─────────────────────────────────────────────────────────────────────────
+// Config
+// ─────────────────────────────────────────────────────────────────────────
+
+const SYNC_COLOR: Record<string, string> = {
+  synced:  Colors.success,
+  syncing: Colors.warning,
+  pending: Colors.warning,
+  failed:  Colors.error,
+  offline: Colors.text3,
+};
+
+const ADMIN_ACTIONS: { label: string; icon: string; section: string }[] = [
+  // Re-add "Permissions" / "Audit Log" here when those sections ship.
+  { label: "Group Settings", icon: "🏦", section: "settings" },
 ];
 
-const ROLE_BADGE: Record<string, "teal"|"gold"|"blue"|"green"|"red"> = {
-  admin: "red", accountant: "blue", loan_officer: "green", committee: "gold", member: "teal",
-};
-const STATUS_BADGE: Record<string, "teal"|"gold"|"green"|"red"|"muted"> = {
-  active: "green", pending: "gold", inactive: "muted", suspended: "red", exited: "muted",
-};
+const LANGUAGE_OPTIONS = [
+  { label: "English",     value: "en" },
+  { label: "Français",    value: "fr" },
+  { label: "Kinyarwanda", value: "rw" },
+];
+
+// ─────────────────────────────────────────────────────────────────────────
+// Screen
+// ─────────────────────────────────────────────────────────────────────────
 
 export default function MoreScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+
   const { signOut, resetPassword } = useAuth();
   const { show, visible, msg, type } = useToast();
-  const group = useStore((s) => s.groups.find(g => g.id === s.activeGroupId));
-  const activeGroupId = useStore((s) => s.activeGroupId);
-  const authUid = useStore((s) => s.authUid);
-  const authName = useStore((s) => s.authName);
-  const authEmail = useStore((s) => s.authEmail);
-  const meetings = useStore((s) => s.meetings);
+
+  const group = useStore((s) => s.groups.find((g) => g.id === s.activeGroupId));
   const syncStatus = useStore((s) => s.syncStatus);
   const syncError = useStore((s) => s.syncError);
   const lastSyncTimestamp = useStore((s) => s.lastSyncTimestamp);
   const triggerForceSync = useStore((s) => s.triggerForceSync);
   const reset = useStore((s) => s.reset);
-  
-  const {
-    updateOwnProfile,
-  } = useStore();
-  
-  const groupMembers = useGroupMembers();
-  const contributions = useGroupContributions();
-  const loans = useGroupLoans();
-  const wallet = useGroupWallet();
+  const updateOwnProfile = useStore((s) => s.updateOwnProfile);
+  const authName = useStore((s) => s.authName);
+  const authEmail = useStore((s) => s.authEmail);
+
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
-
   const isAdmin = role === "admin";
-  const canViewAll = useIsAdminView();
 
   const [editOpen, setEditOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
-
   const [editForm, setEditForm] = useState({
-    fullName: "", email: "", phone: "", languagePreference: "en",
-    nationalId: "", physicalAddress: "", role: "member",
+    fullName: "",
+    email: "",
+    phone: "",
+    languagePreference: "en",
+    nationalId: "",
+    physicalAddress: "",
+    role: "member",
   });
 
-  // ── Profile edit handlers ─────────────────────────────────────────────────
+  // ── Profile edit ────────────────────────────────────────────────────
   const openProfileEdit = useCallback(() => {
     if (!currentMember) {
       show("Profile not loaded yet. Please wait a moment.", "error");
@@ -115,11 +148,7 @@ export default function MoreScreen() {
     }
   };
 
-  const groupMeetings = useMemo(
-    () => meetings.filter((m) => m.groupId === activeGroupId),
-    [meetings, activeGroupId],
-  );
-
+  // ── Sign out / password reset ───────────────────────────────────────
   const handleSignOut = () => {
     showConfirm(
       "Sign Out",
@@ -150,395 +179,186 @@ export default function MoreScreen() {
     }
   };
 
-  // ── Desktop layout ──────────────────────────────────────────────────
-  if (isWide) {
-    return (
-      <View style={{ flex: 1, backgroundColor: Colors.bg }}>
-        <Toast visible={visible} msg={msg} type={type}/>
-        
-        <ScrollView
-          contentContainerStyle={st.container}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* ── Profile Section ── */}
-          <View style={st.profileSection}>
-            {/* User card */}
-            <View style={st.userCard}>
-              <View style={st.userAvatar}>
-                <Text style={st.userAvatarText}>
-                  {(authName ?? "U")
-                    .split(" ")
-                    .map((w: string) => w[0])
-                    .join("")
-                    .slice(0, 2)
-                    .toUpperCase()}
-                </Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={st.userName}>{authName ?? "—"}</Text>
-                <Text style={st.userEmail}>{authEmail ?? "—"}</Text>
-                <Text style={st.userRole}>{role}</Text>
-              </View>
-              <TouchableOpacity style={st.editBtn} onPress={openProfileEdit}>
-                <Text style={st.editBtnText}>Edit</Text>
-              </TouchableOpacity>
-            </View>
+  // ── Derived display values ──────────────────────────────────────────
+  const initials = (authName ?? "U")
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
-            {/* Access Level */}
-            <Text style={st.sectionLabel}>Access Level</Text>
-            <Card style={{ marginBottom: S.lg }}>
-              <View style={{ padding: S.lg }}>
-                <InfoRow label="Role" value={role} accent />
-                <InfoRow
-                  label="Permissions"
-                  value={
-                    isAdmin
-                      ? "Full access"
-                      : ["loan_officer", "committee", "accountant"].includes(role)
-                      ? "Financial access"
-                      : "Personal only"
-                  }
-                />
-              </View>
-            </Card>
+  const permissionsLabel = isAdmin
+    ? "Full access"
+    : ["loan_officer", "committee", "accountant"].includes(role)
+    ? "Financial access"
+    : "Personal only";
 
-            {/* Group info */}
-            <Text style={st.sectionLabel}>Group</Text>
-            <Card style={{ marginBottom: S.lg }}>
-              <View style={{ padding: S.lg }}>
-                <Text style={st.groupName}>
-                  {group?.name ?? "SCDT Savings Group"}
-                </Text>
-                {group?.description && (
-                  <Text style={st.groupDesc}>{group.description}</Text>
-                )}
-              </View>
-              <View style={{ paddingHorizontal: S.lg, paddingBottom: S.md }}>
-                <InfoRow label="Currency" value={group?.currency ?? "RWF"} />
-                <InfoRow label="Contribution" value={fmtCurrency(group?.contributionAmount ?? 0)} accent />
-                <InfoRow label="Loan Rate" value={`${group?.loanInterestRate ?? 2}% / ${group?.loanInterestRatePeriod === "annual" ? "year" : "month"}`} />
-                <InfoRow
-                  label="Late Penalty"
-                  value={`${group?.latePenaltyRatePct ?? 5}% ≈ ${fmtCurrency(round2((group?.contributionAmount ?? 0) * (group?.latePenaltyRatePct ?? 5) / 100))} per 15min`}
-                />
-              </View>
-            </Card>
+  const latePenaltyAmount = round2(
+    ((group?.contributionAmount ?? 0) * (group?.latePenaltyRatePct ?? 5)) / 100,
+  );
+  const latePenaltyLabel = `${group?.latePenaltyRatePct ?? 5}% ≈ ${fmtCurrency(
+    latePenaltyAmount,
+  )} per 15min`;
 
-            {/* Admin-only section */}
-            {isAdmin && (
-              <>
-                <Text style={st.sectionLabel}>Administration</Text>
+  const syncColor = SYNC_COLOR[syncStatus] ?? Colors.text3;
+  const lastSyncLabel = lastSyncTimestamp
+    ? new Date(lastSyncTimestamp).toLocaleString()
+    : "Never";
 
-                {/* Group Settings */}
-                {[
-                  { label: "Group Settings", icon: "🏦", activeSection: "settings" },
-                  // { label: "Permissions", icon: "🔐", activeSection: "permissions" },
-                  // { label: "Audit Log", icon: "📋", activeSection: "audit" },
-                ].map((item) => (
-                  <TouchableOpacity
-                    key={item.activeSection + item.label}
-                    style={st.settingsRow}
-                    onPress={() => router.push({ pathname: "/group-settings", params: { activeSection: item.activeSection } })}
-                    activeOpacity={0.7}
-                  >
-                    <View style={st.settingsRowIcon}>
-                      <Text style={{ fontSize: 16 }}>{item.icon}</Text>
-                    </View>
-                    <Text style={st.settingsRowText}>{item.label}</Text>
-                    <Text style={{ color: Colors.text3, fontSize: 18 }}>›</Text>
-                  </TouchableOpacity>
-                ))}
-
-                <Text style={[st.sectionLabel, { marginTop: S.lg }]}>System Status</Text>
-                <TouchableOpacity
-                  style={st.settingsRow}
-                  onPress={triggerForceSync}
-                  activeOpacity={0.7}
-                >
-                  <View style={[st.settingsRowIcon, { backgroundColor: "rgba(59,130,246,0.1)" }]}>
-                    <Text style={{ fontSize: 16 }}>⟳</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={st.settingsRowText}>
-                      {`Sync Status: `}
-                      <Text style={{ textTransform: "capitalize" }}>{syncStatus}</Text>
-                    </Text>
-                    <Text style={{ fontSize: 11, color: Colors.text3 }}>
-                      Last synced: {lastSyncTimestamp
-                        ? new Date(lastSyncTimestamp).toLocaleString()
-                        : "Never"}
-                    </Text>
-                    {syncError && (
-                      <Text
-                        style={{ fontSize: 11, color: Colors.error }}
-                        numberOfLines={1}
-                      >
-                        {syncError}
-                      </Text>
-                    )}
-                  </View>
-                  <Text style={{ color: Colors.primary, fontSize: 13, fontWeight: "600" }}>
-                    Force Sync
-                  </Text>
-                </TouchableOpacity>
-              </>
-            )}
-
-            <View style={st.divider} />
-
-            <TouchableOpacity
-              style={st.passwordResetBtn}
-              onPress={handlePasswordReset}
-              disabled={resetLoading}
-              activeOpacity={0.8}
-            >
-              <Text style={st.passwordResetText}>
-                {resetLoading ? "Sending..." : "Reset Password"}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={st.signOutBtn}
-              onPress={handleSignOut}
-              activeOpacity={0.8}
-            >
-              <Text style={st.signOutText}>Sign Out</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-
-        {/* ── Edit Profile Modal ── */}
-        <BottomModal
-          visible={editOpen}
-          onClose={() => { setEditOpen(false); }}
-          title="Edit My Profile"
-        >
-          <ScrollView
-            contentContainerStyle={{ padding: S.lg }}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            <Input
-              label="Full Name *"
-              value={editForm.fullName}
-              onChangeText={(v) => setEditForm((f) => ({ ...f, fullName: v }))}
-              placeholder="Full name"
-            />
-            <Input
-              label="Phone"
-              value={editForm.phone}
-              onChangeText={(v) => setEditForm((f) => ({ ...f, phone: v }))}
-              placeholder="+250 7XX XXX XXX"
-              keyboardType="phone-pad"
-            />
-            <Input
-              label="Email"
-              value={editForm.email}
-              onChangeText={(v) => setEditForm((f) => ({ ...f, email: v }))}
-              placeholder="Email address"
-              keyboardType="email-address"
-              editable={false}
-              hint="Email can only be changed by an admin"
-            />
-            <Input
-              label="National ID"
-              value={editForm.nationalId}
-              onChangeText={(v) => setEditForm((f) => ({ ...f, nationalId: v }))}
-              placeholder="National ID"
-            />
-            <Input
-              label="Physical Address"
-              value={editForm.physicalAddress}
-              onChangeText={(v) => setEditForm((f) => ({ ...f, physicalAddress: v }))}
-              placeholder="Address"
-            />
-            <Select
-              label="Language"
-              value={editForm.languagePreference}
-              options={[
-                { label: "English", value: "en" },
-                { label: "Français", value: "fr" },
-                { label: "Kinyarwanda", value: "rw" },
-              ]}
-              onChange={(v) => setEditForm((f) => ({ ...f, languagePreference: v }))}
-            />
-
-            <View style={{ height: 12 }} />
-            <Button
-              label="Save Changes"
-              onPress={handleSaveProfile}
-              fullWidth
-              loading={saving}
-              size="lg"
-            />
-            <View style={{ height: 20 }} />
-          </ScrollView>
-        </BottomModal>
-
-        <Toast visible={visible} msg={msg} type={type}/>
-      </View>
-    );
-  }
-
-  // ── Mobile layout ──────────────────────────────────────────────────
   return (
-    <View style={{ flex: 1, backgroundColor: Colors.bg }}>
-      <Toast visible={visible} msg={msg} type={type}/>
-      
+    <View style={st.root}>
+      <Toast visible={visible} msg={msg} type={type} />
+
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+        contentContainerStyle={[
+          st.scrollContent,
+          isWide && st.scrollContentWide,
+        ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── User Card ── */}
-        <View style={st.mobileUserCard}>
+        {/* ── Profile card ── */}
+        <View style={st.userCard}>
           <View style={st.userAvatar}>
-            <Text style={st.userAvatarText}>
-              {(authName ?? "U")
-                .split(" ")
-                .map((w: string) => w[0])
-                .join("")
-                .slice(0, 2)
-                .toUpperCase()}
-            </Text>
+            <Text style={st.userAvatarText}>{initials}</Text>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={st.userName}>{authName ?? "—"}</Text>
-            <Text style={st.userEmail}>{authEmail ?? "—"}</Text>
+          <View style={st.userInfo}>
+            <Text style={st.userName} numberOfLines={1}>
+              {authName ?? "—"}
+            </Text>
+            <Text style={st.userEmail} numberOfLines={1}>
+              {authEmail ?? "—"}
+            </Text>
             <Text style={st.userRole}>{role}</Text>
           </View>
-          <TouchableOpacity style={st.editBtn} onPress={openProfileEdit}>
+          <TouchableOpacity
+            style={st.editBtn}
+            onPress={openProfileEdit}
+            activeOpacity={0.7}
+          >
             <Text style={st.editBtnText}>Edit</Text>
           </TouchableOpacity>
         </View>
 
-        {/* ── Access Level ── */}
+        {/* ── Access level ── */}
         <Text style={st.sectionLabel}>Access Level</Text>
-        <Card style={{ marginBottom: S.lg }}>
-          <View style={{ padding: S.lg }}>
+        <Card style={st.mbLg}>
+          <View style={st.cardBody}>
             <InfoRow label="Role" value={role} accent />
-            <InfoRow
-              label="Permissions"
-              value={
-                isAdmin
-                  ? "Full access"
-                  : ["loan_officer", "committee", "accountant"].includes(role)
-                  ? "Financial access"
-                  : "Personal only"
-              }
-            />
+            <InfoRow label="Permissions" value={permissionsLabel} />
           </View>
         </Card>
 
-        {/* ── Group Info ── */}
+        {/* ── Group ── */}
         <Text style={st.sectionLabel}>Group</Text>
-        <Card style={{ marginBottom: S.lg }}>
-          <View style={{ padding: S.lg }}>
+        <Card style={st.mbLg}>
+          <View style={st.cardBody}>
             <Text style={st.groupName}>
               {group?.name ?? "SCDT Savings Group"}
             </Text>
-            {group?.description && (
+            {group?.description ? (
               <Text style={st.groupDesc}>{group.description}</Text>
-            )}
+            ) : null}
           </View>
-          <View style={{ paddingHorizontal: S.lg, paddingBottom: S.md }}>
+          <View style={st.cardFooter}>
             <InfoRow label="Currency" value={group?.currency ?? "RWF"} />
-            <InfoRow label="Contribution" value={fmtCurrency(group?.contributionAmount ?? 0)} accent />
-            <InfoRow label="Loan Rate" value={`${group?.loanInterestRate ?? 2}% / ${group?.loanInterestRatePeriod === "annual" ? "year" : "month"}`} />
             <InfoRow
-              label="Late Penalty"
-              value={`${group?.latePenaltyRatePct ?? 5}% ≈ ${fmtCurrency(round2((group?.contributionAmount ?? 0) * (group?.latePenaltyRatePct ?? 5) / 100))} per 15min`}
+              label="Contribution"
+              value={fmtCurrency(group?.contributionAmount ?? 0)}
+              accent
             />
+            <InfoRow
+              label="Loan Rate"
+              value={`${group?.loanInterestRate ?? 2}% / ${
+                group?.loanInterestRatePeriod === "annual" ? "year" : "month"
+              }`}
+            />
+            <InfoRow label="Late Penalty" value={latePenaltyLabel} />
           </View>
         </Card>
 
-        {/* ── Admin Section ── */}
-        {isAdmin && (
+        {/* ── Admin section ── */}
+        {isAdmin ? (
           <>
-            <Text style={st.sectionLabel}>Administration</Text>
-            {[
-                  { label: "Group Settings", icon: "🏦", activeSection: "settings" },
-                  // { label: "Permissions", icon: "🔐", activeSection: "permissions" },
-                  // { label: "Audit Log", icon: "📋", activeSection: "audit" },
-            ].map((item) => (
+            <Text style={[st.sectionLabel, st.mtLg]}>Administration</Text>
+            {ADMIN_ACTIONS.map((item) => (
               <TouchableOpacity
-                key={item.activeSection + item.label}
-                style={st.settingsRow}
-                onPress={() => router.push({ pathname: "/group-settings", params: { activeSection: item.activeSection } })}
+                key={item.section}
+                style={st.actionRow}
+                onPress={() =>
+                  router.push({
+                    pathname: "/group-settings",
+                    params: { activeSection: item.section },
+                  })
+                }
                 activeOpacity={0.7}
               >
-                <View style={st.settingsRowIcon}>
-                  <Text style={{ fontSize: 16 }}>{item.icon}</Text>
+                <View style={st.actionIcon}>
+                  <Text style={st.actionIconText}>{item.icon}</Text>
                 </View>
-                <Text style={st.settingsRowText}>{item.label}</Text>
-                <Text style={{ color: Colors.text3, fontSize: 18 }}>›</Text>
+                <Text style={st.actionLabel}>{item.label}</Text>
+                <Text style={st.actionChevron}>›</Text>
               </TouchableOpacity>
             ))}
 
-            <Text style={[st.sectionLabel, { marginTop: S.lg }]}>System Status</Text>
+            <Text style={[st.sectionLabel, st.mtLg]}>System Status</Text>
             <TouchableOpacity
-              style={st.settingsRow}
+              style={st.actionRow}
               onPress={triggerForceSync}
               activeOpacity={0.7}
             >
-              <View style={[st.settingsRowIcon, { backgroundColor: "rgba(59,130,246,0.1)" }]}>
-                <Text style={{ fontSize: 16 }}>⟳</Text>
+              <View style={[st.actionIcon, st.actionIconSync]}>
+                <Text style={st.actionIconText}>⟳</Text>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={st.settingsRowText}>
-                  {`Sync Status: `}
-                  <Text style={{ textTransform: "capitalize" }}>{syncStatus}</Text>
-                </Text>
-                <Text style={{ fontSize: 11, color: Colors.text3 }}>
-                  Last synced: {lastSyncTimestamp
-                    ? new Date(lastSyncTimestamp).toLocaleString()
-                    : "Never"}
-                </Text>
-                {syncError && (
-                  <Text
-                    style={{ fontSize: 11, color: Colors.error }}
-                    numberOfLines={1}
-                  >
+              <View style={st.actionText}>
+                <View style={st.syncHeader}>
+                  <View style={[st.syncDot, { backgroundColor: syncColor }]} />
+                  <Text style={st.actionLabelText}>
+                    Sync Status:{" "}
+                    <Text style={st.capitalize}>{syncStatus}</Text>
+                  </Text>
+                </View>
+                <Text style={st.actionSub}>Last synced: {lastSyncLabel}</Text>
+                {syncError ? (
+                  <Text style={st.actionError} numberOfLines={2}>
                     {syncError}
                   </Text>
-                )}
+                ) : null}
               </View>
-              <Text style={{ color: Colors.primary, fontSize: 13, fontWeight: "600" }}>
-                Force Sync
-              </Text>
+              <Text style={st.actionTrailing}>Force Sync</Text>
             </TouchableOpacity>
           </>
-        )}
+        ) : null}
 
         <View style={st.divider} />
 
         <TouchableOpacity
-          style={st.passwordResetBtn}
+          style={st.secondaryBtn}
           onPress={handlePasswordReset}
           disabled={resetLoading}
           activeOpacity={0.8}
         >
-          <Text style={st.passwordResetText}>
+          <Text style={st.secondaryBtnText}>
             {resetLoading ? "Sending..." : "Reset Password"}
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={st.signOutBtn}
+          style={st.dangerBtn}
           onPress={handleSignOut}
           activeOpacity={0.8}
         >
-          <Text style={st.signOutText}>Sign Out</Text>
+          <Text style={st.dangerBtnText}>Sign Out</Text>
         </TouchableOpacity>
       </ScrollView>
 
       {/* ── Edit Profile Modal ── */}
       <BottomModal
         visible={editOpen}
-        onClose={() => { setEditOpen(false); }}
+        onClose={() => setEditOpen(false)}
         title="Edit My Profile"
       >
         <ScrollView
-          contentContainerStyle={{ padding: S.lg }}
+          contentContainerStyle={st.modalContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -573,21 +393,21 @@ export default function MoreScreen() {
           <Input
             label="Physical Address"
             value={editForm.physicalAddress}
-            onChangeText={(v) => setEditForm((f) => ({ ...f, physicalAddress: v }))}
+            onChangeText={(v) =>
+              setEditForm((f) => ({ ...f, physicalAddress: v }))
+            }
             placeholder="Address"
           />
           <Select
             label="Language"
             value={editForm.languagePreference}
-            options={[
-              { label: "English", value: "en" },
-              { label: "Français", value: "fr" },
-              { label: "Kinyarwanda", value: "rw" },
-            ]}
-            onChange={(v) => setEditForm((f) => ({ ...f, languagePreference: v }))}
+            options={LANGUAGE_OPTIONS}
+            onChange={(v) =>
+              setEditForm((f) => ({ ...f, languagePreference: v }))
+            }
           />
 
-          <View style={{ height: 12 }} />
+          <View style={st.modalSpacer} />
           <Button
             label="Save Changes"
             onPress={handleSaveProfile}
@@ -595,44 +415,33 @@ export default function MoreScreen() {
             loading={saving}
             size="lg"
           />
-          <View style={{ height: 20 }} />
+          <View style={st.modalBottomSpacer} />
         </ScrollView>
       </BottomModal>
-
-      <Toast visible={visible} msg={msg} type={type}/>
     </View>
   );
 }
 
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────
 // Styles
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────
+
 const st = StyleSheet.create({
-  // ── Container ──
-  container: {
+  root: { flex: 1, backgroundColor: Colors.bg },
+
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 120,
+  },
+  scrollContentWide: {
     paddingHorizontal: 24,
-    paddingVertical: 16,
-  },
-
-  // ── Profile Section ──
-  profileSection: {
+    paddingTop: 16,
     maxWidth: 800,
-    alignSelf: "center" as any,
     width: "100%" as any,
+    alignSelf: "center" as any,
   },
 
-  // ── Section Label ──
-  sectionLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: Colors.text2,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginBottom: 10,
-    marginTop: 4,
-  },
-
-  // ── User Card ──
+  // ── Profile card ──
   userCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -649,17 +458,6 @@ const st = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  mobileUserCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: R.lg,
-    padding: S.lg,
-    marginBottom: S.lg,
-  },
   userAvatar: {
     width: 52,
     height: 52,
@@ -668,21 +466,10 @@ const st = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  userAvatarText: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#fff",
-  },
-  userName: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: Colors.text,
-  },
-  userEmail: {
-    fontSize: 12,
-    color: Colors.text3,
-    marginTop: 2,
-  },
+  userAvatarText: { fontSize: 18, fontWeight: "800", color: "#fff" },
+  userInfo: { flex: 1, minWidth: 0 },
+  userName: { fontSize: 16, fontWeight: "800", color: Colors.text },
+  userEmail: { fontSize: 12, color: Colors.text3, marginTop: 2 },
   userRole: {
     fontSize: 11,
     color: Colors.accent,
@@ -696,27 +483,34 @@ const st = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 14,
   },
-  editBtnText: {
-    color: Colors.primary,
-    fontSize: 12,
-    fontWeight: "700",
-  },
+  editBtnText: { color: Colors.primary, fontSize: 12, fontWeight: "700" },
 
-  // ── Group Info ──
+  // ── Section labels & card padding ──
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: Colors.text2,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  mtLg: { marginTop: S.lg },
+  mbLg: { marginBottom: S.lg },
+  cardBody: { padding: S.lg },
+  cardFooter: { paddingHorizontal: S.lg, paddingBottom: S.md },
+
+  // ── Group card ──
   groupName: {
     fontSize: 16,
     fontWeight: "800",
     color: Colors.text,
     marginBottom: 4,
   },
-  groupDesc: {
-    fontSize: 12,
-    color: Colors.text3,
-    lineHeight: 18,
-  },
+  groupDesc: { fontSize: 12, color: Colors.text3, lineHeight: 18 },
 
-  // ── Settings Row ──
-  settingsRow: {
+  // ── Action rows ──
+  actionRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
@@ -725,13 +519,14 @@ const st = StyleSheet.create({
     borderColor: Colors.border,
     borderRadius: R.lg,
     padding: S.lg,
+    marginBottom: 8,
     shadowColor: Colors.primary,
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,
     shadowRadius: 4,
     elevation: 1,
   },
-  settingsRowIcon: {
+  actionIcon: {
     width: 36,
     height: 36,
     borderRadius: 10,
@@ -739,20 +534,42 @@ const st = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  settingsRowText: {
+  actionIconSync: { backgroundColor: "rgba(59,130,246,0.1)" },
+  actionIconText: { fontSize: 16 },
+
+  actionLabel: {
     flex: 1,
     fontSize: 14,
     fontWeight: "600",
     color: Colors.text,
   },
+  actionLabelText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.text,
+  },
 
-  // ── Sign Out ──
+  actionText: { flex: 1, minWidth: 0 },
+  actionSub: { fontSize: 11, color: Colors.text3, marginTop: 2 },
+  actionError: { fontSize: 11, color: Colors.error, marginTop: 2 },
+  actionTrailing: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  actionChevron: { color: Colors.text3, fontSize: 18 },
+
+  syncHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  syncDot: { width: 8, height: 8, borderRadius: 4 },
+  capitalize: { textTransform: "capitalize" },
+
+  // ── Bottom buttons ──
   divider: {
     height: 1,
     backgroundColor: Colors.border,
     marginVertical: 24,
   },
-  passwordResetBtn: {
+  secondaryBtn: {
     backgroundColor: "rgba(59,130,246,0.06)",
     borderWidth: 1.5,
     borderColor: "rgba(59,130,246,0.25)",
@@ -761,12 +578,8 @@ const st = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
   },
-  passwordResetText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: Colors.primary,
-  },
-  signOutBtn: {
+  secondaryBtnText: { fontSize: 14, fontWeight: "700", color: Colors.primary },
+  dangerBtn: {
     backgroundColor: "rgba(220,38,38,0.06)",
     borderWidth: 1.5,
     borderColor: "rgba(220,38,38,0.25)",
@@ -774,9 +587,10 @@ const st = StyleSheet.create({
     paddingVertical: 14,
     alignItems: "center",
   },
-  signOutText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: Colors.error,
-  },
+  dangerBtnText: { fontSize: 14, fontWeight: "700", color: Colors.error },
+
+  // ── Modal ──
+  modalContent: { padding: S.lg },
+  modalSpacer: { height: 12 },
+  modalBottomSpacer: { height: 20 },
 });

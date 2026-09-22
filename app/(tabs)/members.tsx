@@ -45,17 +45,22 @@ function getMemberStats(
   wallet: any[],
   contributions: any[]
 ): { totalContributions: number; arrears: number; activeLoanCount: number } {
-  const memberWallet = wallet.filter(t => t.memberId === member.id);
-  const totalContributions = memberWallet
-    .filter(t => t.type === "contribution" && t.amount > 0)
-    .reduce((s, t) => s + t.amount, 0);
+  // totalContributions comes from APPROVED CONTRIBUTIONS, not the wallet.
+  // Firestore rules restrict walletTransactions reads to admin/accountant,
+  // so a plain member viewing their own row in personal view would see 0
+  // here even though they've contributed. Matches stores/recalcGroupTotals.ts.
+  const totalContributions = contributions
+    .filter((c) => c.memberId === member.id && c.status === "approved")
+    .reduce((s: number, c: any) => s + (c.amount || 0), 0);
 
-  const memberContribs = contributions.filter(c => c.memberId === member.id);
-  const pendingAmount = memberContribs
-    .filter(c => c.status === "pending")
-    .reduce((s, c) => s + c.amount, 0);
+  // Pending contributions = arrears.
+  const arrears = contributions
+    .filter((c) => c.memberId === member.id && c.status === "pending")
+    .reduce((s: number, c: any) => s + (c.amount || 0), 0);
 
-  const arrears = pendingAmount;
+  // Not computed here — needs the loans collection. Callers that need the
+  // real count should filter `loans` themselves. Kept as 0 for signature
+  // compatibility with existing call sites.
   const activeLoanCount = 0;
 
   return { totalContributions, arrears, activeLoanCount };
@@ -83,7 +88,7 @@ export default function MembersScreen() {
   const isAdmin = role === "admin";
   const canManageMembers = isAdmin || ["accountant", "loan_officer"].includes(role);
   const canExport = permissions?.downloadReports || isAdmin;
-  const canCreateMember = permissions?.addMember || isAdmin;
+  const canCreateMember = permissions?.editMembers || isAdmin;
 
   // State
   const [statusFilter, setStatusFilter] = useState("all");
@@ -418,7 +423,7 @@ export default function MembersScreen() {
           <View style={st.controlsSection}>
             <View style={st.controlsLeft}>
               <Select
-                items={[
+                options={[
                   { label: "All", value: "all" },
                   { label: "Active", value: "active" },
                   { label: "Pending", value: "pending" },
@@ -430,7 +435,7 @@ export default function MembersScreen() {
                 style={st.controlSelect}
               />
               <Select
-                items={[
+                options={[
                   { label: "By Name", value: "name" },
                   { label: "By Join Date", value: "date_joined" },
                   { label: "By Contributions", value: "contributions" },
@@ -481,7 +486,7 @@ export default function MembersScreen() {
           </View>
 
           {filtered.length === 0 ? (
-            <Empty label="No members found" />
+            <Empty message="No members found" icon="👥" />
           ) : (
             <View style={st.membersList}>
               {filtered.map(member => (
@@ -513,7 +518,7 @@ export default function MembersScreen() {
               placeholder="+250-7XX-XXX-XXX"
             />
             <Select
-              items={USER_ROLES.map(r => ({ label: ROLE_LABELS[r], value: r }))}
+              options={USER_ROLES.map(r => ({ label: ROLE_LABELS[r], value: r }))}
               value={createForm.role}
               onChange={(r) => setCreateForm(p => ({ ...p, role: r }))}
               label="Role"
@@ -704,7 +709,7 @@ export default function MembersScreen() {
         <View style={st.mobileControls}>
           <View style={st.mobileFilterRow}>
             <Select
-              items={[
+              options={[
                 { label: "All", value: "all" },
                 { label: "Active", value: "active" },
                 { label: "Pending", value: "pending" },
@@ -716,7 +721,7 @@ export default function MembersScreen() {
               style={st.mobileFilterSelect}
             />
             <Select
-              items={[
+              options={[
                 { label: "Name", value: "name" },
                 { label: "Join Date", value: "date_joined" },
               ]}
@@ -753,7 +758,7 @@ export default function MembersScreen() {
         </View>
 
         {filtered.length === 0 ? (
-          <Empty label="No members found" />
+          <Empty message="No members found" icon="👥" />
         ) : (
           filtered.map(member => (
             <MemberCard key={member.id} member={member} />
@@ -793,7 +798,7 @@ export default function MembersScreen() {
             placeholder="+250-XXX-XXX-XXX"
           />
           <Select
-            items={USER_ROLES.map(r => ({ label: ROLE_LABELS[r], value: r }))}
+            options={USER_ROLES.map(r => ({ label: ROLE_LABELS[r], value: r }))}
             value={createForm.role}
             onChange={(r) => setCreateForm(p => ({ ...p, role: r }))}
             label="Role"

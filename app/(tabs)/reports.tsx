@@ -15,6 +15,7 @@ import {
 import Svg, { Circle, Path } from "react-native-svg";
 
 import {
+  useStore,
   useActiveGroup,
   useGroupMembers,
   useGroupLoans,
@@ -93,6 +94,13 @@ type EarningsViewMode = "all" | "actual" | "projected";
 // "loan" show one source at a time.
 type LateFeeSourceFilter = "all" | "contribution" | "loan";
 
+type EarningsSourceFilter =
+  | "all"
+  | "loan_interest"
+  | "late_fees"
+  | "investment_returns"
+  | "other";
+
 // ─────────────────────────────────────────────────────────────────────────
 // Categories
 // ─────────────────────────────────────────────────────────────────────────
@@ -139,6 +147,31 @@ const LATE_FEE_SOURCE_CHIPS: { label: string; value: LateFeeSourceFilter }[] = [
   { label: "Contributions", value: "contribution" },
   { label: "Loans", value: "loan" },
 ];
+
+const EARNINGS_SOURCE_CHIPS: { label: string; value: EarningsSourceFilter }[] = [
+  { label: "All Sources", value: "all" },
+  { label: "Loan Interest", value: "loan_interest" },
+  { label: "Late Fees", value: "late_fees" },
+  { label: "Investment Returns", value: "investment_returns" },
+  { label: "Other", value: "other" },
+];
+
+function classifyEarningsSource(t: { type: string }): EarningsSourceFilter {
+  switch (t.type) {
+    case "loan_repayment":
+    case "loan_interest_income":
+    case "interest":
+    case "projected_interest":
+      return "loan_interest";
+    case "late_fee":
+    case "loan_late_fee":
+      return "late_fees";
+    case "investment_return":
+      return "investment_returns";
+    default:
+      return "other";
+  }
+}
 
 const MEMBER_CONDITION_GROUPS: {
   groupLabel: string;
@@ -217,6 +250,7 @@ function countActiveFilters(opts: {
   contributionStatus: string;
   memberStatus: string;
   lateFeeSource: string;
+  earningsSource: string;
 }) {
   let n = 0;
   if (opts.search) n++;
@@ -225,6 +259,7 @@ function countActiveFilters(opts: {
   if (opts.contributionStatus !== "all") n++;
   if (opts.memberStatus !== "all") n++;
   if (opts.lateFeeSource !== "all") n++;
+  if (opts.earningsSource !== "all") n++;
   return n;
 }
 
@@ -859,6 +894,8 @@ function FilterModal({
   onMemberStatusChange,
   lateFeeSource,
   onLateFeeSourceChange,
+  earningsSource,
+  onEarningsSourceChange,
   onApply,
   searchTerm,
   onSearchChange,
@@ -926,6 +963,21 @@ function FilterModal({
             value={lateFeeSource}
             options={LATE_FEE_SOURCE_CHIPS}
             onChange={onLateFeeSourceChange}
+          />
+        </View>
+
+        <View style={styles.filterSection}>
+          <Text style={styles.filterSectionTitle}>Profit Source</Text>
+          <Text style={styles.filterSectionHelp}>
+            Only affects the Profits report tab. Filter by where the
+            earning came from — loan interest, late fees, investment
+            returns, or the remaining category. Applies to both actual
+            and projected rows.
+          </Text>
+          <StatusChipRow
+            value={earningsSource}
+            options={EARNINGS_SOURCE_CHIPS}
+            onChange={onEarningsSourceChange}
           />
         </View>
 
@@ -1045,6 +1097,9 @@ export default function ReportsScreen() {
 
   const [earningsMode, setEarningsMode] = useState<EarningsViewMode>("all");
 
+  const [earningsSourceFilter, setEarningsSourceFilter] =
+    useState<EarningsSourceFilter>("all");
+
   const [tempSearch, setTempSearch] = useState("");
   const [tempFromDate, setTempFromDate] = useState("");
   const [tempToDate, setTempToDate] = useState("");
@@ -1055,6 +1110,8 @@ export default function ReportsScreen() {
     useState<MemberStatusFilter>("all");
   const [tempLateFeeSource, setTempLateFeeSource] =
     useState<LateFeeSourceFilter>("all");
+  const [tempEarningsSource, setTempEarningsSource] =
+    useState<EarningsSourceFilter>("all");
 
   useEffect(() => {
     if (isPersonalView) {
@@ -1139,6 +1196,7 @@ export default function ReportsScreen() {
     setTempContributionStatus(contributionStatus);
     setTempMemberStatus(memberStatusFilter);
     setTempLateFeeSource(lateFeeSourceFilter);
+    setTempEarningsSource(earningsSourceFilter);
     setShowFilterModal(true);
   };
 
@@ -1150,6 +1208,7 @@ export default function ReportsScreen() {
     setContributionStatus(tempContributionStatus);
     setMemberStatusFilter(tempMemberStatus);
     setLateFeeSourceFilter(tempLateFeeSource);
+    setEarningsSourceFilter(tempEarningsSource);
     setMonthFilter("all");
     setShowFilterModal(false);
   };
@@ -1164,6 +1223,7 @@ export default function ReportsScreen() {
     setMemberIdFilter("all");
     setMemberStatusFilter("all");
     setLateFeeSourceFilter("all");
+    setEarningsSourceFilter("all");
 
     setTempSearch("");
     setTempFromDate("");
@@ -1172,6 +1232,7 @@ export default function ReportsScreen() {
     setTempContributionStatus("all");
     setTempMemberStatus("all");
     setTempLateFeeSource("all");
+    setTempEarningsSource("all");
   };
 
   const hasActiveFilters =
@@ -1182,7 +1243,8 @@ export default function ReportsScreen() {
     searchTerm !== "" ||
     memberIdFilter !== "all" ||
     memberStatusFilter !== "all" ||
-    lateFeeSourceFilter !== "all";
+    lateFeeSourceFilter !== "all" ||
+    earningsSourceFilter !== "all";
 
   const inDateRange = (dStr?: string) => {
     if (!dStr) return true;
@@ -2013,6 +2075,12 @@ export default function ReportsScreen() {
 
     list = list.filter((t) => matchesSearch(t, ["type", "description"]));
 
+    if (earningsSourceFilter !== "all") {
+      list = list.filter(
+        (t) => classifyEarningsSource(t) === earningsSourceFilter,
+      );
+    }
+
     const actualInterest = round2(
       list
         .filter((t) =>
@@ -2058,7 +2126,7 @@ export default function ReportsScreen() {
     const totalInterestAllIn = round2(actualInterest + totalProjectedInterest);
     const totalLateFeesAllIn = round2(actualLateFees + totalLoanLateFees);
 
-    const projectedRows = [
+    const allProjectedRows = [
       ...loanInterestProjections.map((item) => ({
         type: "projected_interest",
         date: item.applicationDate,
@@ -2078,6 +2146,13 @@ export default function ReportsScreen() {
         loanId: item.loanId,
       })),
     ];
+
+    const projectedRows =
+      earningsSourceFilter === "all"
+        ? allProjectedRows
+        : allProjectedRows.filter(
+            (r) => classifyEarningsSource(r) === earningsSourceFilter,
+          );
 
     const actualRows = list.map((t) => ({
       type: t.type,
@@ -2153,6 +2228,7 @@ export default function ReportsScreen() {
     contributionStatus,
     memberStatusFilter,
     lateFeeSourceFilter,
+    earningsSourceFilter,
     unpaidFeeMemberIds,
     lateContributionFeeMemberIds,
     lateLoanMemberIds,
@@ -2618,6 +2694,19 @@ export default function ReportsScreen() {
             </View>
           )}
 
+          {category === "earnings" && (
+            <View style={styles.inlineFilterCard}>
+              <Text style={styles.inlineFilterLabel}>Profit Source</Text>
+              <StatusChipRow
+                value={earningsSourceFilter}
+                options={EARNINGS_SOURCE_CHIPS}
+                onChange={(v) =>
+                  setEarningsSourceFilter(v as EarningsSourceFilter)
+                }
+              />
+            </View>
+          )}
+
           {hasActiveFilters && (
             <View style={styles.activeFiltersRow}>
               {searchTerm !== "" && (
@@ -2702,6 +2791,7 @@ export default function ReportsScreen() {
               loans={loans}
               wallet={wallet}
               isGroupView={!isPersonalView}
+              showActivityLists={!isPersonalView}
               currentMember={currentMember}
               onExport={handleExport}
               onExportContributions={handleExportMemberContributions}
@@ -2862,6 +2952,8 @@ export default function ReportsScreen() {
         onMemberStatusChange={setTempMemberStatus}
         lateFeeSource={tempLateFeeSource}
         onLateFeeSourceChange={setTempLateFeeSource}
+        earningsSource={tempEarningsSource}
+        onEarningsSourceChange={setTempEarningsSource}
         onApply={applyFilters}
         searchTerm={tempSearch}
         onSearchChange={setTempSearch}
@@ -2874,6 +2966,7 @@ export default function ReportsScreen() {
           contributionStatus: tempContributionStatus,
           memberStatus: tempMemberStatus,
           lateFeeSource: tempLateFeeSource,
+          earningsSource: tempEarningsSource,
         })}
       />
 
@@ -2892,7 +2985,7 @@ function MembersTab({
   loans,
   wallet,
   isGroupView,
-  currentMember,
+  showActivityLists,
   onExport,
   onExportContributions,
   exportRows,
@@ -2901,15 +2994,19 @@ function MembersTab({
     !isGroupView && members.length === 1 ? members[0] : null
   );
 
+  // Reconcile selectedMember against the latest `members` array — the
+  // previous version kept the old reference, so store updates (e.g.
+  // adding/removing a waiver) never refreshed the detail view.
   useEffect(() => {
     if (!isGroupView) {
       setSelectedMember(members.length === 1 ? members[0] : null);
       return;
     }
 
-    setSelectedMember((current: any) =>
-      current && members.some((m: any) => m.id === current.id) ? current : null
-    );
+    setSelectedMember((current: any) => {
+      if (!current) return null;
+      return members.find((m: any) => m.id === current.id) ?? null;
+    });
   }, [isGroupView, members]);
 
   if (selectedMember) {
@@ -2922,6 +3019,7 @@ function MembersTab({
         )}
         wallet={wallet.filter((w: any) => w.memberId === selectedMember.id)}
         canGoBack={isGroupView}
+        showActivityLists={showActivityLists}
         onBack={() => setSelectedMember(null)}
         onExportContributions={(format: "excel" | "pdf") =>
           onExportContributions(selectedMember.id, format)
@@ -2971,48 +3069,116 @@ function MembersTab({
         {members.length === 0 ? (
           <Empty message="No members found" icon="👥" />
         ) : (
-          members.map((m: any, i: number) => (
-            <TouchableOpacity key={m.id} onPress={() => setSelectedMember(m)} activeOpacity={0.7}>
-              <View style={styles.memberRow}>
-                <View style={styles.memberAvatar}>
-                  <Text style={styles.memberAvatarText}>
-                    {m.fullName
-                      .split(" ")
-                      .map((w: string) => w[0])
-                      .join("")
-                      .slice(0, 2)
-                      .toUpperCase()}
-                  </Text>
+          members.map((m: any, i: number) => {
+            const waiverCount = Array.isArray(m.lateFeeExemptions)
+              ? m.lateFeeExemptions.length
+              : 0;
+
+            return (
+              <TouchableOpacity key={m.id} onPress={() => setSelectedMember(m)} activeOpacity={0.7}>
+                <View style={styles.memberRow}>
+                  <View style={styles.memberAvatar}>
+                    <Text style={styles.memberAvatarText}>
+                      {m.fullName
+                        .split(" ")
+                        .map((w: string) => w[0])
+                        .join("")
+                        .slice(0, 2)
+                        .toUpperCase()}
+                    </Text>
+                  </View>
+
+                  <View style={styles.memberInfo}>
+                    <Text style={styles.memberName} numberOfLines={1}>
+                      {m.fullName}
+                    </Text>
+
+                    <Text style={styles.memberContact} numberOfLines={1}>
+                      {m.phone || m.email || "No contact"}
+                    </Text>
+
+                    {waiverCount > 0 && (
+                      <View style={styles.memberWaiverPill}>
+                        <Text style={styles.memberWaiverPillText}>
+                          ⚠️ {waiverCount} waiver{waiverCount !== 1 ? "s" : ""}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={styles.memberStats}>
+                    <Text style={styles.memberAmount} numberOfLines={1}>
+                      {fmtCurrency(m.totalContributions || 0)}
+                    </Text>
+
+                    <Text style={styles.memberRole} numberOfLines={1}>
+                      {m.role}
+                    </Text>
+                  </View>
+
+                  <Text style={styles.chevron}>›</Text>
                 </View>
 
-                <View style={styles.memberInfo}>
-                  <Text style={styles.memberName} numberOfLines={1}>
-                    {m.fullName}
-                  </Text>
-
-                  <Text style={styles.memberContact} numberOfLines={1}>
-                    {m.phone || m.email || "No contact"}
-                  </Text>
-                </View>
-
-                <View style={styles.memberStats}>
-                  <Text style={styles.memberAmount} numberOfLines={1}>
-                    {fmtCurrency(m.totalContributions || 0)}
-                  </Text>
-
-                  <Text style={styles.memberRole} numberOfLines={1}>
-                    {m.role}
-                  </Text>
-                </View>
-
-                <Text style={styles.chevron}>›</Text>
-              </View>
-
-              {i < members.length - 1 && <Divider />}
-            </TouchableOpacity>
-          ))
+                {i < members.length - 1 && <Divider />}
+              </TouchableOpacity>
+            );
+          })
         )}
       </Card>
+    </View>
+  );
+}
+
+function WaiverCard({
+  exemption,
+  onRemove,
+  removing,
+}: {
+  exemption: any;
+  onRemove: () => void;
+  removing: boolean;
+}) {
+  const scope = exemption.scope ?? "contribution";
+  const scopeStyle =
+    scope === "loan"
+      ? { bg: "#FEF3C7", fg: "#B45309", label: "Loan" }
+      : scope === "both"
+      ? { bg: "#E0E7FF", fg: "#4338CA", label: "Both" }
+      : { bg: "#DBEAFE", fg: "#1D4ED8", label: "Contribution" };
+
+  return (
+    <View style={styles.waiverCard}>
+      <View style={styles.waiverCardHeader}>
+        <View style={[styles.waiverScopeBadge, { backgroundColor: scopeStyle.bg }]}>
+          <Text style={[styles.waiverScopeText, { color: scopeStyle.fg }]}>
+            {scopeStyle.label}
+          </Text>
+        </View>
+      </View>
+
+      <Text style={styles.waiverPeriod}>
+        {fmtDate(exemption.periodStart)} → {fmtDate(exemption.periodEnd)}
+      </Text>
+
+      {exemption.reason ? (
+        <Text style={styles.waiverReason}>{exemption.reason}</Text>
+      ) : null}
+
+      <Text style={styles.waiverMeta}>
+        Added by {exemption.createdByName || "—"}
+        {exemption.createdAt ? ` · ${fmtDate(exemption.createdAt)}` : ""}
+      </Text>
+
+      <TouchableOpacity
+        style={[styles.waiverRemoveBtn, removing && { opacity: 0.6 }]}
+        onPress={onRemove}
+        disabled={removing}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.waiverRemoveBtnText}>
+          {removing ? "Removing…" : "Remove Waiver"}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -3023,9 +3189,15 @@ function MemberDetail({
   contributions,
   wallet,
   canGoBack,
+  showActivityLists = true,
   onBack,
   onExportContributions,
 }: any) {
+  const { show } = useToast();
+  const removeLateFeeExemption = useStore((s) => s.removeLateFeeExemption);
+
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
   const totalContributions = contributions.reduce((s: number, c: any) => s + c.amount, 0);
 
   const loanBalance = loans
@@ -3069,6 +3241,37 @@ function MemberDetail({
   const sortedContributions = [...contributions].sort(
     (a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()
   );
+
+  const exemptions: any[] = Array.isArray(member.lateFeeExemptions)
+    ? member.lateFeeExemptions
+    : [];
+
+  const contribWaivers = exemptions.filter(
+    (e) => e.scope === "contribution" || e.scope === "both",
+  );
+  const loanWaivers = exemptions.filter(
+    (e) => e.scope === "loan" || e.scope === "both",
+  );
+
+  const handleRemove = (exemptionId: string) => {
+    showConfirm(
+      "Remove Exemption",
+      "Future fees for this period will start accruing again. Fees that were already cleared when the waiver was created are NOT restored by this action.",
+      async () => {
+        setRemovingId(exemptionId);
+        try {
+          await removeLateFeeExemption(member.id, exemptionId);
+          show("Exemption removed");
+        } catch (e: any) {
+          show(e.message || "Failed to remove exemption", "error");
+        } finally {
+          setRemovingId(null);
+        }
+      },
+      undefined,
+      true,
+    );
+  };
 
   return (
     <View>
@@ -3149,9 +3352,69 @@ function MemberDetail({
         </View>
       </View>
 
-      <View style={styles.sectionHeader}>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.cardTitle}>Contributions</Text>
+      <View style={styles.waiverSection}>
+        <View style={styles.waiverHeader}>
+          <View style={styles.waiverTitleRow}>
+            <Text style={styles.cardTitle}>Waived Fees & Exemptions</Text>
+            {exemptions.length > 0 && (
+              <View style={styles.waiverCountBadge}>
+                <Text style={styles.waiverCountText}>{exemptions.length}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        {exemptions.length === 0 ? (
+          <Card style={styles.card}>
+            <Text style={styles.waiverEmpty}>
+              No active fee exemptions for this member.
+            </Text>
+          </Card>
+        ) : (
+          <Card style={styles.card}>
+            {contribWaivers.length > 0 && (
+              <>
+                <Text style={styles.waiverGroupLabel}>Contribution fees</Text>
+                {contribWaivers.map((ex) => (
+                  <WaiverCard
+                    key={ex.id}
+                    exemption={ex}
+                    removing={removingId === ex.id}
+                    onRemove={() => handleRemove(ex.id)}
+                  />
+                ))}
+              </>
+            )}
+
+            {loanWaivers.length > 0 && (
+              <>
+                <Text
+                  style={[
+                    styles.waiverGroupLabel,
+                    contribWaivers.length > 0 && { marginTop: 16 },
+                  ]}
+                >
+                  Loan fees
+                </Text>
+                {loanWaivers.map((ex) => (
+                  <WaiverCard
+                    key={ex.id}
+                    exemption={ex}
+                    removing={removingId === ex.id}
+                    onRemove={() => handleRemove(ex.id)}
+                  />
+                ))}
+              </>
+            )}
+          </Card>
+        )}
+      </View>
+
+      {showActivityLists && (
+        <>
+          <View style={styles.sectionHeader}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.cardTitle}>Contributions</Text>
 
           <Text style={styles.sectionSubtext}>
             {contributions.length} approved contribution{contributions.length !== 1 ? "s" : ""}
@@ -3268,7 +3531,9 @@ function MemberDetail({
             </React.Fragment>
           ))
         )}
-      </Card>
+          </Card>
+        </>
+      )}
     </View>
   );
 }
@@ -4179,4 +4444,24 @@ const styles = StyleSheet.create({
   },
 
   modalApplyBtnText: { fontSize: 14, fontWeight: "700", color: "#fff" },
+
+  // ── Waiver section ────────────────────────────────────────────────────
+  waiverSection: { marginBottom: 20 },
+  waiverHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  waiverTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  waiverCountBadge: { minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 11, backgroundColor: C.pill, alignItems: "center", justifyContent: "center" },
+  waiverCountText: { fontSize: 11, fontWeight: "800", color: C.primary },
+  waiverGroupLabel: { fontSize: 10, fontWeight: "800", color: C.text3, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 },
+  waiverCard: { backgroundColor: "#FFFBEB", borderRadius: 12, borderWidth: 1, borderColor: "#FDE68A", padding: 12, marginBottom: 8 },
+  waiverCardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 8, gap: 8 },
+  waiverScopeBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  waiverScopeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.4 },
+  waiverPeriod: { fontSize: 13, fontWeight: "700", color: C.text, marginBottom: 4 },
+  waiverReason: { fontSize: 12, color: C.text2, lineHeight: 17, marginBottom: 6 },
+  waiverMeta: { fontSize: 10, color: C.text3, marginBottom: 10 },
+  waiverRemoveBtn: { alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, borderWidth: 1, borderColor: "#FCA5A5", backgroundColor: "#FEF2F2" },
+  waiverRemoveBtnText: { fontSize: 11, fontWeight: "700", color: C.error },
+  waiverEmpty: { fontSize: 12, color: C.text3, textAlign: "center", paddingVertical: 16 },
+  memberWaiverPill: { marginTop: 4, alignSelf: "flex-start", paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, backgroundColor: "#FEF3C7" },
+  memberWaiverPillText: { fontSize: 9, fontWeight: "800", color: "#92400E", letterSpacing: 0.2 },
 });
