@@ -203,32 +203,75 @@ function TabItem({ label, focused }: { label: string; focused: boolean }) {
   );
 }
 
+// Reasons a signed-in user can be blocked from the app. Kept as a
+// string union rather than separate boolean flags so adding a new
+// blocked state is a single-entry change to the config map below.
+type BlockedVariant = "pending" | "suspended" | "inactive" | "exited";
+
 function PendingApprovalScreen({
-  onSignOut, memberName, suspended,
+  onSignOut,
+  memberName,
+  variant = "pending",
 }: {
-  onSignOut: () => void; memberName: string; suspended?: boolean;
+  onSignOut: () => void;
+  memberName: string;
+  variant?: BlockedVariant;
 }) {
+  const config: Record<
+    BlockedVariant,
+    { icon: string; iconBg: string; title: string; body: string; hint: string }
+  > = {
+    pending: {
+      icon: "⏳",
+      iconBg: "#FEF3C7",
+      title: "Awaiting Approval",
+      body: `Hi ${memberName}, your account has been created but hasn't been approved by a group admin yet. You'll get full access as soon as they approve your membership.`,
+      hint:
+        "This usually only takes a short while. Feel free to check back later, or contact your group admin directly.",
+    },
+    suspended: {
+      icon: "⛔",
+      iconBg: "#FEE2E2",
+      title: "Account Suspended",
+      body: `Hi ${memberName}, your account has been suspended by a group admin. Contact them for more information.`,
+      hint:
+        "This isn't something you can resolve yourself — please reach out to your group's administrator.",
+    },
+    inactive: {
+      icon: "🚫",
+      iconBg: "#FEE2E2",
+      title: "Account Deactivated",
+      body: `Hi ${memberName}, your account has been deactivated by a group admin.`,
+      hint:
+        "You won't be able to access group data until your account is reactivated by an administrator. Contact your group admin if you believe this is a mistake.",
+    },
+    exited: {
+      icon: "👋",
+      iconBg: "#E0E7FF",
+      title: "Membership Ended",
+      body: `Hi ${memberName}, your membership in this group has ended.`,
+      hint:
+        "If you'd like to rejoin, please contact a group administrator.",
+    },
+  };
+
+  const c = config[variant];
+
   return (
     <View style={pa.root}>
       <View style={pa.card}>
-        <View style={[pa.iconCircle, suspended && pa.iconCircleSuspended]}>
-          <Text style={pa.icon}>{suspended ? "⛔" : "⏳"}</Text>
+        <View style={[pa.iconCircle, { backgroundColor: c.iconBg }]}>
+          <Text style={pa.icon}>{c.icon}</Text>
         </View>
-        <Text style={pa.title}>
-          {suspended ? "Account Suspended" : "Awaiting Approval"}
-        </Text>
-        <Text style={pa.body}>
-          {suspended
-            ? `Hi ${memberName}, your account has been suspended by a group admin. Contact them for more information.`
-            : `Hi ${memberName}, your account has been created but hasn't been approved by a group admin yet. You'll get full access as soon as they approve your membership.`}
-        </Text>
+        <Text style={pa.title}>{c.title}</Text>
+        <Text style={pa.body}>{c.body}</Text>
         <View style={pa.divider} />
-        <Text style={pa.hint}>
-          {suspended
-            ? "This isn't something you can resolve yourself — please reach out to your group's administrator."
-            : "This usually only takes a short while. Feel free to check back later, or contact your group admin directly."}
-        </Text>
-        <TouchableOpacity style={pa.signOutBtn} onPress={onSignOut} activeOpacity={0.8}>
+        <Text style={pa.hint}>{c.hint}</Text>
+        <TouchableOpacity
+          style={pa.signOutBtn}
+          onPress={onSignOut}
+          activeOpacity={0.8}
+        >
           <Text style={pa.signOutText}>Sign Out</Text>
         </TouchableOpacity>
       </View>
@@ -557,7 +600,25 @@ export default function TabsLayout() {
     if (!authUid) router.replace("/(auth)/login");
   }, [authUid]);
 
-  useFirebaseSync(activeGroupId, isOnline);
+  // ── Sync gating ─────────────────────────────────────────────────────
+  // Firestore rules reject wallet / loans / contributions reads for any
+  // member whose status isn't "active". A blocked member (pending,
+  // suspended, inactive, exited) would therefore spam the console with
+  // permission-denied errors on every render — and they don't have any
+  // data to see anyway, because one of the gates below intercepts them.
+  //
+  // Passing `null` as the group id makes useFirebaseSync early-return
+  // without touching Firestore.
+  //
+  // `undefined` status = we haven't resolved the member yet (fresh
+  // session, no persisted cache) → sync runs once so we can learn the
+  // status; if it turns out blocked, subsequent renders skip sync.
+  const currentMemberStatus = currentMember?.status;
+  const syncShouldRun =
+    !!authUid &&
+    (currentMemberStatus === undefined || currentMemberStatus === "active");
+
+  useFirebaseSync(syncShouldRun ? activeGroupId : null, isOnline);
   useNotificationSync(authUid);
 
   const triggerForceSync = useStore((s) => s.triggerForceSync);
@@ -595,16 +656,32 @@ export default function TabsLayout() {
       <PendingApprovalScreen
         onSignOut={handleSignOut}
         memberName={currentMember?.fullName || authName || "User"}
+        variant="pending"
       />
     );
   }
 
-  if (currentMember && currentMember.status === "suspended") {
+  // Any other non-active, non-pending status is a blocked state:
+  // "inactive" (deactivated by an admin), "suspended", or "exited".
+  // Kept as a single gate so a future status value added to the
+  // MemberStatus union doesn't silently fall through to the app.
+  if (
+    currentMember &&
+    currentMember.status !== "active" &&
+    currentMember.status !== "pending"
+  ) {
+    const variant: BlockedVariant =
+      currentMember.status === "suspended"
+        ? "suspended"
+        : currentMember.status === "exited"
+        ? "exited"
+        : "inactive";
+
     return (
       <PendingApprovalScreen
         onSignOut={handleSignOut}
         memberName={currentMember.fullName}
-        suspended
+        variant={variant}
       />
     );
   }

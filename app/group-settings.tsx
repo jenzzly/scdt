@@ -314,23 +314,215 @@ const fm = StyleSheet.create({
 // ─────────────────────────────────────────────
 // Section Heading
 // ─────────────────────────────────────────────
-function SectionHeading({ label, description }: { label: string; description?: string }) {
+function SectionHeading({
+  label,
+  description,
+  icon,
+  accent = C.primary,
+}: {
+  label: string;
+  description?: string;
+  icon?: string;
+  accent?: string;
+}) {
   return (
     <View style={sh.container}>
-      <Text style={sh.label}>{label}</Text>
+      <View style={sh.titleRow}>
+        <View style={[sh.accentBar, { backgroundColor: accent }]} />
+        {icon ? <Text style={sh.icon}>{icon}</Text> : null}
+        <Text style={[sh.label, { color: accent }]}>{label}</Text>
+      </View>
       {description && <Text style={sh.description}>{description}</Text>}
     </View>
   );
 }
 
 const sh = StyleSheet.create({
-  container: { marginTop: 16, marginBottom: 8 },
+  container: {
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  accentBar: {
+    width: 3,
+    height: 14,
+    borderRadius: 2,
+  },
+  icon: {
+    fontSize: 14,
+  },
   label: {
-    fontSize: 12, fontWeight: "700", color: C.text2,
-    textTransform: "uppercase", letterSpacing: 0.6,
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    flex: 1,
   },
   description: {
-    fontSize: 11, color: C.text3, marginTop: 3, lineHeight: 16,
+    fontSize: 11,
+    color: C.text3,
+    marginTop: 4,
+    lineHeight: 16,
+    paddingLeft: 11,
+  },
+});
+
+// ─────────────────────────────────────────────
+// Group at a glance card
+// ─────────────────────────────────────────────
+//
+// A dashboard-style summary of the group's CURRENT configuration.
+// Renders before the settings form so an admin sees the four numbers
+// that describe the group in day-to-day life — contribution, loan
+// rate, meeting penalty, late fee — before scrolling into the form
+// that edits them. Each chip is color-coded to match the section
+// heading it belongs to further down the page.
+function GroupAtAGlanceCard({
+  currency,
+  contributionAmount,
+  contributionFrequency,
+  loanRate,
+  loanRatePeriod,
+  meetingPenaltyPct,
+  meetingPenaltyAmount,
+  lateFeePct,
+  lateFeeGraceDays,
+}: {
+  currency: string;
+  contributionAmount: number;
+  contributionFrequency: string;
+  loanRate: number;
+  loanRatePeriod: "monthly" | "annual";
+  meetingPenaltyPct: number;
+  meetingPenaltyAmount: number;
+  lateFeePct: number;
+  lateFeeGraceDays: number;
+}) {
+  const freqLabel =
+    contributionFrequency === "monthly"
+      ? "per month"
+      : contributionFrequency === "weekly"
+      ? "per week"
+      : contributionFrequency === "yearly"
+      ? "per year"
+      : "per month";
+
+  const chips: {
+    label: string;
+    value: string;
+    sub: string;
+    color: string;
+  }[] = [
+    {
+      label: "CONTRIBUTION",
+      value: fmtCurrency(contributionAmount, currency),
+      sub: freqLabel,
+      color: C.primary,
+    },
+    {
+      label: "LOAN RATE",
+      value: `${loanRate}%`,
+      sub: loanRatePeriod === "annual" ? "per year" : "per month",
+      color: C.brandBlue,
+    },
+    {
+      label: "LATE ARRIVAL",
+      value: `${meetingPenaltyPct}%`,
+      sub: `≈ ${fmtCurrency(meetingPenaltyAmount, currency)} / 15min`,
+      color: C.gold,
+    },
+    {
+      label: "MISSED CONTRIB.",
+      value: `${lateFeePct}%`,
+      sub:
+        lateFeeGraceDays > 0
+          ? `${lateFeeGraceDays}d grace`
+          : "no grace period",
+      color: C.error,
+    },
+  ];
+
+  return (
+    <View style={glanceStyles.card}>
+      {/* ── Key-value chip grid ──────────────────────────────────── */}
+      <View style={glanceStyles.chipGrid}>
+        {chips.map((chip) => (
+          <View
+            key={chip.label}
+            style={[
+              glanceStyles.chip,
+              { borderLeftColor: chip.color },
+            ]}
+          >
+            <Text
+              style={[glanceStyles.chipLabel, { color: chip.color }]}
+              numberOfLines={1}
+            >
+              {chip.label}
+            </Text>
+            <Text
+              style={[glanceStyles.chipValue, { color: chip.color }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
+            >
+              {chip.value}
+            </Text>
+            <Text style={glanceStyles.chipSub} numberOfLines={2}>
+              {chip.sub}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const glanceStyles = StyleSheet.create({
+  card: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 4,
+  },
+
+  chipGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  chip: {
+    flexGrow: 1,
+    flexBasis: "46%",
+    minWidth: 130,
+    backgroundColor: C.bg,
+    borderRadius: 10,
+    borderLeftWidth: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  chipLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  },
+  chipValue: {
+    fontSize: 16,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+    marginBottom: 2,
+  },
+  chipSub: {
+    fontSize: 10,
+    color: C.text3,
+    lineHeight: 14,
   },
 });
 
@@ -378,12 +570,12 @@ export default function GroupSettingsScreen() {
   const { show, visible, msg, type } = useToast();
 
   const SETTINGS_TABS = [
-    { key: "settings", label: "⚙️ Settings" },
-    { key: "members", label: "👥 Members" },
-    { key: "permissions", label: "🔐 Permissions" },
-    // { key: "tokenRequests", label: "🔑 Token Requests" },
-    { key: "audit", label: "📋 Audit" },
-  ] as const;
+    { key: "settings", label: "Settings", icon: "⚙️" },
+    { key: "members", label: "Members", icon: "👥" },
+    { key: "permissions", label: "Permissions", icon: "🔐" },
+    // { key: "tokenRequests", label: "Token Requests", icon: "🔑" },
+    { key: "audit", label: "Audit", icon: "📋" },
+  ] as const; // TAB_ICON_AND_LABEL
 
   // ─── Member Management State ────────────────────────────────────────────
   const members = useGroupMembers();
@@ -735,6 +927,16 @@ export default function GroupSettingsScreen() {
         m.phone?.toLowerCase().includes(term)
       );
     }
+
+    // In "All" view, surface pending members at the top so an admin
+    // opening the tab immediately sees who needs a decision. Other
+    // filters leave the natural order alone.
+    if (memberTab === "All") {
+      const rank = (s: string) =>
+        s === "pending" ? 0 : s === "active" ? 1 : 2;
+      list.sort((a, b) => rank(a.status) - rank(b.status));
+    }
+
     return list;
   }, [members, memberTab, memberSearch]);
 
@@ -796,44 +998,64 @@ export default function GroupSettingsScreen() {
     }
   };
 
+  // ─── Status change handlers ──────────────────────────────────────────
+  //
+  // The detail modal already closes itself via `runDetailAction` before
+  // invoking these, so we no longer need to touch showMemberDetail here.
+  //
+  // Each confirm dialog runs on its own once the detail modal has fully
+  // unmounted, which is what removes the modal-overlap flash the previous
+  // version had when a confirm was raised while the detail sheet was
+  // still animating out.
+
   const handleApproveMember = async (member: Member) => {
-    try {
-      await FS.updateMember(activeGroupId!, member.id, { status: "active" });
-      show(`${member.fullName} approved`);
-      setShowMemberDetail(false);
-      setSelectedMember(null);
-    } catch (e: any) {
-      show(e.message || "Failed to approve member", "error");
-    }
+    showConfirm(
+      "Approve Member",
+      `Approve ${member.fullName}? They will be able to access the group immediately.`,
+      async () => {
+        try {
+          await FS.updateMember(activeGroupId!, member.id, {
+            status: "active",
+          });
+          show(`${member.fullName} approved`, "success");
+        } catch (e: any) {
+          show(e.message || "Failed to approve member", "error");
+        }
+      }
+    );
   };
 
   const handleDeactivateMember = async (member: Member) => {
     showConfirm(
       "Deactivate Member",
-      `Deactivate ${member.fullName}? They won't be able to participate in group activities.`,
+      `Deactivate ${member.fullName}?
+
+They won't be able to sign in or participate in group activities, and any new late fees on their loans will pause until they're reactivated.`,
       async () => {
         try {
-          await FS.updateMember(activeGroupId!, member.id, { status: "inactive" });
+          await FS.updateMember(activeGroupId!, member.id, {
+            status: "inactive",
+          });
           show("Member deactivated");
-          setShowMemberDetail(false);
-          setSelectedMember(null);
         } catch (e: any) {
           show(e.message || "Failed to deactivate", "error");
         }
-      }
+      },
+      undefined,
+      true
     );
   };
 
   const handleReactivateMember = async (member: Member) => {
     showConfirm(
       "Reactivate Member",
-      `Reactivate ${member.fullName}? They'll be able to participate in group activities again.`,
+      `Reactivate ${member.fullName}? They'll regain access and normal participation will resume.`,
       async () => {
         try {
-          await FS.updateMember(activeGroupId!, member.id, { status: "active" });
-          show("Member reactivated");
-          setShowMemberDetail(false);
-          setSelectedMember(null);
+          await FS.updateMember(activeGroupId!, member.id, {
+            status: "active",
+          });
+          show("Member reactivated", "success");
         } catch (e: any) {
           show(e.message || "Failed to reactivate", "error");
         }
@@ -847,15 +1069,17 @@ export default function GroupSettingsScreen() {
       wallet.some((w) => w.memberId === member.id);
 
     if (hasHistory) {
-      show("Cannot delete member with financial history. Deactivate instead.", "error");
+      show(
+        "Cannot delete member with financial history. Deactivate instead.",
+        "error"
+      );
       return;
     }
 
     try {
       await deleteMember(member.id);
-      show(`Member ${member.fullName} removed`);
+      show(`Member ${member.fullName} removed`, "success");
       setShowDeleteConfirm(false);
-      setShowMemberDetail(false);
       setSelectedMember(null);
     } catch (e: any) {
       show(e.message || "Failed to delete member", "error");
@@ -1218,65 +1442,397 @@ export default function GroupSettingsScreen() {
 
   const contribAmountNum = parseFloat(contribAmount) || 0;
 
-  // ─── Member Detail Modal ────────────────────────────────────────────────
+  // ─── Member Detail Modal (redesigned) ──────────────────────────────────
+  //
+  // Layout: hero → stat row → contact → role → actions.
+  //
+  // Every action delegates through `runDetailAction`, which closes this
+  // modal and only invokes the callback on the next tick. That pause is
+  // what stops two BottomModals from trying to be mounted at once during
+  // the hand-off, which is the source of the "flash" the old flow had
+  // when tapping Edit / Deactivate / etc.
   const MemberDetailModal = ({ member, onClose }: { member: Member; onClose: () => void }) => {
     const stats = getMemberStats(member, wallet, contributions);
     const isMe = member.userId === currentMember?.userId;
     const roleLabel = getRoleLabel(member);
+    const customRole = member.customRoleId
+      ? (group?.customRoles ?? []).find((r) => r.id === member.customRoleId)
+      : undefined;
+
+    const hasPermissions = !!member.permissions;
+    const enabledPermsCount = hasPermissions
+      ? PERM_KEYS.filter((k) => member.permissions![k]).length
+      : 0;
+
+    const canDeleteMember =
+      isAdmin &&
+      !isMe &&
+      !stats.totalContributions &&
+      !contributions.some((c) => c.memberId === member.id);
+
+    // Close this modal, then invoke `next` on the next tick. The 260ms
+    // delay matches the BottomModal close animation, so the hand-off is
+    // invisible to the user.
+    const runDetailAction = (next: () => void) => {
+      onClose();
+      setTimeout(next, 260);
+    };
 
     return (
-      <BottomModal visible={!!member} onClose={onClose} title={member.fullName}>
-        <View style={{ padding: 16, gap: 12 }}>
-          <View style={detailStyles.header}>
-            <View style={detailStyles.avatar}>
-              <Text style={detailStyles.avatarText}>
-                {member.fullName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
+      <BottomModal visible={!!member} onClose={onClose} title="Member">
+        <ScrollView
+          contentContainerStyle={detailStyles.body}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* ── Hero ─────────────────────────────────────────────── */}
+          <View style={detailStyles.hero}>
+            <View style={detailStyles.heroAvatar}>
+              <Text style={detailStyles.heroAvatarText}>
+                {member.fullName
+                  .split(" ")
+                  .map((w: string) => w[0])
+                  .join("")
+                  .slice(0, 2)
+                  .toUpperCase()}
               </Text>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={detailStyles.name}>{member.fullName}</Text>
-              <View style={{ flexDirection: "row", gap: 6, marginTop: 4 }}>
-                <Badge label={roleLabel} color={member.customRoleId ? "blue" : (ROLE_BADGE[member.role] || "teal")} />
-                <Badge label={member.status} color={STATUS_BADGE[member.status] || "muted"} />
-              </View>
+            <Text style={detailStyles.heroName} numberOfLines={2}>
+              {member.fullName}
+              {isMe ? " (You)" : ""}
+            </Text>
+            <View style={detailStyles.heroBadges}>
+              <Badge
+                label={roleLabel}
+                color={
+                  member.customRoleId
+                    ? "blue"
+                    : ROLE_BADGE[member.role] || "teal"
+                }
+              />
+              <Badge
+                label={member.status}
+                color={STATUS_BADGE[member.status] || "muted"}
+              />
+            </View>
+            <Text style={detailStyles.heroMeta}>
+              Member since {fmtDate(member.dateJoined || "")}
+            </Text>
+          </View>
+
+          {/* ── Stat row ────────────────────────────────────────── */}
+          <View style={detailStyles.statRow}>
+            <View style={detailStyles.statCell}>
+              <Text
+                style={[detailStyles.statValue, { color: C.primary }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+              >
+                {fmtCurrency(stats.totalContributions)}
+              </Text>
+              <Text style={detailStyles.statLabel}>Contributions</Text>
+            </View>
+            <View style={detailStyles.statDivider} />
+            <View style={detailStyles.statCell}>
+              <Text
+                style={[
+                  detailStyles.statValue,
+                  {
+                    color:
+                      stats.arrears > 0 ? C.error : C.text3,
+                  },
+                ]}
+                numberOfLines={1}
+              >
+                {stats.arrears > 0 ? fmtCurrency(stats.arrears) : "—"}
+              </Text>
+              <Text style={detailStyles.statLabel}>Arrears</Text>
+            </View>
+            <View style={detailStyles.statDivider} />
+            <View style={detailStyles.statCell}>
+              <Text
+                style={[detailStyles.statValue, { color: C.text }]}
+                numberOfLines={1}
+              >
+                {member.status === "active" ? "Active" : "—"}
+              </Text>
+              <Text style={detailStyles.statLabel}>Login</Text>
             </View>
           </View>
 
-          <InfoRow label="Email" value={member.email || "-"} />
-          <InfoRow label="Phone" value={member.phone || "-"} />
-          <InfoRow label="Joined" value={fmtDate(member.dateJoined || "")} />
-          <InfoRow label="Contributions" value={fmtCurrency(stats.totalContributions)} />
+          {/* ── Contact ──────────────────────────────────────────── */}
+          <Text style={detailStyles.sectionLabel}>Contact</Text>
+          <View style={detailStyles.sectionCard}>
+            <DetailRow
+              icon="✉️"
+              label="Email"
+              value={member.email || "Not set"}
+              muted={!member.email}
+            />
+            <DetailRow
+              icon="☎️"
+              label="Phone"
+              value={member.phone || "Not set"}
+              muted={!member.phone}
+            />
+            <DetailRow
+              icon="📅"
+              label="Joined"
+              value={fmtDate(member.dateJoined || "")}
+            />
+          </View>
 
+          {/* ── Role & access ────────────────────────────────────── */}
+          <Text style={detailStyles.sectionLabel}>Role & access</Text>
+          <View style={detailStyles.sectionCard}>
+            <DetailRow
+              icon="🎭"
+              label="Role"
+              value={
+                customRole
+                  ? `${customRole.name} (custom)`
+                  : roleLabel
+              }
+            />
+            {member.role === "admin" ? (
+              <DetailRow
+                icon="🔓"
+                label="Permissions"
+                value="Full access — admin"
+              />
+            ) : hasPermissions ? (
+              <DetailRow
+                icon="🔓"
+                label="Permissions"
+                value={`${enabledPermsCount} of ${PERM_KEYS.length} granted`}
+              />
+            ) : (
+              <DetailRow
+                icon="🔓"
+                label="Permissions"
+                value="Using role defaults"
+                muted
+              />
+            )}
+            {member.userId ? (
+              <DetailRow
+                icon="🔑"
+                label="Auth account"
+                value="Linked"
+              />
+            ) : (
+              <DetailRow
+                icon="🔑"
+                label="Auth account"
+                value="No login yet"
+                muted
+              />
+            )}
+          </View>
+
+          {/* ── Actions (admin only, never for self) ─────────────── */}
           {isAdmin && !isMe && (
-            <View style={{ marginTop: 8, gap: 8 }}>
-              {member.status === "pending" && (
-                <Button label="✓ Approve Member" onPress={() => handleApproveMember(member)} fullWidth variant="success" />
+            <>
+              {/* Approve / status section */}
+              {(member.status === "pending" ||
+                member.status === "active" ||
+                member.status === "inactive") && (
+                <>
+                  <Text style={detailStyles.sectionLabel}>Status</Text>
+                  <View style={detailStyles.actionsCard}>
+                    {member.status === "pending" && (
+                      <DetailAction
+                        icon="✓"
+                        label="Approve member"
+                        description="Grant this member access to the group"
+                        tone="primary"
+                        onPress={() =>
+                          runDetailAction(() => handleApproveMember(member))
+                        }
+                      />
+                    )}
+
+                    {member.status === "active" && (
+                      <DetailAction
+                        icon="⛔"
+                        label="Deactivate member"
+                        description="Freeze participation and pause accruing late fees"
+                        tone="warning"
+                        onPress={() =>
+                          runDetailAction(() => handleDeactivateMember(member))
+                        }
+                      />
+                    )}
+
+                    {member.status === "inactive" && (
+                      <DetailAction
+                        icon="🔄"
+                        label="Reactivate member"
+                        description="Restore access and resume normal participation"
+                        tone="primary"
+                        onPress={() =>
+                          runDetailAction(() => handleReactivateMember(member))
+                        }
+                      />
+                    )}
+                  </View>
+                </>
               )}
-              {member.status === "active" && (
-                <Button
-                  label="⛔ Deactivate"
-                  onPress={() => handleDeactivateMember(member)}
-                  fullWidth
-                  variant="secondary"
-                  style={{ backgroundColor: C.gold, borderColor: C.gold }}
+
+              {/* Profile section */}
+              <Text style={detailStyles.sectionLabel}>Profile</Text>
+              <View style={detailStyles.actionsCard}>
+                <DetailAction
+                  icon="✏️"
+                  label="Edit member"
+                  description="Change name, phone, or assigned role"
+                  tone="neutral"
+                  onPress={() =>
+                    runDetailAction(() => openEditMember(member))
+                  }
                 />
+                {!member.userId && (
+                  <DetailAction
+                    icon="🔑"
+                    label="Generate login token"
+                    description="Create a one-time token this member can use to sign in"
+                    tone="neutral"
+                    onPress={() =>
+                      runDetailAction(() => generateMemberToken(member))
+                    }
+                  />
+                )}
+              </View>
+
+              {/* Danger section (delete is conditional) */}
+              {canDeleteMember && (
+                <>
+                  <Text
+                    style={[
+                      detailStyles.sectionLabel,
+                      { color: C.error },
+                    ]}
+                  >
+                    Danger zone
+                  </Text>
+                  <View style={detailStyles.actionsCard}>
+                    <DetailAction
+                      icon="🗑"
+                      label="Delete member"
+                      description="Permanently remove this member. Cannot be undone."
+                      tone="danger"
+                      onPress={() =>
+                        runDetailAction(() => {
+                          setSelectedMember(member);
+                          setShowDeleteConfirm(true);
+                        })
+                      }
+                    />
+                  </View>
+                </>
               )}
-              {member.status === "inactive" && (
-                <Button
-                  label="🔄 Reactivate"
-                  onPress={() => handleReactivateMember(member)}
-                  fullWidth
-                  variant="success"
-                />
-              )}
-              <Button label="✏️ Edit Member" onPress={() => openEditMember(member)} fullWidth variant="secondary" />
-              {!stats.totalContributions && !contributions.some(c => c.memberId === member.id) && (
-                <Button label="🗑 Delete Member" onPress={() => handleDeleteMember(member)} fullWidth variant="danger" />
-              )}
-            </View>
+            </>
           )}
-        </View>
+
+          {/* ── Close ─────────────────────────────────────────────── */}
+          <TouchableOpacity
+            style={detailStyles.closeBtn}
+            onPress={onClose}
+            activeOpacity={0.8}
+          >
+            <Text style={detailStyles.closeBtnText}>Close</Text>
+          </TouchableOpacity>
+        </ScrollView>
       </BottomModal>
+    );
+  };
+
+  // ─── Small reusable pieces for the detail modal ────────────────────────
+  const DetailRow = ({
+    icon,
+    label,
+    value,
+    muted,
+  }: {
+    icon: string;
+    label: string;
+    value: string;
+    muted?: boolean;
+  }) => (
+    <View style={detailStyles.row}>
+      <Text style={detailStyles.rowIcon}>{icon}</Text>
+      <Text style={detailStyles.rowLabel}>{label}</Text>
+      <Text
+        style={[
+          detailStyles.rowValue,
+          muted && { color: C.text3, fontStyle: "italic" },
+        ]}
+        numberOfLines={2}
+      >
+        {value}
+      </Text>
+    </View>
+  );
+
+  const DetailAction = ({
+    icon,
+    label,
+    description,
+    tone = "neutral",
+    onPress,
+  }: {
+    icon: string;
+    label: string;
+    description?: string;
+    tone?: "primary" | "warning" | "danger" | "neutral";
+    onPress: () => void;
+  }) => {
+    const labelColor =
+      tone === "danger"
+        ? C.error
+        : tone === "warning"
+        ? C.gold
+        : tone === "primary"
+        ? C.primary
+        : C.text;
+
+    const iconBg =
+      tone === "danger"
+        ? "rgba(220,38,38,0.10)"
+        : tone === "warning"
+        ? "rgba(217,119,6,0.10)"
+        : tone === "primary"
+        ? "rgba(13,148,136,0.10)"
+        : C.elevated;
+
+    return (
+      <TouchableOpacity
+        style={detailStyles.action}
+        onPress={onPress}
+        activeOpacity={0.7}
+      >
+        <View
+          style={[detailStyles.actionIcon, { backgroundColor: iconBg }]}
+        >
+          <Text style={detailStyles.actionIconText}>{icon}</Text>
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text
+            style={[detailStyles.actionLabel, { color: labelColor }]}
+            numberOfLines={1}
+          >
+            {label}
+          </Text>
+          {description ? (
+            <Text style={detailStyles.actionDesc} numberOfLines={2}>
+              {description}
+            </Text>
+          ) : null}
+        </View>
+        <Text style={[detailStyles.actionChevron, { color: labelColor }]}>
+          ›
+        </Text>
+      </TouchableOpacity>
     );
   };
 
@@ -1321,75 +1877,194 @@ export default function GroupSettingsScreen() {
 
   return (
     <View style={styles.root}>
-      {/* Header */}
+      {/* ─── Header ──────────────────────────────────────────────────────
+          One row: back button · title block · contextual action.
+          The action button changes by tab:
+            • Settings     → Save
+            • Permissions  → + New Role
+            • Members/Audit → (their own inline actions live in the tab)
+          Keeping the action contextual means there's never more than one
+          primary button on screen at a time. */}
       <View style={[styles.header, isWide && styles.headerWide]}>
-        <View style={styles.headerLeft}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Text style={styles.backBtnText}>←</Text>
-          </TouchableOpacity>
-          <View>
-            <Text style={styles.headerTitle}>Group Settings</Text>
-            {group?.name && <Text style={styles.headerSub}>{group.name}</Text>}
-          </View>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
+          <Text style={styles.backBtnText}>←</Text>
+        </TouchableOpacity>
+
+        <View style={styles.headerTitleBlock}>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            Group Settings
+          </Text>
+          {group?.name && (
+            <Text style={styles.headerSub} numberOfLines={1}>
+              {group.name}
+            </Text>
+          )}
         </View>
 
-        <View style={styles.headerRight}>
-          {activeSection === "settings" && (
-            <TouchableOpacity onPress={handleSave} disabled={saving} style={[styles.headerBtn, styles.headerBtnPrimary]}>
-              {saving
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <Text style={styles.headerBtnPrimaryText}>Save</Text>}
+        <View style={styles.headerActionSlot}>
+          {activeSection === "settings" ? (
+            <TouchableOpacity
+              onPress={handleSave}
+              disabled={saving}
+              style={[
+                styles.headerBtn,
+                styles.headerBtnPrimary,
+                saving && styles.headerBtnDisabled,
+              ]}
+              activeOpacity={0.85}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.headerBtnPrimaryText}>Save</Text>
+              )}
             </TouchableOpacity>
-          )}
-          {activeSection === "permissions" && (
-            <TouchableOpacity onPress={() => setShowCreateRole(true)} style={[styles.headerBtn, styles.headerBtnPrimary]}>
+          ) : activeSection === "permissions" ? (
+            <TouchableOpacity
+              onPress={() => setShowCreateRole(true)}
+              style={[styles.headerBtn, styles.headerBtnPrimary]}
+              activeOpacity={0.85}
+            >
               <Text style={styles.headerBtnPrimaryText}>+ New Role</Text>
             </TouchableOpacity>
-          )}
+          ) : null}
         </View>
       </View>
 
-      {/* ─── Tab Bar - Scrollable ─── */}
+      {/* ─── Tab Bar ─────────────────────────────────────────────────────
+          Segmented pills. Icon and label are siblings (not one string)
+          so alignment is consistent across tabs, and the badge sits in
+          its own slot so appearing/disappearing never shifts the row.
+          On wide screens the row centers at a fixed max-width; on
+          mobile it scrolls edge-to-edge with comfortable padding. */}
       <View style={styles.tabWrapper}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={[styles.tabBar, isWide && styles.tabBarWide]}
+          contentContainerStyle={[
+            styles.tabBar,
+            isWide && styles.tabBarWide,
+          ]}
         >
-          {SETTINGS_TABS.map((tab) => (
-            <TouchableOpacity
-              key={tab.key}
-              style={[styles.tab, activeSection === tab.key && styles.tabActive]}
-              onPress={() => setActiveSection(tab.key as any)}
-            >
-              <View style={styles.tabContent}>
-                <Text style={[styles.tabText, activeSection === tab.key && styles.tabTextActive]}>
+          {SETTINGS_TABS.map((tab) => {
+            const active = activeSection === tab.key;
+
+            const badgeCount =
+              tab.key === "tokenRequests"
+                ? pendingTokenRequests.length
+                : tab.key === "audit"
+                ? allAuditLogs.length
+                : tab.key === "permissions"
+                ? roles.length
+                : 0;
+
+            const alertCount =
+              isAdmin && tab.key === "members"
+                ? memberStats.pending
+                : 0;
+
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={[styles.tab, active && styles.tabActive]}
+                onPress={() => setActiveSection(tab.key as any)}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+              >
+                <Text
+                  style={[
+                    styles.tabIcon,
+                    active && styles.tabIconActive,
+                  ]}
+                >
+                  {tab.icon}
+                </Text>
+                <Text
+                  style={[
+                    styles.tabText,
+                    active && styles.tabTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
                   {tab.label}
                 </Text>
-                {tab.key === "tokenRequests" && pendingTokenRequests.length > 0 && (
-                  <View style={styles.tabBadge}>
-                    <Text style={styles.tabBadgeText}>
-                      {pendingTokenRequests.length > 99 ? "99+" : pendingTokenRequests.length}
+
+                {badgeCount > 0 ? (
+                  <View
+                    style={[
+                      styles.tabBadge,
+                      active && styles.tabBadgeActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.tabBadgeText,
+                        active && styles.tabBadgeTextActive,
+                      ]}
+                    >
+                      {badgeCount > 99 ? "99+" : badgeCount}
                     </Text>
                   </View>
-                )}
-                {tab.key === "audit" && allAuditLogs.length > 0 && (
-                  <View style={styles.tabBadge}>
-                    <Text style={styles.tabBadgeText}>
-                      {allAuditLogs.length > 99 ? "99+" : allAuditLogs.length}
+                ) : alertCount > 0 ? (
+                  <View
+                    style={[
+                      styles.tabBadgeAlert,
+                      active && styles.tabBadgeAlertActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.tabBadgeAlertText,
+                        active && styles.tabBadgeAlertTextActive,
+                      ]}
+                    >
+                      {alertCount > 9 ? "9+" : alertCount}
                     </Text>
                   </View>
-                )}
-                {tab.key === "permissions" && roles.length > 0 && (
-                  <View style={styles.tabBadge}>
-                    <Text style={styles.tabBadgeText}>{roles.length}</Text>
-                  </View>
-                )}
-              </View>
-            </TouchableOpacity>
-          ))}
+                ) : null}
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       </View>
+
+      {/* ─── Pending-members banner ─────────────────────────────────────
+          Shows whenever there's at least one member awaiting approval.
+          Tapping it jumps to the Members tab filtered to Pending, so
+          an admin doesn't have to hunt through menu options to find
+          who's waiting for access.
+
+          Admin-only (the Members tab itself is admin-only, and this
+          is fundamentally an admin task). */}
+      {isAdmin && memberStats.pending > 0 && (
+        <TouchableOpacity
+          style={styles.pendingBanner}
+          onPress={() => {
+            setActiveSection("members");
+            setMemberTab("Pending");
+          }}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.pendingBannerIcon}>⏳</Text>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.pendingBannerTitle} numberOfLines={1}>
+              {memberStats.pending} member
+              {memberStats.pending !== 1 ? "s" : ""} awaiting approval
+            </Text>
+            <Text style={styles.pendingBannerHint} numberOfLines={1}>
+              Tap to review and activate
+            </Text>
+          </View>
+          <Text style={styles.pendingBannerCta}>Review →</Text>
+        </TouchableOpacity>
+      )}
 
       {/* ─── SETTINGS SECTION ────────────────────────────────────────────── */}
       {activeSection === "settings" && (
@@ -1399,27 +2074,39 @@ export default function GroupSettingsScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
         >
-          {/* Group Card */}
-          <View style={styles.groupCard}>
-            <View style={styles.groupAvatar}>
-              <Text style={styles.groupAvatarLetter}>{(group?.name ?? "S").charAt(0).toUpperCase()}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.groupName}>{group?.name ?? "SCDT Savings Group"}</Text>
-              {group?.description && <Text style={styles.groupDesc}>{group.description}</Text>}
-              <Text style={styles.groupMeta}>ID: {group?.id?.slice(0, 12)}… · {group?.memberCount || 0} members</Text>
-            </View>
-          </View>
+          {/* ── Group at a glance ────────────────────────────────────
+              Surfaces the current configuration BEFORE the form below.
+              Four colored chips summarize the settings that matter
+              most on any given day; the admin sees what the group IS
+              before they see what they can change. */}
+          <GroupAtAGlanceCard
+            currency={currency}
+            contributionAmount={contribAmountNum}
+            contributionFrequency={freq}
+            loanRate={parseFloat(loanRate) || 0}
+            loanRatePeriod={ratePeriod}
+            meetingPenaltyPct={parseFloat(lateRatePct) || 0}
+            meetingPenaltyAmount={round2(
+              contribAmountNum * (parseFloat(lateRatePct) || 0) / 100,
+            )}
+            lateFeePct={parseFloat(contribLateFeePct) || 0}
+            lateFeeGraceDays={parseInt(contribLateFeeGrace, 10) || 0}
+          />
 
-          {/* Two-column layout - stacks on mobile */}
-          <View style={isWide ? styles.wideGrid : undefined}>
+          {/* ── Settings grid ──────────────────────────────────────────
+              flex-wrap grid: two cards side-by-side on desktop, one
+              column on tablet and mobile. See settingsGrid in styles
+              for the mechanics. */}
+          <View style={styles.settingsGrid}>
 
-            {/* ── LEFT COLUMN ── */}
-            <View style={isWide ? styles.wideCol : undefined}>
+            {/* ── Column 1 ── */}
+            <View style={styles.settingsCol}>
               {/* Currency & Contributions */}
               <SectionHeading
                 label="Currency & Contributions"
                 description="Set the group's currency and the standard contribution amount per member."
+                icon="💰"
+                accent={C.primary}
               />
               <SettingCard>
                 <Select label="Currency" value={currency} options={CURRENCIES} onChange={setCurrency} />
@@ -1447,6 +2134,8 @@ export default function GroupSettingsScreen() {
               <SectionHeading
                 label="Contribution Goal"
                 description="A savings target each member should reach every N months. Optional."
+                icon="🎯"
+                accent={C.accent}
               />
               <SettingCard>
                 <View style={styles.toggleRow}>
@@ -1503,6 +2192,8 @@ export default function GroupSettingsScreen() {
               <SectionHeading
                 label="Loan Rules"
                 description="Configure how loans are calculated and managed in this group."
+                icon="🏦"
+                accent={C.brandBlue}
               />
               <SettingCard>
                 <Select
@@ -1540,12 +2231,14 @@ export default function GroupSettingsScreen() {
               </SettingCard>
             </View>
 
-            {/* ── RIGHT COLUMN ── */}
-            <View style={isWide ? styles.wideCol : undefined}>
+            {/* ── Column 2 ── */}
+            <View style={styles.settingsCol}>
               {/* Meeting Penalties */}
               <SectionHeading
                 label="Meeting Penalties"
                 description="Penalties applied for meeting lateness or absence."
+                icon="⚠️"
+                accent={C.gold}
               />
               <SettingCard>
                 <Text style={styles.penaltyNote}>
@@ -1589,6 +2282,8 @@ export default function GroupSettingsScreen() {
               <SectionHeading
                 label="Late Payment Fees"
                 description="Fees applied to overdue contributions or loan repayments."
+                icon="⏰"
+                accent={C.error}
               />
               <SettingCard>
                 <Text style={styles.penaltyNote}>
@@ -1649,6 +2344,8 @@ export default function GroupSettingsScreen() {
               <SectionHeading
                 label="Data Management"
                 description="Export or import your group data as a backup."
+                icon="📦"
+                accent={C.text2}
               />
               <SettingCard>
                 <TouchableOpacity style={styles.actionRow} onPress={handleExport} activeOpacity={0.7}>
@@ -1675,7 +2372,7 @@ export default function GroupSettingsScreen() {
               </SettingCard>
 
               {/* Account */}
-              <SectionHeading label="Account" />
+              <SectionHeading label="Account" icon="👤" accent={C.text2} />
               <SettingCard>
                 <TouchableOpacity style={styles.actionRow} onPress={handleSignOut} activeOpacity={0.7}>
                   <View style={[styles.actionIcon, styles.actionIconDanger]}>
@@ -1706,51 +2403,187 @@ export default function GroupSettingsScreen() {
       {/* ─── MEMBERS SECTION ────────────────────────────────────────────── */}
       {activeSection === "members" && isAdmin && (
         <View style={styles.contentScroll}>
-          {/* Simple Summary Row - No KPI Cards */}
-          <View style={memberStyles.summaryRow}>
-            <View style={memberStyles.summaryItem}>
-              <Text style={memberStyles.summaryVal}>{memberStats.total}</Text>
-              <Text style={memberStyles.summaryLbl}>Total</Text>
-            </View>
-            <View style={memberStyles.summaryDivider} />
-            <View style={memberStyles.summaryItem}>
-              <Text style={[memberStyles.summaryVal, { color: C.success }]}>{memberStats.active}</Text>
-              <Text style={memberStyles.summaryLbl}>Active</Text>
-            </View>
-            <View style={memberStyles.summaryDivider} />
-            <View style={memberStyles.summaryItem}>
-              <Text style={[memberStyles.summaryVal, { color: C.gold }]}>{memberStats.pending}</Text>
-              <Text style={memberStyles.summaryLbl}>Pending</Text>
-            </View>
-            <View style={memberStyles.summaryDivider} />
-            <View style={memberStyles.summaryItem}>
-              <Text style={[memberStyles.summaryVal, { color: C.error }]}>{memberStats.inactive}</Text>
-              <Text style={memberStyles.summaryLbl}>Inactive</Text>
-            </View>
-          </View>
-
-          <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
-            <TouchableOpacity style={styles.addMemberBtn} onPress={() => setShowCreateMember(true)} activeOpacity={0.8}>
-              <Text style={styles.addMemberBtnText}>+ Add New Member</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+          <ScrollView
+            contentContainerStyle={[
+              { paddingBottom: 40 },
+              isWide && styles.contentWide,
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
+          {/* ── Pending alert ──────────────────────────────────────
+              Renders before anything else when there are members
+              waiting on approval. This is the ONE thing on this tab
+              that requires an admin decision right now. */}
+          {memberStats.pending > 0 && (
             <TouchableOpacity
-              style={[styles.addMemberBtn, { backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border }]}
+              style={memberStyles.pendingAlert}
+              activeOpacity={0.85}
+              onPress={() => setMemberTab("Pending")}
+            >
+              <View style={memberStyles.pendingAlertIcon}>
+                <Text style={{ fontSize: 16 }}>⏳</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={memberStyles.pendingAlertTitle}>
+                  {memberStats.pending} member
+                  {memberStats.pending !== 1 ? "s" : ""} awaiting approval
+                </Text>
+                <Text style={memberStyles.pendingAlertHint}>
+                  Tap to review and activate them
+                </Text>
+              </View>
+              <Text style={memberStyles.pendingAlertCta}>Review →</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* ── Summary stats — colored tiles, informational ──────── */}
+          <View style={memberStyles.statGrid}>
+            <View
+              style={[
+                memberStyles.statTile,
+                { borderLeftColor: C.text2 },
+              ]}
+            >
+              <Text style={memberStyles.statTileLabel}>TOTAL</Text>
+              <Text
+                style={[memberStyles.statTileValue, { color: C.text }]}
+              >
+                {memberStats.total}
+              </Text>
+            </View>
+
+            <View
+              style={[
+                memberStyles.statTile,
+                { borderLeftColor: C.success },
+              ]}
+            >
+              <Text
+                style={[memberStyles.statTileLabel, { color: C.success }]}
+              >
+                ACTIVE
+              </Text>
+              <Text
+                style={[
+                  memberStyles.statTileValue,
+                  { color: C.success },
+                ]}
+              >
+                {memberStats.active}
+              </Text>
+            </View>
+
+            <View
+              style={[
+                memberStyles.statTile,
+                {
+                  borderLeftColor:
+                    memberStats.pending > 0 ? C.gold : C.text3,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  memberStyles.statTileLabel,
+                  {
+                    color:
+                      memberStats.pending > 0 ? C.gold : C.text3,
+                  },
+                ]}
+              >
+                PENDING
+              </Text>
+              <Text
+                style={[
+                  memberStyles.statTileValue,
+                  {
+                    color:
+                      memberStats.pending > 0 ? C.gold : C.text3,
+                  },
+                ]}
+              >
+                {memberStats.pending}
+              </Text>
+            </View>
+
+            <View
+              style={[
+                memberStyles.statTile,
+                {
+                  borderLeftColor:
+                    memberStats.inactive > 0 ? C.error : C.text3,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  memberStyles.statTileLabel,
+                  {
+                    color:
+                      memberStats.inactive > 0 ? C.error : C.text3,
+                  },
+                ]}
+              >
+                INACTIVE
+              </Text>
+              <Text
+                style={[
+                  memberStyles.statTileValue,
+                  {
+                    color:
+                      memberStats.inactive > 0 ? C.error : C.text3,
+                  },
+                ]}
+              >
+                {memberStats.inactive}
+              </Text>
+            </View>
+          </View>
+
+          {/* ── Compact action toolbar ─────────────────────────────
+              The two former full-width buttons (Add / Verify) become
+              a single row of small icon buttons. Add is primary and
+              prominent; Verify is subtle because it's a rare
+              maintenance task, not a daily action. */}
+          <View style={memberStyles.toolbar}>
+            <TouchableOpacity
+              style={memberStyles.toolbarBtnPrimary}
+              onPress={() => setShowCreateMember(true)}
+              activeOpacity={0.85}
+            >
+              <Text style={memberStyles.toolbarBtnPrimaryText}>
+                + Add member
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={memberStyles.toolbarBtnGhost}
               onPress={handleCheckMembershipDrift}
-              activeOpacity={0.8}
+              activeOpacity={0.7}
               disabled={checkingDrift}
             >
-              {checkingDrift
-                ? <ActivityIndicator size="small" color={C.primary} />
-                : <Text style={[styles.addMemberBtnText, { color: C.text }]}>🔍 Verify Member Access</Text>}
+              {checkingDrift ? (
+                <ActivityIndicator size="small" color={C.text2} />
+              ) : (
+                <Text style={memberStyles.toolbarBtnGhostText}>
+                  🔍 Verify access
+                </Text>
+              )}
             </TouchableOpacity>
           </View>
 
-          <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-            <SearchBar value={memberSearch} onChange={setMemberSearch} placeholder="Search members..." />
-            <TabRow tabs={["All", "Active", "Pending", "Inactive"]} active={memberTab} onChange={setMemberTab} />
+          {/* ── Search + filter tabs ──────────────────────────────── */}
+          <View style={memberStyles.filterRow}>
+            <SearchBar
+              value={memberSearch}
+              onChange={setMemberSearch}
+              placeholder="Search members..."
+            />
+            <TabRow
+              tabs={["All", "Active", "Pending", "Inactive"]}
+              active={memberTab}
+              onChange={setMemberTab}
+            />
           </View>
 
           <ScrollView
@@ -1766,33 +2599,95 @@ export default function GroupSettingsScreen() {
                 actionLabel="Add First Member"
               />
             ) : (
-              <Card>
-                {filteredMembers.map((m, i) => {
+              <View style={memberStyles.list}>
+                {filteredMembers.map((m) => {
                   const stats = getMemberStats(m, wallet, contributions);
                   const isMe = m.userId === currentMember?.userId;
                   const roleLabel = getRoleLabel(m);
+
+                  const statusColor =
+                    m.status === "active"
+                      ? C.success
+                      : m.status === "pending"
+                      ? C.gold
+                      : m.status === "suspended"
+                      ? C.error
+                      : C.text3;
+
                   return (
-                    <React.Fragment key={m.id}>
-                      <CardRow
-                        onPress={() => openMemberDetail(m)}
-                        left={<Avatar name={m.fullName} size={44} color={m.customRoleId ? "blue" : (ROLE_BADGE[m.role] ?? "teal")} />}
-                        title={`${m.fullName}${isMe ? " (You)" : ""}`}
-                        subtitle={`${stats.totalContributions > 0 ? fmtCurrency(stats.totalContributions) : "No contributions"}`}
-                        right={
-                          <View style={{ alignItems: "flex-end", gap: 4 }}>
-                            <View style={{ flexDirection: "row", gap: 4 }}>
-                              <Badge label={roleLabel} color={m.customRoleId ? "blue" : (ROLE_BADGE[m.role] || "teal")} />
-                              <Badge label={m.status} color={STATUS_BADGE[m.status] || "muted"} />
-                            </View>
-                          </View>
+                    <TouchableOpacity
+                      key={m.id}
+                      style={[
+                        memberStyles.row,
+                        { borderLeftColor: statusColor },
+                      ]}
+                      onPress={() => openMemberDetail(m)}
+                      activeOpacity={0.75}
+                    >
+                      <Avatar
+                        name={m.fullName}
+                        size={44}
+                        color={
+                          m.customRoleId
+                            ? "blue"
+                            : ROLE_BADGE[m.role] ?? "teal"
                         }
-                        showBorder={i < filteredMembers.length - 1}
                       />
-                    </React.Fragment>
+
+                      <View style={memberStyles.rowInfo}>
+                        <Text
+                          style={memberStyles.rowName}
+                          numberOfLines={1}
+                        >
+                          {m.fullName}
+                          {isMe ? " (You)" : ""}
+                        </Text>
+                        <View style={memberStyles.rowMetaRow}>
+                          <Text
+                            style={memberStyles.rowMeta}
+                            numberOfLines={1}
+                          >
+                            {stats.totalContributions > 0
+                              ? fmtCurrency(stats.totalContributions)
+                              : "No contributions"}
+                          </Text>
+                          <Text style={memberStyles.metaDot}>·</Text>
+                          <Text
+                            style={memberStyles.rowMeta}
+                            numberOfLines={1}
+                          >
+                            {roleLabel}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View
+                        style={[
+                          memberStyles.statusPill,
+                          { backgroundColor: statusColor + "18" },
+                        ]}
+                      >
+                        <View
+                          style={[
+                            memberStyles.statusDot,
+                            { backgroundColor: statusColor },
+                          ]}
+                        />
+                        <Text
+                          style={[
+                            memberStyles.statusText,
+                            { color: statusColor },
+                          ]}
+                        >
+                          {m.status}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
                   );
                 })}
-              </Card>
+              </View>
             )}
+          </ScrollView>
           </ScrollView>
         </View>
       )}
@@ -1837,6 +2732,24 @@ export default function GroupSettingsScreen() {
                 const enabledCount = PERM_KEYS.filter((k) => perms[k]).length;
                 const memberCount = memberCountForRole(role);
 
+                const pct = isLocked
+                  ? 100
+                  : Math.round((enabledCount / PERM_KEYS.length) * 100);
+                const progressColor =
+                  isLocked
+                    ? C.error
+                    : pct >= 70
+                    ? C.success
+                    : pct >= 40
+                    ? C.gold
+                    : C.text3;
+
+                const roleColor = isLocked
+                  ? C.error
+                  : role.isSystem
+                  ? C.primary
+                  : C.accent;
+
                 return (
                   <View key={role.id} style={permStyles.memberCard}>
                     <TouchableOpacity
@@ -1844,22 +2757,48 @@ export default function GroupSettingsScreen() {
                       onPress={() => setExpandedRoleId(isExpanded ? null : role.id)}
                       activeOpacity={0.7}
                     >
-                      <View style={permStyles.memberAvatar}>
-                        <Text style={permStyles.memberAvatarText}>
+                      <View
+                        style={[
+                          permStyles.memberAvatar,
+                          {
+                            backgroundColor: roleColor + "18",
+                            borderWidth: 2,
+                            borderColor: roleColor + "40",
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            permStyles.memberAvatarText,
+                            { color: roleColor },
+                          ]}
+                        >
                           {role.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
                         </Text>
                       </View>
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                          <Text style={permStyles.memberName}>{role.name}</Text>
-                          {!role.isSystem && (
-                            <View style={{ backgroundColor: C.accent + "20", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
-                              <Text style={{ fontSize: 8, fontWeight: "800", color: C.accent }}>CUSTOM</Text>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <View style={permStyles.memberTitleRow}>
+                          <Text
+                            style={permStyles.memberName}
+                            numberOfLines={1}
+                          >
+                            {role.name}
+                          </Text>
+                          {!role.isSystem ? (
+                            <View style={permStyles.customTag}>
+                              <Text style={permStyles.customTagText}>
+                                CUSTOM
+                              </Text>
+                            </View>
+                          ) : (
+                            <View style={[permStyles.systemTag, { backgroundColor: roleColor + "18" }]}>
+                              <Text style={[permStyles.systemTagText, { color: roleColor }]}>
+                                SYSTEM
+                              </Text>
                             </View>
                           )}
                         </View>
                         <Text style={permStyles.memberRole}>
-                          {isLocked ? "Full access · " : `${enabledCount}/${PERM_KEYS.length} permissions · `}
                           {memberCount} member{memberCount === 1 ? "" : "s"}
                         </Text>
                       </View>
@@ -1886,6 +2825,24 @@ export default function GroupSettingsScreen() {
                         <Text style={{ fontSize: 18, color: C.text3 }}>{isExpanded ? "▲" : "▼"}</Text>
                       </View>
                     </TouchableOpacity>
+
+                    {/* Progress bar — full-width under the header, so
+                        the role's permission strength reads at a glance
+                        even when the card is collapsed. */}
+                    <View style={permStyles.progressTrack}>
+                      <View
+                        style={[
+                          permStyles.progressFill,
+                          { width: `${pct}%` as any, backgroundColor: progressColor },
+                        ]}
+                      />
+                    </View>
+                    <View style={permStyles.progressLabelRow}>
+                      <Text style={[permStyles.progressLabel, { color: progressColor }]}>
+                        {isLocked ? "Full access" : `${enabledCount} of ${PERM_KEYS.length} permissions`}
+                      </Text>
+                      {!isLocked && <Text style={permStyles.progressPct}>{pct}%</Text>}
+                    </View>
 
                     {isExpanded && (
                       <View style={permStyles.permGrid}>
@@ -2041,13 +2998,25 @@ export default function GroupSettingsScreen() {
       {/* ─── AUDIT SECTION ────────────────────────────────────────────────── */}
       {activeSection === "audit" && (
         <View style={styles.contentScroll}>
-          {/* Toolbar */}
+          {/* ─── Toolbar ────────────────────────────────────────────────
+              Three explicit rows so each piece has its own space
+              regardless of screen width:
+
+                Row 1 — search + filter + clear
+                Row 2 — category tabs (horizontal scroll)
+                Row 3 — count line
+
+              Before this, everything lived in one flex-wrap container.
+              A horizontal ScrollView inside flex-wrap has no intrinsic
+              width on React Native Web, so the tabs collapsed to 0 and
+              appeared frozen; the container would then re-measure when
+              siblings wrapped, which is what made the whole audit page
+              jump around on mobile. Splitting into rows removes the
+              ScrollView from any wrapping context and gives it a
+              stable full-width parent. */}
           <View style={auditStyles.toolbar}>
-            <Text style={auditStyles.count}>
-              {filteredLogs.length.toLocaleString()} record{filteredLogs.length !== 1 ? "s" : ""}
-              {hasFilters ? " (filtered)" : ""}
-            </Text>
-            <View style={auditStyles.toolbarRight}>
+            {/* Row 1 — search + filter + clear */}
+            <View style={auditStyles.auditToolbarRow}>
               <View style={auditStyles.searchBox}>
                 <Text style={auditStyles.searchIcon}>🔍</Text>
                 <TextInput
@@ -2055,52 +3024,131 @@ export default function GroupSettingsScreen() {
                   placeholder="Search logs…"
                   placeholderTextColor={C.text3}
                   value={searchTerm}
-                  onChangeText={(v) => { setSearchTerm(v); setCurrentPage(1); }}
+                  onChangeText={(v) => {
+                    setSearchTerm(v);
+                    setCurrentPage(1);
+                  }}
+                  autoCapitalize="none"
+                  autoCorrect={false}
                 />
                 {!!searchTerm && (
-                  <TouchableOpacity onPress={() => { setSearchTerm(""); setCurrentPage(1); }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setSearchTerm("");
+                      setCurrentPage(1);
+                    }}
+                    hitSlop={8}
+                  >
                     <Text style={auditStyles.clearSearch}>✕</Text>
                   </TouchableOpacity>
                 )}
               </View>
 
-              {/* Category tabs - compact pill style */}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={auditStyles.tabScroll}>
-                <View style={auditStyles.tabRow}>
-                  {AUDIT_TABS.map((tab) => {
-                    const isActive = activeTab === tab.key;
-                    const count = tab.key === "all" ? allAuditLogs.length :
-                                  tab.key === "failed" ? allAuditLogs.filter(l => l.action === "failed" || l.status === "failed").length :
-                                  tab.key === "deletions" ? allAuditLogs.filter(l => l.action === "deleted").length :
-                                  allAuditLogs.filter(l => l.entityType === (AUDIT_TAB_ENTITY as any)[tab.key]).length;
-                    return (
-                      <TouchableOpacity
-                        key={tab.key}
-                        style={[auditStyles.tab, isActive && auditStyles.tabActive]}
-                        onPress={() => { setActiveTab(tab.key); setCurrentPage(1); }}
-                      >
-                        <Text style={auditStyles.tabIcon}>{tab.icon}</Text>
-                        <Text style={[auditStyles.tabLabel, isActive && auditStyles.tabLabelActive]}>{tab.label}</Text>
-                        <View style={[auditStyles.tabCount, isActive && auditStyles.tabCountActive]}>
-                          <Text style={[auditStyles.tabCountText, isActive && auditStyles.tabCountTextActive]}>{count}</Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </ScrollView>
-
-              <TouchableOpacity style={[auditStyles.filterBtn, hasFilters && auditStyles.filterBtnActive]} onPress={openFilter}>
-                <Text style={[auditStyles.filterBtnText, hasFilters && auditStyles.filterBtnTextActive]}>
+              <TouchableOpacity
+                style={[
+                  auditStyles.filterBtn,
+                  hasFilters && auditStyles.filterBtnActive,
+                ]}
+                onPress={openFilter}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    auditStyles.filterBtnText,
+                    hasFilters && auditStyles.filterBtnTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
                   {hasFilters ? "📌 Filtered" : "📅 Filter"}
                 </Text>
               </TouchableOpacity>
-              {hasFilters && (
-                <TouchableOpacity onPress={clearFilters}>
+
+              {hasFilters ? (
+                <TouchableOpacity
+                  onPress={clearFilters}
+                  hitSlop={8}
+                  style={auditStyles.clearBtn}
+                >
                   <Text style={auditStyles.clearFilters}>Clear</Text>
                 </TouchableOpacity>
-              )}
+              ) : null}
             </View>
+
+            {/* Row 2 — category tabs (horizontal scroll) */}
+            <View style={auditStyles.tabScrollWrap}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={auditStyles.tabRow}
+              >
+                {AUDIT_TABS.map((tab) => {
+                  const isActive = activeTab === tab.key;
+                  const count =
+                    tab.key === "all"
+                      ? allAuditLogs.length
+                      : tab.key === "failed"
+                      ? allAuditLogs.filter(
+                          (l) =>
+                            l.action === "failed" || l.status === "failed",
+                        ).length
+                      : tab.key === "deletions"
+                      ? allAuditLogs.filter((l) => l.action === "deleted")
+                          .length
+                      : allAuditLogs.filter(
+                          (l) =>
+                            l.entityType ===
+                            (AUDIT_TAB_ENTITY as any)[tab.key],
+                        ).length;
+                  return (
+                    <TouchableOpacity
+                      key={tab.key}
+                      style={[
+                        auditStyles.tab,
+                        isActive && auditStyles.tabActive,
+                      ]}
+                      onPress={() => {
+                        setActiveTab(tab.key);
+                        setCurrentPage(1);
+                      }}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={auditStyles.tabIcon}>{tab.icon}</Text>
+                      <Text
+                        style={[
+                          auditStyles.tabLabel,
+                          isActive && auditStyles.tabLabelActive,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {tab.label}
+                      </Text>
+                      <View
+                        style={[
+                          auditStyles.tabCount,
+                          isActive && auditStyles.tabCountActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            auditStyles.tabCountText,
+                            isActive && auditStyles.tabCountTextActive,
+                          ]}
+                        >
+                          {count}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            {/* Row 3 — count line */}
+            <Text style={auditStyles.count}>
+              {filteredLogs.length.toLocaleString()} record
+              {filteredLogs.length !== 1 ? "s" : ""}
+              {hasFilters ? " (filtered)" : ""}
+            </Text>
           </View>
 
           {/* Audit Log List */}
@@ -2272,11 +3320,71 @@ export default function GroupSettingsScreen() {
         </View>
       </BottomModal>
 
+      {/* Delete Confirmation Modal */}
+      <BottomModal
+        visible={showDeleteConfirm && !!selectedMember}
+        onClose={() => {
+          setShowDeleteConfirm(false);
+          setSelectedMember(null);
+        }}
+        title="Delete member?"
+      >
+        {selectedMember && (
+          <View style={{ padding: 16, gap: 12, paddingBottom: 24 }}>
+            <View style={deleteStyles.iconCircle}>
+              <Text style={deleteStyles.icon}>🗑</Text>
+            </View>
+
+            <Text style={deleteStyles.title}>
+              Delete {selectedMember.fullName}?
+            </Text>
+            <Text style={deleteStyles.body}>
+              This will permanently remove this member from the group. Their
+              name, contact info, and role assignment will be erased.
+            </Text>
+
+            <View style={deleteStyles.warningBox}>
+              <Text style={deleteStyles.warningTitle}>
+                ⚠ This cannot be undone
+              </Text>
+              <Text style={deleteStyles.warningText}>
+                If you want to keep this member's history but revoke their
+                access, use Deactivate instead — it preserves everything.
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
+              <Button
+                label="Cancel"
+                variant="secondary"
+                onPress={() => {
+                  setShowDeleteConfirm(false);
+                  setSelectedMember(null);
+                }}
+                style={{ flex: 1 }}
+              />
+              <Button
+                label="Delete member"
+                variant="danger"
+                onPress={() => handleDeleteMember(selectedMember)}
+                style={{ flex: 1 }}
+              />
+            </View>
+          </View>
+        )}
+      </BottomModal>
+
       {/* Member Detail Modal */}
       {showMemberDetail && selectedMember && (
         <MemberDetailModal
           member={selectedMember}
-          onClose={() => { setShowMemberDetail(false); setSelectedMember(null); }}
+          onClose={() => {
+            setShowMemberDetail(false);
+            // Delay clearing selectedMember so the modal can animate out
+            // using the same reference. Clearing immediately causes the
+            // close animation to render with `member = null`.
+            setTimeout(() => setSelectedMember(null), 300);
+          }}
         />
       )}
 
@@ -2289,17 +3397,218 @@ export default function GroupSettingsScreen() {
 // Detail Styles
 // ─────────────────────────────────────────────
 const detailStyles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 8 },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  body: { padding: 16, paddingBottom: 32 },
+
+  // ── Hero ──
+  hero: { alignItems: "center", paddingVertical: 8, marginBottom: 12 },
+  heroAvatar: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: C.primary,
     alignItems: "center",
     justifyContent: "center",
+    marginBottom: 10,
   },
-  avatarText: { fontSize: 20, fontWeight: "800", color: "#fff" },
-  name: { fontSize: 18, fontWeight: "800", color: C.text },
+  heroAvatarText: { fontSize: 26, fontWeight: "800", color: "#fff" },
+  heroName: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: C.text,
+    textAlign: "center",
+    marginBottom: 6,
+    paddingHorizontal: 12,
+  },
+  heroBadges: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: 6,
+    flexWrap: "wrap",
+    justifyContent: "center",
+  },
+  heroMeta: { fontSize: 11, color: C.text3 },
+
+  // ── Stat row ──
+  statRow: {
+    flexDirection: "row",
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  statCell: { flex: 1, alignItems: "center", minWidth: 0, paddingHorizontal: 4 },
+  statDivider: {
+    width: 1,
+    alignSelf: "stretch",
+    backgroundColor: C.borderLight,
+  },
+  statValue: {
+    fontSize: 15,
+    fontWeight: "800",
+    marginBottom: 3,
+  },
+  statLabel: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+
+  // ── Section labels ──
+  sectionLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginTop: 8,
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
+
+  // ── Section cards (rows) ──
+  sectionCard: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 12,
+    paddingHorizontal: 4,
+    marginBottom: 8,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 11,
+    paddingHorizontal: 10,
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderLight,
+  },
+  rowIcon: { fontSize: 15, width: 22 },
+  rowLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: C.text2,
+    width: 90,
+  },
+  rowValue: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600",
+    color: C.text,
+    textAlign: "right",
+  },
+
+  // ── Actions cards ──
+  actionsCard: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 12,
+    paddingVertical: 4,
+    marginBottom: 8,
+    overflow: "hidden",
+  },
+  action: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  actionIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  actionIconText: { fontSize: 16 },
+  actionLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  actionDesc: {
+    fontSize: 11,
+    color: C.text3,
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  actionChevron: {
+    fontSize: 20,
+    fontWeight: "700",
+    opacity: 0.5,
+    marginLeft: 4,
+  },
+
+  // ── Close ──
+  closeBtn: {
+    marginTop: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignItems: "center",
+  },
+  closeBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: C.text2,
+  },
+});
+
+// ─────────────────────────────────────────────
+// Delete Confirmation Styles
+// ─────────────────────────────────────────────
+const deleteStyles = StyleSheet.create({
+  iconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "rgba(220,38,38,0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    marginBottom: 6,
+  },
+  icon: { fontSize: 28 },
+  title: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: C.text,
+    textAlign: "center",
+  },
+  body: {
+    fontSize: 13,
+    color: C.text2,
+    textAlign: "center",
+    lineHeight: 19,
+    paddingHorizontal: 8,
+  },
+  warningBox: {
+    backgroundColor: "#FEF3C7",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(217,119,6,0.3)",
+    padding: 12,
+    marginTop: 4,
+  },
+  warningTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#92400E",
+    marginBottom: 4,
+  },
+  warningText: {
+    fontSize: 12,
+    color: "#B45309",
+    lineHeight: 17,
+  },
 });
 
 // ─────────────────────────────────────────────
@@ -2311,7 +3620,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: 12,
     paddingHorizontal: 16,
     paddingTop: Platform.OS === "ios" ? 48 : 20,
     paddingBottom: 12,
@@ -2319,12 +3628,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
-  headerWide: { paddingHorizontal: 32, paddingTop: Platform.OS === "ios" ? 56 : 36 },
-  headerLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headerWide: {
+    paddingHorizontal: 32,
+    paddingTop: Platform.OS === "ios" ? 56 : 36,
+  },
   backBtn: {
-    width: 34,
-    height: 34,
+    width: 36,
+    height: 36,
     borderRadius: 10,
     backgroundColor: C.elevated,
     alignItems: "center",
@@ -2332,20 +3642,57 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: C.border,
   },
-  backBtnText: { fontSize: 16, color: C.text2, fontWeight: "500", lineHeight: 20 },
-  headerTitle: { fontSize: 16, fontWeight: "700", color: C.text },
-  headerSub: { fontSize: 12, color: C.text3, marginTop: 1 },
+  backBtnText: {
+    fontSize: 16,
+    color: C.text2,
+    fontWeight: "600",
+    lineHeight: 20,
+  },
+  headerTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  headerTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: C.text,
+    letterSpacing: -0.2,
+  },
+  headerSub: {
+    fontSize: 12,
+    color: C.text3,
+    marginTop: 1,
+  },
+  // Fixed-width slot so the title doesn't recenter when the action
+  // button appears or disappears between tabs.
+  headerActionSlot: {
+    minWidth: 90,
+    alignItems: "flex-end",
+  },
   headerBtn: {
     paddingHorizontal: 14,
-    paddingVertical: 7,
+    paddingVertical: 8,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: C.border,
     backgroundColor: C.elevated,
+    minHeight: 34,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  headerBtnPrimary: { backgroundColor: C.primary, borderColor: C.primary },
-  headerBtnPrimaryText: { fontSize: 12, fontWeight: "700", color: "#fff" },
+  headerBtnPrimary: {
+    backgroundColor: C.primary,
+    borderColor: C.primary,
+  },
+  headerBtnDisabled: { opacity: 0.6 },
+  headerBtnPrimaryText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#fff",
+    letterSpacing: 0.2,
+  },
 
+  // ── Tab bar ────────────────────────────────────────────────────────
   tabWrapper: {
     backgroundColor: C.surface,
     borderBottomWidth: 1,
@@ -2354,54 +3701,133 @@ const styles = StyleSheet.create({
   tabBar: {
     flexDirection: "row",
     paddingHorizontal: 16,
-    paddingVertical: 4,
-    gap: 4,
+    paddingVertical: 8,
+    gap: 6,
   },
   tabBarWide: {
     paddingHorizontal: 32,
+    // On wide screens the tab row is centered and capped so it reads
+    // as a discrete control rather than stretching the full header.
+    justifyContent: "center",
+    maxWidth: 760,
+    alignSelf: "center",
+    width: "100%",
   },
   tab: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    backgroundColor: "transparent",
-    borderWidth: 1,
-    borderColor: "transparent",
-    flexShrink: 0,
-  },
-  tabActive: {
-    backgroundColor: C.primary + "12",
-    borderColor: C.primary + "30",
-  },
-  tabContent: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: "transparent",
+    flexShrink: 0,
+    minHeight: 38,
+  },
+  tabActive: {
+    backgroundColor: C.primary,
+    borderColor: C.primary,
+  },
+  tabIcon: {
+    fontSize: 14,
+    lineHeight: 18,
+    opacity: 0.75,
+  },
+  tabIconActive: {
+    opacity: 1,
   },
   tabText: {
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: "700",
     color: C.text3,
+    letterSpacing: 0.1,
   },
   tabTextActive: {
-    color: C.primary,
+    color: "#fff",
   },
+
+  // ── Tab badges ─────────────────────────────────────────────────────
+  // Sized as compact pills so appearing/disappearing doesn't shift
+  // the row when switching tabs. Active state inverts: white on the
+  // primary fill, so the count stays legible.
   tabBadge: {
-    backgroundColor: C.primary + "25",
-    borderRadius: 10,
+    backgroundColor: C.primary + "22",
+    borderRadius: 8,
     paddingHorizontal: 6,
     minWidth: 20,
     height: 18,
     alignItems: "center",
     justifyContent: "center",
   },
+  tabBadgeActive: {
+    backgroundColor: "rgba(255,255,255,0.25)",
+  },
   tabBadgeText: {
     fontSize: 10,
-    fontWeight: "700",
+    fontWeight: "800",
     color: C.primary,
+  },
+  tabBadgeTextActive: {
+    color: "#fff",
+  },
+  tabBadgeAlert: {
+    backgroundColor: "rgba(220,38,38,0.15)",
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    minWidth: 20,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tabBadgeAlertActive: {
+    backgroundColor: "rgba(255,255,255,0.3)",
+  },
+  tabBadgeAlertText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: C.error,
+  },
+  tabBadgeAlertTextActive: {
+    color: "#fff",
+  },
+
+  pendingBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#FEF3C7",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(217,119,6,0.35)",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  pendingBannerIcon: { fontSize: 18 },
+  pendingBannerTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#92400E",
+  },
+  pendingBannerHint: {
+    fontSize: 11,
+    color: "#B45309",
+    marginTop: 1,
+  },
+  pendingBannerCta: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#92400E",
+    letterSpacing: 0.2,
   },
 
   contentScroll: { flex: 1 },
+  contentWide: {
+    paddingHorizontal: 32,
+    maxWidth: 1100,
+    alignSelf: "center",
+    width: "100%",
+  },
   body: {
     padding: 16,
     paddingTop: 8,
@@ -2437,12 +3863,65 @@ const styles = StyleSheet.create({
   groupDesc: { fontSize: 12, color: C.text3, marginTop: 1 },
   groupMeta: { fontSize: 10, color: C.text3, marginTop: 2 },
 
-  wideGrid: { flexDirection: "row", gap: 20, alignItems: "flex-start" },
-  wideCol: { flex: 1 },
-  wideSaveRow: { marginTop: 16, alignItems: "flex-start" },
+  // ── Settings grid ────────────────────────────────────────────────
+  //
+  // A flex-wrap layout that behaves like CSS grid auto-fit:
+  //
+  //   Container:      flexDirection row, flexWrap wrap, gap 20
+  //   Each column:    flexBasis 400, flexGrow 1, maxWidth 620
+  //
+  // On desktop with 1100px of usable width, the two columns sit
+  // side-by-side at ~540px each — comfortable reading width. On a
+  // tablet (720-900px), each column gets ~400-440px, still side-by-
+  // side but tighter. Below that, the columns wrap and stack full
+  // width. On ultra-wide (2400px+), the maxWidth cap keeps them from
+  // stretching thin, and the whole grid centers inside the 1100px
+  // content wrapper.
+  settingsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 20,
+    alignItems: "flex-start",
+    marginTop: 4,
+  },
+  settingsCol: {
+    flexBasis: 400,
+    flexGrow: 1,
+    maxWidth: 620,
+    minWidth: 0,
+  },
+  wideSaveRow: {
+    marginTop: 24,
+    alignItems: "flex-start",
+  },
 
   row: { flexDirection: "row", gap: 8 },
   fieldHint: { fontSize: 10, color: C.text3, marginTop: 3, paddingHorizontal: 4 },
+
+  // Highlighted preview chip — used under the rate inputs to surface
+  // the actual currency amount a percentage translates to. Reads as
+  // "this is what the setting costs in practice" rather than as an
+  // aside. Only set on the preview variants below; the base
+  // fieldHint remains for neutral hints.
+  fieldPreview: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.primary,
+    backgroundColor: C.primary + "10",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 6,
+    alignSelf: "flex-start",
+  },
+  fieldPreviewGold: {
+    color: "#92400E",
+    backgroundColor: "#FEF3C7",
+  },
+  fieldPreviewRed: {
+    color: "#991B1B",
+    backgroundColor: "#FEF2F2",
+  },
   penaltyNote: { fontSize: 12, color: C.text3, marginBottom: 10, lineHeight: 17 },
   subLabel: { fontSize: 11, fontWeight: "700", color: C.text2, marginTop: 4, marginBottom: 6 },
   goalPreview: { fontSize: 11, color: C.primary, fontWeight: "600", marginTop: 6 },
@@ -2494,6 +3973,123 @@ const styles = StyleSheet.create({
 // Member Styles - Simple summary
 // ─────────────────────────────────────────────
 const memberStyles = StyleSheet.create({
+  // ── Pending alert ────────────────────────────────────────────────────
+  pendingAlert: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "rgba(217,119,6,0.35)",
+    borderRadius: 12,
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  pendingAlertIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "rgba(217,119,6,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pendingAlertTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#92400E",
+  },
+  pendingAlertHint: {
+    fontSize: 11,
+    color: "#B45309",
+    marginTop: 1,
+  },
+  pendingAlertCta: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#92400E",
+    letterSpacing: 0.2,
+  },
+
+  // ── Stat tiles ───────────────────────────────────────────────────────
+  statGrid: {
+    flexDirection: "row",
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  statTile: {
+    flex: 1,
+    minWidth: 0,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderLeftWidth: 3,
+    borderLeftColor: C.text2,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+  },
+  statTileLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    color: C.text3,
+    marginBottom: 4,
+  },
+  statTileValue: {
+    fontSize: 20,
+    fontWeight: "800",
+    lineHeight: 24,
+  },
+
+  // ── Compact toolbar ──────────────────────────────────────────────────
+  toolbar: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+  toolbarBtnPrimary: {
+    flex: 1,
+    backgroundColor: C.primary,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toolbarBtnPrimaryText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  toolbarBtnGhost: {
+    backgroundColor: C.elevated,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: C.border,
+    minWidth: 130,
+  },
+  toolbarBtnGhostText: {
+    color: C.text2,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+
+  // ── Filter row wrapper ───────────────────────────────────────────────
+  filterRow: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+
+  // ── Legacy (kept for compat; not used after this patch) ──────────────
   summaryRow: {
     flexDirection: "row",
     backgroundColor: C.surface,
@@ -2525,6 +4121,69 @@ const memberStyles = StyleSheet.create({
   summaryDivider: {
     width: 1,
     backgroundColor: C.border,
+  },
+
+  // ── Member rows (status-striped) ────────────────────────────────────
+  list: {
+    backgroundColor: C.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    overflow: "hidden",
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    paddingLeft: 11,
+    borderLeftWidth: 3,
+    borderLeftColor: C.border,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderLight,
+    backgroundColor: C.surface,
+  },
+  rowInfo: { flex: 1, minWidth: 0 },
+  rowName: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: C.text,
+  },
+  rowMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 3,
+  },
+  rowMeta: {
+    fontSize: 11,
+    color: C.text3,
+    flexShrink: 1,
+  },
+  metaDot: {
+    fontSize: 11,
+    color: C.text3,
+  },
+  statusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    flexShrink: 0,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "capitalize",
+    letterSpacing: 0.2,
   },
 });
 
@@ -2639,41 +4298,124 @@ const permStyles = StyleSheet.create({
     backgroundColor: "rgba(239,68,68,0.08)",
   },
   deleteRoleBtnText: { fontSize: 12 },
+
+  // ── Role card extras (tags, progress) ───────────────────────────────
+  memberTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 2,
+  },
+  customTag: {
+    backgroundColor: C.accent + "20",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  customTagText: {
+    fontSize: 8,
+    fontWeight: "800",
+    color: C.accent,
+    letterSpacing: 0.4,
+  },
+  systemTag: {
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  systemTagText: {
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+
+  progressTrack: {
+    height: 4,
+    backgroundColor: C.border,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%" as any,
+  },
+  progressLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderLight,
+    backgroundColor: C.surface,
+  },
+  progressLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  progressPct: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: C.text3,
+  },
 });
 
 // ─────────────────────────────────────────────
 // Audit Styles
 // ─────────────────────────────────────────────
 const auditStyles = StyleSheet.create({
+  // ── Audit toolbar (redesigned) ──────────────────────────────────────
+  // Vertical stack, three rows. Every row has a stable width, so
+  // nothing inside jumps when siblings wrap or conditional UI
+  // (like the "Clear" button) appears/disappears.
   toolbar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    flexDirection: "column",
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
     backgroundColor: C.surface,
     borderBottomWidth: 1,
     borderBottomColor: C.border,
-    flexWrap: "wrap",
-    gap: 6,
+    gap: 8,
   },
-  count: { fontSize: 12, fontWeight: "600", color: C.text2 },
-  toolbarRight: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  auditToolbarRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  count: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: C.text3,
+  },
   searchBox: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: C.bg,
     borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 6,
-    paddingHorizontal: 8,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    minHeight: 36,
+  },
+  searchIcon: { fontSize: 12, color: C.text3, marginRight: 6 },
+  searchInput: { flex: 1, fontSize: 13, color: C.text, minHeight: 18 },
+  clearSearch: { color: C.text3, fontSize: 13, paddingHorizontal: 4 },
+  clearBtn: {
+    paddingHorizontal: 4,
     paddingVertical: 4,
   },
-  searchIcon: { fontSize: 12, color: C.text3, marginRight: 4 },
-  searchInput: { flex: 1, fontSize: 12, color: C.text, minHeight: 16, width: 80 },
-  clearSearch: { color: C.text3, fontSize: 12, paddingHorizontal: 4 },
-  tabScroll: { maxWidth: "100%" as any },
-  tabRow: { flexDirection: "row", gap: 3 },
+
+  // The horizontal ScrollView lives in its own non-wrapping full-width
+  // container. tabScrollWrap gives it a stable 100% width to measure
+  // against; without this it collapses on RNW.
+  tabScrollWrap: {
+    width: "100%",
+  },
+  tabRow: {
+    flexDirection: "row",
+    gap: 4,
+    paddingRight: 12,
+  },
   tab: {
     flexDirection: "row",
     alignItems: "center",

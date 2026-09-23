@@ -959,6 +959,21 @@ export function findOverdueInstallments(
           m.id === loan.memberId,
       );
 
+    // Late-fee accrual is paused for non-active members.
+    //
+    // Deactivating a member is a deliberate admin decision to freeze
+    // their participation. Letting their loan late fees keep growing
+    // day by day while they're deactivated would accumulate a debt
+    // they have no way to act on, and would penalise them for the
+    // deactivated period if they were later reactivated.
+    //
+    // Existing unpaid fees already on the ledger stay visible — they
+    // were applied while the member was active. Only NEW days stop
+    // accruing. findOverdueContributions already has this same guard.
+    if (!member || member.status !== "active") {
+      continue;
+    }
+
     let loanClosedAt: Date | null = null;
     if (typeof (loan as any).completionDate === "string") {
       const closed = new Date((loan as any).completionDate);

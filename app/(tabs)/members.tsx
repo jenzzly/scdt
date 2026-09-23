@@ -1156,7 +1156,15 @@ export default function MembersScreen() {
       );
     }
 
-    // ── Mobile: search row, tier chips row, sort + count row ────────
+    // ── Mobile: four stacked rows ──────────────────────────────────
+    //    Row 1  search + add
+    //    Row 2  tier filter chips
+    //    Row 3  rank-by chips
+    //    Row 4  count + exports
+    //
+    // Rank-by was a dropdown before, which felt out of place next to
+    // the tier chips and opened a full-screen picker on mobile. Now
+    // both filter rows use the same chip pattern.
     const tierChips: { value: TierFilter; label: string; color: string }[] = [
       { value: "all", label: "All", color: C.text2 },
       { value: "excellent", label: "Excellent", color: C.success },
@@ -1165,9 +1173,17 @@ export default function MembersScreen() {
       { value: "at_risk", label: "At Risk", color: C.error },
     ];
 
+    const rankChips: { value: SortBy; label: string }[] = [
+      { value: "risk", label: "Risk" },
+      { value: "contributions", label: "Contributions" },
+      { value: "loan_balance", label: "Loan balance" },
+      { value: "fees", label: "Fees owed" },
+      { value: "name", label: "Name" },
+    ];
+
     return (
       <View style={st.mobileControls}>
-        {/* Row 1: search + add */}
+        {/* ── Row 1: search + add ──────────────────────────────────── */}
         <View style={st.mobileSearchRow}>
           <View style={st.searchWrapMobile}>
             <Text style={st.searchIcon}>🔍</Text>
@@ -1201,12 +1217,12 @@ export default function MembersScreen() {
           )}
         </View>
 
-        {/* Row 2: tier filter chips (horizontal scroll) */}
+        {/* ── Row 2: tier filter chips ────────────────────────────── */}
         <Text style={st.mobileFilterLabel}>Filter by tier</Text>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={st.mobileTierChipsRow}
+          contentContainerStyle={st.mobileChipsRow}
         >
           {tierChips.map((chip) => {
             const active = tierFilter === chip.value;
@@ -1214,7 +1230,7 @@ export default function MembersScreen() {
               <TouchableOpacity
                 key={chip.value}
                 style={[
-                  st.mobileTierChip,
+                  st.mobileChip,
                   active && {
                     backgroundColor: chip.color,
                     borderColor: chip.color,
@@ -1225,7 +1241,7 @@ export default function MembersScreen() {
               >
                 <Text
                   style={[
-                    st.mobileTierChipText,
+                    st.mobileChipText,
                     active && { color: "#fff" },
                   ]}
                 >
@@ -1236,46 +1252,65 @@ export default function MembersScreen() {
           })}
         </ScrollView>
 
-        {/* Row 3: sort + result count + exports */}
-        <View style={st.mobileSortRow}>
-          <Select
-            options={[
-              { label: "Risk", value: "risk" },
-              { label: "Contributions", value: "contributions" },
-              { label: "Loan balance", value: "loan_balance" },
-              { label: "Fees owed", value: "fees" },
-              { label: "Name", value: "name" },
-            ]}
-            value={sortBy}
-            onChange={(v) => setSortBy(v as SortBy)}
-            label="Rank by"
-            style={st.mobileSortSelect}
-          />
-
-          <View style={st.mobileSortRight}>
-            <Text style={st.mobileResultCount}>
-              {filtered.length} member{filtered.length !== 1 ? "s" : ""}
-            </Text>
-
-            {canExport && (
-              <View style={st.mobileExportRow}>
-                <TouchableOpacity
-                  style={[st.mobileExportChip, { backgroundColor: C.primary }]}
-                  onPress={() => handleExport("csv")}
-                  activeOpacity={0.8}
+        {/* ── Row 3: rank-by chips ────────────────────────────────── */}
+        <Text style={st.mobileFilterLabel}>Rank by</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={st.mobileChipsRow}
+        >
+          {rankChips.map((chip) => {
+            const active = sortBy === chip.value;
+            return (
+              <TouchableOpacity
+                key={chip.value}
+                style={[
+                  st.mobileChip,
+                  active && {
+                    backgroundColor: C.primary,
+                    borderColor: C.primary,
+                  },
+                ]}
+                onPress={() => setSortBy(chip.value)}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    st.mobileChipText,
+                    active && { color: "#fff" },
+                  ]}
                 >
-                  <Text style={st.mobileExportChipText}>CSV</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[st.mobileExportChip, { backgroundColor: C.redText }]}
-                  onPress={() => handleExport("pdf")}
-                  activeOpacity={0.8}
-                >
-                  <Text style={st.mobileExportChipText}>PDF</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
+                  {chip.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        {/* ── Row 4: count + exports ──────────────────────────────── */}
+        <View style={st.mobileSummaryRow}>
+          <Text style={st.mobileResultCount}>
+            {filtered.length} member{filtered.length !== 1 ? "s" : ""}
+          </Text>
+
+          {canExport && (
+            <View style={st.mobileExportRow}>
+              <TouchableOpacity
+                style={[st.mobileExportChip, { backgroundColor: C.primary }]}
+                onPress={() => handleExport("csv")}
+                activeOpacity={0.8}
+              >
+                <Text style={st.mobileExportChipText}>CSV</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[st.mobileExportChip, { backgroundColor: C.redText }]}
+                onPress={() => handleExport("pdf")}
+                activeOpacity={0.8}
+              >
+                <Text style={st.mobileExportChipText}>PDF</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </View>
     );
@@ -2230,12 +2265,14 @@ const st = StyleSheet.create({
     letterSpacing: 0.6,
     marginBottom: 6,
   },
-  mobileTierChipsRow: {
+  // Shared chip row — used by both the tier filter and the rank-by
+  // filter so they render as a matched pair.
+  mobileChipsRow: {
     gap: 8,
     paddingRight: 8,
     paddingBottom: 12,
   },
-  mobileTierChip: {
+  mobileChip: {
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 18,
@@ -2243,27 +2280,19 @@ const st = StyleSheet.create({
     borderColor: C.border,
     backgroundColor: C.surface,
   },
-  mobileTierChipText: {
+  mobileChipText: {
     fontSize: 12,
     fontWeight: "700",
     color: C.text2,
   },
 
-  mobileSortRow: {
+  // Row 4 — count + exports, no wrapper chip since there's no sort
+  // dropdown on this row anymore.
+  mobileSummaryRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: 10,
-    flexWrap: "wrap",
-  },
-  mobileSortSelect: {
-    flex: 1,
-    minWidth: 140,
-  },
-  mobileSortRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    flexShrink: 0,
   },
   mobileResultCount: {
     fontSize: 12,
