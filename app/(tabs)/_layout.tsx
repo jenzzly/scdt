@@ -82,7 +82,8 @@ const PAGE_TITLES: Record<string, string> = {
 const MOBILE_HIDDEN_ROUTES = new Set<string>([
   "/(tabs)/investments",
   "/(tabs)/wallet",
-  "/(tabs)/members",
+  // Members is deliberately NOT hidden — it's the "my stats" page for
+  // a regular member and shows their own card + risk breakdown.
 ]);
 
 const NAV_ICONS: Record<string, React.ComponentType<{ color?: string; size?: number }> | null> = {

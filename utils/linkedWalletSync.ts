@@ -68,7 +68,7 @@ export function buildLinkedTxPatch(
   if (changed.date !== undefined) patch.date = changed.date;
 
   if (changed.amount !== undefined) {
-    const wasCredit = (existingTx.amount ?? 0) >= 0;
+    const wasCredit = (existingTx.amount ?? 0) > 0;
     patch.amount = wasCredit
       ? Math.abs(changed.amount)
       : -Math.abs(changed.amount);
@@ -147,6 +147,19 @@ export function buildLoanPatchFromWalletEdit(
   }
 
   if (changed.date !== undefined) {
+    // Guard against empty or malformed dates. Without this, "" would
+    // pass the `!== oldDisbursementDateOnly` check (since "" !== a real
+    // date), write itself into disbursementDate and lastAccrualDate,
+    // and silently corrupt every subsequent accrual calculation.
+    const newDateValid =
+      typeof changed.date === "string" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(changed.date);
+
+    if (!newDateValid) {
+      // Nothing to re-anchor — return the amount-only patch as-is.
+      return patch;
+    }
+
     const oldDisbursementDateRaw = (loan as any).disbursementDate as
       | string
       | undefined;
@@ -156,14 +169,24 @@ export function buildLoanPatchFromWalletEdit(
       : undefined;
 
     if (changed.date !== oldDisbursementDateOnly) {
-      // The wallet tx's date IS the loan's disbursement date.
+      // The wallet tx's date IS the loan's disbursement date — but only
+      // forward moves are safe to apply on the accrual side. Moving the
+      // anchor BACKWARD while keeping accruedInterest at its current
+      // value double-charges interest on the next repayment, because
+      // lastAccrualDate would rewind while the accrued amount doesn't.
+      const currentAnchor = (loan as any).lastAccrualDate
+        ? String((loan as any).lastAccrualDate).slice(0, 10)
+        : undefined;
+
+      const movingBackward =
+        !!currentAnchor && changed.date < currentAnchor;
+
       patch.disbursementDate = changed.date;
 
-      if (loan.interestMethod === "reducing_balance") {
-        // Anchor priority: lastAccrualDate → previous disbursementDate
-        // → applicationDate → new date. Never simply skip the re-anchor.
+      if (loan.interestMethod === "reducing_balance" && !movingBackward) {
+        // Forward move (or first-ever anchor): safe to re-project.
         const anchorDate =
-          (loan as any).lastAccrualDate ||
+          currentAnchor ||
           oldDisbursementDateOnly ||
           loan.applicationDate ||
           changed.date;
@@ -183,6 +206,9 @@ export function buildLoanPatchFromWalletEdit(
         patch.accruedInterest = projection.total;
         patch.lastAccrualDate = changed.date;
       }
+      // Backward moves update only disbursementDate; the accrual
+      // anchor and accruedInterest are left alone. Correcting the
+      // disbursement date metadata is still useful for reporting.
     }
   }
 

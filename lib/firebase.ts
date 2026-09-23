@@ -56,14 +56,6 @@ if (missingKeys.length > 0) {
   );
 }
 
-if (__DEV__) {
-  console.log("==== FIREBASE CONFIG ====");
-  console.log(JSON.stringify({
-    ...firebaseConfig,
-    apiKey: firebaseConfig.apiKey?.substring(0, 8) + "...",
-  }, null, 2));
-}
-
 // Initialize Firebase app (singleton) — guards against re-initialization
 // on web during Fast Refresh / HMR, and on native during remounts.
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();

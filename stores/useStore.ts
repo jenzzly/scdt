@@ -48,6 +48,7 @@ import { createMeetingSlice } from "./slices/meetingSlice";
 import { createNotificationSlice } from "./slices/notificationSlice";
 import { createAuditSlice } from "./slices/auditSlice";
 import { createSyncSlice } from "./slices/syncSlice";
+import { createLateFeeExemptionSlice } from "./slices/lateFeeExemptionSlice";
 
 export const useStore = create<StoreState>()(
   persist(
@@ -89,6 +90,7 @@ export const useStore = create<StoreState>()(
       ...createNotificationSlice(set, get),
       ...createAuditSlice(set, get),
       ...createSyncSlice(set, get),
+      ...createLateFeeExemptionSlice(set, get),
 
       // ── Cross-cutting (touches every slice's state, stays here) ────────
       setDataViewMode: (mode) => set({ dataViewMode: mode }),

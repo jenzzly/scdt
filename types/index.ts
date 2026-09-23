@@ -135,6 +135,19 @@ export interface Group {
   contributionGoalTargetAmount?: number;
   contributionGoalAnchorDate?: string;
 
+  /**
+   * Minutes after `startTime` before a no-show is treated as past-due
+   * and eligible for an absence penalty. Defaults to 15 if unset.
+   */
+  meetingLateGraceMinutes?: number;
+
+  /**
+   * How many days after a meeting starts that attendance can still be
+   * recorded or corrected. Defaults to 7. Set to 0 to disallow edits
+   * after the meeting's grace window has passed (the old behavior).
+   */
+  attendanceEditWindowDays?: number;
+
   /** @deprecated fixed-amount penalties — retained for backward compatibility */
   latePenaltyAmount?: number;
   /** @deprecated fixed-amount penalties — retained for backward compatibility */
@@ -408,6 +421,27 @@ export interface Meeting {
   agenda?: string;
   minutes?: string;
   resolutions?: string[];
+  /**
+   * Local time-of-day the meeting starts, format "HH:mm". Optional —
+   * legacy meetings with no startTime fall back to "00:00", which means
+   * the meeting is treated as starting at the beginning of `date`'s day.
+   */
+  startTime?: string;
+
+  /**
+   * Duration of the meeting in minutes. Optional — legacy meetings
+   * default to 60 when unset. Feeds the "in progress" status window
+   * (a meeting is in progress from startTime through startTime +
+   * durationMinutes) and the attendance-edit window.
+   */
+  durationMinutes?: number;
+
+  /**
+   * Member-doc id of the member who owns / convenes this meeting.
+   * Optional. Shown as "Host: <name>" in the meeting row and fed
+   * into the edit modal so it can be changed later.
+   */
+  hostMemberId?: string;
   attendees: MeetingAttendee[];
   status: "scheduled" | "completed" | "cancelled";
   createdAt: string;

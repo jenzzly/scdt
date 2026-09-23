@@ -22,6 +22,7 @@ import {
   useGroupContributions,
   useGroupInvestments,
   useGroupWallet,
+  useGroupMeetings,
   useCurrentMember,
   useCurrentMemberPermissions,
   useIsAdminView,
@@ -92,7 +93,11 @@ type EarningsViewMode = "all" | "actual" | "projected";
 // Late-fee source — new dimension for the Late Fees category only.
 // "all" shows both combined (previous behavior); "contribution" and
 // "loan" show one source at a time.
-type LateFeeSourceFilter = "all" | "contribution" | "loan";
+type LateFeeSourceFilter =
+  | "all"
+  | "contribution"
+  | "loan"
+  | "meeting";
 
 type EarningsSourceFilter =
   | "all"
@@ -146,6 +151,7 @@ const LATE_FEE_SOURCE_CHIPS: { label: string; value: LateFeeSourceFilter }[] = [
   { label: "All Sources", value: "all" },
   { label: "Contributions", value: "contribution" },
   { label: "Loans", value: "loan" },
+  { label: "Meetings", value: "meeting" },
 ];
 
 const EARNINGS_SOURCE_CHIPS: { label: string; value: EarningsSourceFilter }[] = [
@@ -956,8 +962,8 @@ function FilterModal({
           <Text style={styles.filterSectionTitle}>Late Fee Source</Text>
           <Text style={styles.filterSectionHelp}>
             Only affects the Late Fees report tab. Pick whether to see
-            fees from missed contributions, from overdue loan
-            installments, or both combined.
+            fees from missed contributions, overdue loan installments,
+            meeting attendance penalties, or any combination.
           </Text>
           <StatusChipRow
             value={lateFeeSource}
@@ -1062,6 +1068,7 @@ export default function ReportsScreen() {
   const allContributions = useGroupContributions();
   const allInvestments = useGroupInvestments();
   const allWallet = useGroupWallet();
+  const allMeetings = useGroupMeetings();
   const permissions = useCurrentMemberPermissions();
   const currentMember = useCurrentMember();
   const canSeeAll = useIsAdminView();
@@ -1326,13 +1333,67 @@ export default function ReportsScreen() {
       );
   }, [overdueLoans, allWallet, isPersonalView, myIds]);
 
+  // ───────────────────────────────────────────────────────────────────
+  // Meeting late fees
+  //
+  // Meeting penalties live on `meeting.attendees[].penaltyAmount` (see
+  // recordAttendance in meetingSlice.ts), mirrored as a `late_fee`
+  // wallet tx with id `meeting-penalty-{meetingId}-{memberId}`.
+  //
+  // The attendee record is the authoritative source for the paid flag:
+  // clearMeetingPenalty flips `attendee.penaltyPaid = true` on the
+  // meeting but does NOT touch `feePaid` on the wallet tx. Reading the
+  // wallet tx here would show cleared meeting fees as still owed.
+  // ───────────────────────────────────────────────────────────────────
+  const meetingLateFeesList = useMemo(() => {
+    const rows: any[] = [];
+
+    for (const meeting of allMeetings) {
+      if (meeting.status === "cancelled") continue;
+
+      const attendees = meeting.attendees ?? [];
+      for (const attendee of attendees) {
+        const amt = attendee.penaltyAmount ?? 0;
+        if (amt <= 0) continue;
+
+        const member = allMembers.find((m) => m.id === attendee.memberId);
+
+        rows.push({
+          type: "meeting" as const,
+          meetingId: meeting.id,
+          meetingTitle: meeting.title,
+          meetingDate: meeting.date,
+          memberId: attendee.memberId,
+          memberName: member?.fullName ?? "Unknown",
+          periodStart: meeting.date,
+          dueDate: meeting.date,
+          periodLabel: `${meeting.title} · ${fmtDate(meeting.date)}`,
+          daysLate: 0,
+          attendanceStatus:
+            attendee.status ?? (attendee.attended ? "present" : "absent"),
+          lateMinutes: attendee.lateMinutes ?? 0,
+          feeAmount: amt,
+          isPaid: !!attendee.penaltyPaid,
+        });
+      }
+    }
+
+    return isPersonalView
+      ? rows.filter((r) => myIds.has(r.memberId))
+      : rows;
+  }, [allMeetings, allMembers, isPersonalView, myIds]);
+
   const allLateFeesCombined = useMemo(() => {
     const taggedContribFees = lateFees.map((f: any) => ({
       ...f,
       type: "contribution" as const,
     }));
-    return [...taggedContribFees, ...loanLateFeesList];
-  }, [lateFees, loanLateFeesList]);
+    return [
+      ...taggedContribFees,
+      ...loanLateFeesList,
+      ...meetingLateFeesList,
+    ];
+  }, [lateFees, loanLateFeesList, meetingLateFeesList]);
 
   // ───────────────────────────────────────────────────────────────────────
   // Member-status derived sets
@@ -1914,26 +1975,52 @@ export default function ReportsScreen() {
           .reduce((s: number, f: any) => s + (f.feeAmount || 0), 0)
       );
 
-      const totalOwed = round2(totalContribLateFees + totalLoanLateFees);
+      const totalMeetingLateFees = round2(
+        list
+          .filter((f: any) => f.type === "meeting" && !f.isPaid)
+          .reduce((s: number, f: any) => s + (f.feeAmount || 0), 0)
+      );
+
+      const totalOwed = round2(
+        totalContribLateFees + totalLoanLateFees + totalMeetingLateFees,
+      );
 
       return {
         rows: list,
-        headers: ["Member", "Type", "Reference", "Days Late", "Fee Amount", "Status"],
-        toRow: (f: any) => [
-          getMemberName(f.memberId),
-          f.type === "loan" ? "Loan" : "Contribution",
-          f.periodLabel ?? "—",
-          f.daysLate ?? 0,
-          fmtCurrency(f.feeAmount || 0),
-          f.isPaid ? "Paid" : "Unpaid",
-        ],
+        headers: ["Member", "Type", "Reference", "Reason", "Fee Amount", "Status"],
+        toRow: (f: any) => {
+          let reason: string | number = "—";
+          if (f.type === "loan" || f.type === "contribution") {
+            reason = f.daysLate ?? 0;
+          } else if (f.type === "meeting") {
+            if (f.attendanceStatus === "late" && f.lateMinutes) {
+              reason = `Late ${f.lateMinutes} min`;
+            } else if (f.attendanceStatus === "absent") {
+              reason = "Absent";
+            } else {
+              reason = f.attendanceStatus ?? "—";
+            }
+          }
+          return [
+            getMemberName(f.memberId),
+            f.type === "loan"
+              ? "Loan"
+              : f.type === "meeting"
+              ? "Meeting"
+              : "Contribution",
+            f.periodLabel ?? "—",
+            reason,
+            fmtCurrency(f.feeAmount || 0),
+            f.isPaid ? "Paid" : "Unpaid",
+          ];
+        },
         chart,
         chartColor: C.error,
         kpis: [
           { label: "Total Late Fees", value: fmtCurrency(totalOwed) },
           { label: "Loan Late Fees", value: fmtCurrency(totalLoanLateFees) },
           { label: "Contrib Late Fees", value: fmtCurrency(totalContribLateFees) },
-          { label: "Records", value: String(list.length) },
+          { label: "Meeting Fees", value: fmtCurrency(totalMeetingLateFees) },
         ],
       };
     }

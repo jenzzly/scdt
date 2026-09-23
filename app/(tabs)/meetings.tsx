@@ -36,10 +36,43 @@ import {
   Button,
   BottomModal,
   Input,
+  Select,
 } from "../../components/ui";
 import { KpiCard } from "../../components/ui/KpiCard";
 import { C, fmtCurrency, showConfirm } from "../../utils/theme";
+import {
+  getMeetingStatus,
+  findUnrecordedAttendees,
+  formatMeetingTime,
+  isAttendanceEditable,
+  getMeetingEndMs,
+} from "../../utils/meetingFees";
 import type { Meeting } from "../../types";
+
+// ── Permission helper ─────────────────────────────────────────────────
+//
+// MemberPermissions carries two meeting-related fields:
+//   • manageMeetings   — the current, non-deprecated gate
+//   • updateMeetings   — @deprecated alias kept for backward compat
+//
+// This screen previously checked ONLY updateMeetings. Members whose
+// permissions object was written by the newer permissions UI have
+// `manageMeetings: true, updateMeetings: undefined`, so every meeting
+// action evaluated to false — no Edit, no Delete, no Cancel, no
+// Record Attendance. This helper prefers the current field and falls
+// back to the alias for old records.
+function hasManageMeetingsPermission(
+  permissions:
+    | { manageMeetings?: boolean; updateMeetings?: boolean }
+    | null
+    | undefined,
+): boolean {
+  if (!permissions) return false;
+  if (permissions.manageMeetings !== undefined) {
+    return permissions.manageMeetings === true;
+  }
+  return permissions.updateMeetings === true;
+}
 
 const Divider = () => <View style={{ height: 1, backgroundColor: C.border }} />;
 
@@ -218,6 +251,7 @@ function PersonalAttendanceCard({
 // ── Meeting row ──────────────────────────────────────────────────────
 function MeetingRow({
   meeting,
+  group,
   members,
   attendance,
   myIds,
@@ -231,10 +265,10 @@ function MeetingRow({
   onEdit,
   onDelete,
   onClearPenalties,
-  isPast = false,
-  isCancelled = false,
+  onFinalize,
 }: {
   meeting: Meeting;
+  group: any;
   members: any[];
   attendance: {
     total: number;
@@ -253,18 +287,37 @@ function MeetingRow({
   onEdit: () => void;
   onDelete: () => void;
   onClearPenalties: () => void;
-  isPast?: boolean;
-  isCancelled?: boolean;
+  onFinalize: () => void;
 }) {
-  const isCancelledStatus = meeting.status === "cancelled" || isCancelled;
-  const isScheduled = meeting.status === "scheduled";
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const isCancelledStatus = meeting.status === "cancelled";
   const hasUnpaidPenalties = meeting.attendees.some(
     (a) => (a.penaltyAmount ?? 0) > 0 && !a.penaltyPaid,
   );
-  const isExpired =
-    new Date(meeting.date) < new Date() && !isCancelledStatus;
 
-  // The current user's own attendance record for this meeting, if any.
+  const meetingStatus = getMeetingStatus(meeting, group);
+  const isScheduled = meetingStatus === "scheduled";
+  const isInProgress = meetingStatus === "in_progress";
+  const isExpired = meetingStatus === "past" && !isCancelledStatus;
+
+  const startTimeLabel = formatMeetingTime(meeting);
+  const endMs = getMeetingEndMs(meeting);
+  const endTimeLabel = Number.isFinite(endMs)
+    ? new Date(endMs).toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
+
+  const unrecorded = isExpired
+    ? findUnrecordedAttendees(meeting, members, group)
+    : [];
+
+  const host = meeting.hostMemberId
+    ? members.find((m) => m.id === meeting.hostMemberId)
+    : null;
+
   const myAttendee = meeting.attendees.find((a) => myIds.has(a.memberId));
 
   let statusLabel = "";
@@ -275,6 +328,10 @@ function MeetingRow({
     statusLabel = "Cancelled";
     statusBg = C.mutedBg;
     statusColor = C.text3;
+  } else if (isInProgress) {
+    statusLabel = "In progress";
+    statusBg = C.goldBg;
+    statusColor = C.goldText;
   } else if (isExpired) {
     statusLabel = "Expired";
     statusBg = C.redBg;
@@ -289,66 +346,108 @@ function MeetingRow({
     statusColor = C.greenText;
   }
 
+  const canShowRecord = canRecordAttendance && !isCancelledStatus;
+  const canShowFinalize =
+    canRecordAttendance && isExpired && unrecorded.length > 0;
+
+  const hasManageOnlyActions =
+    canEdit ||
+    canDelete ||
+    (canCancel && !isCancelledStatus && (isScheduled || isInProgress)) ||
+    (canClearPenalties && hasUnpaidPenalties && !isCancelledStatus);
+
+  const hasAnyAction =
+    canShowRecord || canShowFinalize || hasManageOnlyActions;
+
+  const showMenuTrigger = !isCancelledStatus && hasManageOnlyActions;
+
   return (
-    <View style={[st.meetingRow, isCancelledStatus && { opacity: 0.6 }]}>
+    <>
       <View
         style={[
-          st.dateBadge,
-          isCancelledStatus && { backgroundColor: C.mutedBg },
+          st.rowWrap,
+          isCancelledStatus && { opacity: 0.65 },
         ]}
       >
-        <Text
-          style={[
-            st.dateBadgeDay,
-            isCancelledStatus && { color: C.text3 },
-          ]}
-        >
-          {new Date(meeting.date).getDate()}
-        </Text>
-        <Text
-          style={[
-            st.dateBadgeMon,
-            isCancelledStatus && { color: C.text3 },
-          ]}
-        >
-          {new Date(meeting.date)
-            .toLocaleDateString("en", { month: "short" })
-            .toUpperCase()}
-        </Text>
-      </View>
-
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <View style={st.meetingTopRow}>
-          <Text
+        <View style={st.rowHeader}>
+          <View
             style={[
-              st.meetingTitle,
-              isCancelledStatus && {
-                textDecorationLine: "line-through",
-                color: C.text3,
-              },
+              st.dateBadge,
+              isCancelledStatus && { backgroundColor: C.mutedBg },
+              isInProgress && { backgroundColor: C.goldBg },
             ]}
-            numberOfLines={1}
           >
-            {meeting.title}
-          </Text>
-          <Chip label={statusLabel} bg={statusBg} color={statusColor} />
+            <Text
+              style={[
+                st.dateBadgeDay,
+                isCancelledStatus && { color: C.text3 },
+                isInProgress && { color: C.goldText },
+              ]}
+            >
+              {new Date(meeting.date).getDate()}
+            </Text>
+            <Text
+              style={[
+                st.dateBadgeMon,
+                isCancelledStatus && { color: C.text3 },
+                isInProgress && { color: C.goldText },
+              ]}
+            >
+              {new Date(meeting.date)
+                .toLocaleDateString("en", { month: "short" })
+                .toUpperCase()}
+            </Text>
+          </View>
+
+          <View style={st.rowTitleBlock}>
+            <Text
+              style={[
+                st.rowTitleText,
+                isCancelledStatus && {
+                  textDecorationLine: "line-through",
+                  color: C.text3,
+                },
+              ]}
+              numberOfLines={2}
+            >
+              {meeting.title}
+            </Text>
+
+            <View style={st.rowMetaLine}>
+              <Text style={st.rowMetaText} numberOfLines={1}>
+                🕒 {startTimeLabel}
+                {endTimeLabel ? ` – ${endTimeLabel}` : ""}
+              </Text>
+              <Chip label={statusLabel} bg={statusBg} color={statusColor} />
+            </View>
+
+            {(meeting.location || host) && (
+              <View style={st.rowMetaLine}>
+                {meeting.location ? (
+                  <Text
+                    style={[st.rowMetaText, { flexShrink: 1 }]}
+                    numberOfLines={1}
+                  >
+                    📍 {meeting.location}
+                  </Text>
+                ) : null}
+                {host ? (
+                  <Text
+                    style={[st.rowMetaText, { flexShrink: 1 }]}
+                    numberOfLines={1}
+                  >
+                    👤 {host.fullName}
+                  </Text>
+                ) : null}
+              </View>
+            )}
+          </View>
         </View>
 
-        {meeting.location ? (
-          <Text style={st.meetingMeta} numberOfLines={1}>
-            📍 {meeting.location}
-          </Text>
-        ) : null}
-
-        {/* Personal status — always shown inside a row. Even in
-            group view an admin benefits from seeing "my" status for a
-            given meeting at a glance; the *card* at the top of the
-            screen is what changes between views, not this strip. */}
-        {myAttendee ? (
+        {myAttendee && !isCancelledStatus ? (
           <PersonalAttendanceStrip attendee={myAttendee} />
         ) : null}
 
-        {/* Aggregate attendance (staff-facing summary) */}
         {attendance.total > 0 && !isCancelledStatus ? (
           <View style={st.attendanceRow}>
             <Text style={st.attendanceStat}>
@@ -386,71 +485,212 @@ function MeetingRow({
           </Text>
         ) : null}
 
-        {!isCancelledStatus && isScheduled ? (
-          <View style={st.meetingActions}>
-            {canRecordAttendance ? (
+        {hasAnyAction ? (
+          <View style={st.actionBar}>
+            <View style={st.actionPrimaryRow}>
+              {canShowRecord ? (
+                <TouchableOpacity
+                  style={st.actionPrimary}
+                  onPress={onRecordAttendance}
+                  activeOpacity={0.85}
+                >
+                  <Text style={st.actionPrimaryText} numberOfLines={1}>
+                    {attendance.total > 0
+                      ? "📋  Update Attendance"
+                      : "📋  Record Attendance"}
+                  </Text>
+                </TouchableOpacity>
+              ) : isCancelledStatus && (canEdit || canDelete) ? (
+                <TouchableOpacity
+                  style={[st.actionPrimary, st.actionPrimaryMuted]}
+                  onPress={() => setMenuOpen(true)}
+                  activeOpacity={0.85}
+                >
+                  <Text
+                    style={[st.actionPrimaryText, { color: C.text2 }]}
+                    numberOfLines={1}
+                  >
+                    Manage meeting
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+
+              {showMenuTrigger ? (
+                <TouchableOpacity
+                  style={st.actionMenuBtn}
+                  onPress={() => setMenuOpen(true)}
+                  activeOpacity={0.85}
+                  accessibilityLabel="More actions"
+                  accessibilityRole="button"
+                >
+                  <Text style={st.actionMenuBtnText}>⋯</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {canShowFinalize ? (
               <TouchableOpacity
-                style={st.attendBtn}
-                onPress={onRecordAttendance}
-                activeOpacity={0.8}
+                style={st.finalizeBanner}
+                onPress={onFinalize}
+                activeOpacity={0.85}
               >
-                <Text style={st.attendBtnText}>
-                  {attendance.total > 0
-                    ? "Update Attendance"
-                    : "Record Attendance"}
+                <Text style={st.finalizeBannerIcon}>⚠️</Text>
+                <Text style={st.finalizeBannerText} numberOfLines={1}>
+                  {unrecorded.length} member
+                  {unrecorded.length !== 1 ? "s" : ""} unrecorded
                 </Text>
-              </TouchableOpacity>
-            ) : null}
-            {canCancel ? (
-              <TouchableOpacity
-                style={st.cancelBtn}
-                onPress={onCancel}
-                activeOpacity={0.8}
-              >
-                <Text style={st.cancelBtnText}>Cancel</Text>
+                <Text style={st.finalizeBannerCta}>Finalize →</Text>
               </TouchableOpacity>
             ) : null}
           </View>
-        ) : null}
-
-        {canEdit || canDelete ? (
-          <View style={[st.meetingActions, { marginTop: 8 }]}>
-            {canEdit ? (
-              <TouchableOpacity
-                style={st.editBtn}
-                onPress={onEdit}
-                activeOpacity={0.8}
-              >
-                <Text style={st.editBtnText}>Edit</Text>
-              </TouchableOpacity>
-            ) : null}
-            {canDelete ? (
-              <TouchableOpacity
-                style={st.deleteBtn}
-                onPress={onDelete}
-                activeOpacity={0.8}
-              >
-                <Text style={st.deleteBtnText}>Delete</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        ) : null}
-
-        {canClearPenalties && !isCancelledStatus && hasUnpaidPenalties ? (
-          <TouchableOpacity
-            style={st.penaltyBtn}
-            onPress={onClearPenalties}
-            activeOpacity={0.8}
-          >
-            <Text style={st.penaltyBtnText}>Clear Penalties</Text>
-          </TouchableOpacity>
         ) : null}
       </View>
-    </View>
+
+      <BottomModal
+        visible={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        title="Meeting Actions"
+      >
+        <View style={st.menuBody}>
+          <View style={st.menuHeaderBlock}>
+            <Text style={st.menuHeaderTitle} numberOfLines={2}>
+              {meeting.title}
+            </Text>
+            <Text style={st.menuHeaderSub} numberOfLines={2}>
+              {new Date(meeting.date).toLocaleDateString("en-GB", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+              })}
+              {` · ${startTimeLabel}`}
+              {meeting.location ? ` · ${meeting.location}` : ""}
+            </Text>
+          </View>
+
+          {canShowFinalize ? (
+            <MenuAction
+              icon="✓"
+              label={`Finalize ${unrecorded.length} absent`}
+              description="Mark every unrecorded member absent and apply the group's absence penalty"
+              tone="primary"
+              onPress={() => {
+                setMenuOpen(false);
+                onFinalize();
+              }}
+            />
+          ) : null}
+
+          {canEdit ? (
+            <MenuAction
+              icon="✏️"
+              label="Edit meeting"
+              description="Change time, host, location, or agenda"
+              onPress={() => {
+                setMenuOpen(false);
+                onEdit();
+              }}
+            />
+          ) : null}
+
+          {canCancel && !isCancelledStatus && (isScheduled || isInProgress) ? (
+            <MenuAction
+              icon="🚫"
+              label="Cancel meeting"
+              description="All active members will be notified"
+              tone="danger"
+              onPress={() => {
+                setMenuOpen(false);
+                onCancel();
+              }}
+            />
+          ) : null}
+
+          {canClearPenalties &&
+          hasUnpaidPenalties &&
+          !isCancelledStatus ? (
+            <MenuAction
+              icon="💸"
+              label="Clear penalties"
+              description="Mark unpaid fees as settled for this meeting"
+              onPress={() => {
+                setMenuOpen(false);
+                onClearPenalties();
+              }}
+            />
+          ) : null}
+
+          {canDelete ? (
+            <>
+              <View style={st.menuDivider} />
+              <MenuAction
+                icon="🗑"
+                label="Delete meeting"
+                description="Permanently removes the meeting and all its attendance records"
+                tone="danger"
+                onPress={() => {
+                  setMenuOpen(false);
+                  onDelete();
+                }}
+              />
+            </>
+          ) : null}
+        </View>
+      </BottomModal>
+    </>
   );
 }
 
-// ── Main screen ──────────────────────────────────────────────────────
+function MenuAction({
+  icon,
+  label,
+  description,
+  tone = "default",
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  description?: string;
+  tone?: "default" | "primary" | "danger";
+  onPress: () => void;
+}) {
+  const labelColor =
+    tone === "danger" ? C.error : tone === "primary" ? C.primary : C.text;
+  const iconBg =
+    tone === "danger"
+      ? "rgba(239,68,68,0.10)"
+      : tone === "primary"
+      ? "rgba(46,125,108,0.10)"
+      : C.elevated;
+
+  return (
+    <TouchableOpacity
+      style={st.menuAction}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      <View style={[st.menuActionIcon, { backgroundColor: iconBg }]}>
+        <Text style={{ fontSize: 15 }}>{icon}</Text>
+      </View>
+
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text
+          style={[st.menuActionLabel, { color: labelColor }]}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+        {description ? (
+          <Text style={st.menuActionDesc} numberOfLines={2}>
+            {description}
+          </Text>
+        ) : null}
+      </View>
+
+      <Text style={[st.menuActionChevron, { color: labelColor }]}>›</Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function MeetingsScreen() {
   const router = useRouter();
   const { width, height } = useWindowDimensions();
@@ -460,11 +700,20 @@ export default function MeetingsScreen() {
   const meetings = useGroupMeetings();
   const members = useGroupMembers();
   const currentUserRole = useCurrentUserRole();
+  const activeGroup = useStore((s) =>
+    s.groups.find((g) => g.id === s.activeGroupId),
+  );
+
+  // How long after a meeting start attendance can still be edited.
+  // Default 7 days. See Group.attendanceEditWindowDays in types.
+  const attendanceEditWindowDays = activeGroup?.attendanceEditWindowDays ?? 7;
+  const attendanceWindowMs = attendanceEditWindowDays * 86_400_000;
   const {
     cancelMeeting,
     clearMeetingPenalty,
     deleteMeeting,
     updateMeeting,
+    recordAttendance,
     activeGroupId,
   } = useStore();
   const { show, visible, msg, type } = useToast();
@@ -488,25 +737,25 @@ export default function MeetingsScreen() {
   const roleCanCancelMeeting =
     ["admin", "committee", "loan_officer", "accountant"].includes(
       currentUserRole,
-    ) && (permissions.updateMeetings ?? false);
+    ) && hasManageMeetingsPermission(permissions);
   const roleCanClearPenalties =
     ["admin", "loan_officer"].includes(currentUserRole) &&
-    (permissions.updateMeetings ?? false);
+    hasManageMeetingsPermission(permissions);
   const roleCanRecordAttendance =
     ["admin", "committee", "loan_officer", "accountant"].includes(
       currentUserRole,
-    ) && (permissions.updateMeetings ?? false);
+    ) && hasManageMeetingsPermission(permissions);
   const roleCanScheduleMeeting =
     ["admin", "accountant"].includes(currentUserRole) &&
-    (permissions.updateMeetings ?? false);
+    hasManageMeetingsPermission(permissions);
   const roleCanEditMeeting =
     ["admin", "committee", "loan_officer", "accountant"].includes(
       currentUserRole,
-    ) && (permissions.updateMeetings ?? false);
+    ) && hasManageMeetingsPermission(permissions);
   const roleCanDeleteMeeting =
     ["admin", "committee", "loan_officer", "accountant"].includes(
       currentUserRole,
-    ) && (permissions.updateMeetings ?? false);
+    ) && hasManageMeetingsPermission(permissions);
 
   // Effective capability — role AND group view mode. Switching to
   // Personal is an explicit "show me my stuff" signal, so admin
@@ -653,6 +902,44 @@ export default function MeetingsScreen() {
     }
   };
 
+  const handleFinalizeAttendance = async (meeting: Meeting) => {
+    const unrecorded = findUnrecordedAttendees(
+      meeting,
+      members,
+      activeGroup,
+    );
+    if (unrecorded.length === 0) {
+      show("No unrecorded members to finalize");
+      return;
+    }
+    showConfirm(
+      "Finalize Attendance",
+      `Mark ${unrecorded.length} unrecorded member${
+        unrecorded.length !== 1 ? "s" : ""
+      } as absent? Each will receive the group's standard absence penalty.`,
+      async () => {
+        try {
+          // Sequential — each write awaits the previous. Firing these
+          // in parallel against the same `attendees` array races: every
+          // write sends the full array, so the last writer wins and
+          // earlier members' updates are silently dropped.
+          for (const m of unrecorded) {
+            await recordAttendance(meeting.id, m.memberId, false);
+          }
+          show(
+            `${unrecorded.length} member${
+              unrecorded.length !== 1 ? "s" : ""
+            } marked absent`,
+          );
+        } catch (e: any) {
+          show(e?.message || "Failed to finalize", "error");
+        }
+      },
+      undefined,
+      true,
+    );
+  };
+
   const handleClearPenalty = (meeting: Meeting, memberId: string) => {
     showConfirm(
       "Clear Penalty",
@@ -676,38 +963,36 @@ export default function MeetingsScreen() {
       ),
     [visibleMeetings],
   );
-  const upcoming = sorted.filter(
-    (m) => new Date(m.date) >= new Date() && m.status !== "cancelled",
-  );
-  const past = sorted.filter(
-    (m) => new Date(m.date) < new Date() && m.status !== "cancelled",
-  );
+  const upcoming = sorted.filter((m) => {
+    if (m.status === "cancelled") return false;
+    const s = getMeetingStatus(m, activeGroup);
+    return s === "scheduled" || s === "in_progress";
+  });
+  const past = sorted.filter((m) => {
+    if (m.status === "cancelled") return false;
+    return getMeetingStatus(m, activeGroup) === "past";
+  });
   const cancelled = sorted.filter((m) => m.status === "cancelled");
 
   // ── Render helpers ──────────────────────────────────────────────────
-  const renderList = (
-    items: Meeting[],
-    opts: { isPast?: boolean; isCancelled?: boolean },
-  ) => (
+  const renderList = (items: Meeting[]) => (
     <View style={st.card}>
       {items.map((meeting, i) => (
         <React.Fragment key={meeting.id}>
           <MeetingRow
             meeting={meeting}
+            group={activeGroup}
             members={members}
             attendance={getAttendanceSummary(meeting)}
             myIds={myIds}
             canRecordAttendance={
-              opts.isPast || opts.isCancelled ? false : canRecordAttendance
+              canRecordAttendance &&
+              isAttendanceEditable(meeting, activeGroup)
             }
-            canCancel={
-              opts.isPast || opts.isCancelled ? false : canCancelMeeting
-            }
+            canCancel={canCancelMeeting}
             canEdit={canEditMeeting}
             canDelete={canDeleteMeeting}
-            canClearPenalties={
-              opts.isCancelled ? false : canClearPenalties
-            }
+            canClearPenalties={canClearPenalties}
             onRecordAttendance={() =>
               router.push(
                 `/modals/meeting-attendance?meetingId=${meeting.id}`,
@@ -720,8 +1005,7 @@ export default function MeetingsScreen() {
               setSelectedMeeting(meeting);
               setShowPenaltyModal(true);
             }}
-            isPast={opts.isPast}
-            isCancelled={opts.isCancelled}
+            onFinalize={() => handleFinalizeAttendance(meeting)}
           />
           {i < items.length - 1 ? <Divider /> : null}
         </React.Fragment>
@@ -855,7 +1139,7 @@ export default function MeetingsScreen() {
             {upcoming.length > 0 ? (
               <>
                 <Text style={st.sectionLabel}>Upcoming</Text>
-                {renderList(upcoming, {})}
+                {renderList(upcoming)}
               </>
             ) : null}
 
@@ -864,7 +1148,7 @@ export default function MeetingsScreen() {
                 <Text style={[st.sectionLabel, { marginTop: 20 }]}>
                   Past Meetings
                 </Text>
-                {renderList(past, { isPast: true })}
+                {renderList(past)}
               </>
             ) : null}
 
@@ -878,10 +1162,7 @@ export default function MeetingsScreen() {
                 >
                   Cancelled
                 </Text>
-                {renderList(cancelled, {
-                  isPast: true,
-                  isCancelled: true,
-                })}
+                {renderList(cancelled)}
               </>
             ) : null}
           </>
@@ -1000,6 +1281,49 @@ export default function MeetingsScreen() {
             }
             placeholder="YYYY-MM-DD"
           />
+
+          <Input
+            label="Start Time (HH:mm, optional)"
+            value={editForm.startTime}
+            onChangeText={(text) =>
+              setEditForm((prev) => ({ ...prev, startTime: text }))
+            }
+            placeholder="14:30"
+          />
+
+          <Select
+            label="Duration"
+            value={editForm.durationMinutes}
+            options={[
+              { label: "30 minutes", value: 30 },
+              { label: "1 hour", value: 60 },
+              { label: "1h 30min", value: 90 },
+              { label: "2 hours", value: 120 },
+              { label: "2h 30min", value: 150 },
+              { label: "3 hours", value: 180 },
+              { label: "3h 30min", value: 210 },
+              { label: "4 hours", value: 240 },
+              { label: "4h 30min", value: 270 },
+              { label: "5 hours", value: 300 },
+            ]}
+            onChange={(v) =>
+              setEditForm((prev) => ({ ...prev, durationMinutes: Number(v) }))
+            }
+          />
+
+          <Select
+            label="Meeting Owner / Host"
+            value={editForm.hostMemberId}
+            options={[
+              { label: "— Not set —", value: "" },
+              ...members
+                .filter((m) => m.status === "active")
+                .map((m) => ({ label: m.fullName, value: m.id })),
+            ]}
+            onChange={(v) =>
+              setEditForm((prev) => ({ ...prev, hostMemberId: v }))
+            }
+          />
           <Input
             label="Location"
             value={editForm.location}
@@ -1045,6 +1369,170 @@ export default function MeetingsScreen() {
 
 // ── Styles ───────────────────────────────────────────────────────────
 const st = StyleSheet.create({
+  // ── Redesigned meeting row (2026 refresh) ──────────────────────
+  rowWrap: {
+    padding: 16,
+    gap: 8,
+  },
+  rowHeader: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "flex-start",
+  },
+  rowTitleBlock: { flex: 1, minWidth: 0 },
+  rowTitleText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: C.text,
+    marginBottom: 4,
+  },
+  rowMetaLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+    marginTop: 3,
+  },
+  rowMetaText: {
+    fontSize: 12,
+    color: C.text3,
+    flexShrink: 1,
+  },
+
+  actionBar: {
+    marginTop: 10,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: C.borderLight,
+    gap: 8,
+  },
+  actionPrimaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  actionPrimary: {
+    flex: 1,
+    backgroundColor: C.primary,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionPrimaryMuted: {
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  actionPrimaryText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  actionMenuBtn: {
+    width: 46,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionMenuBtnText: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: C.text2,
+    lineHeight: 22,
+  },
+
+  finalizeBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: C.goldBg,
+    borderWidth: 1,
+    borderColor: "rgba(217,119,6,0.35)",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  finalizeBannerIcon: { fontSize: 13 },
+  finalizeBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.goldText,
+  },
+  finalizeBannerCta: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: C.gold,
+    letterSpacing: 0.2,
+  },
+
+  menuBody: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 32,
+  },
+  menuHeaderBlock: {
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderLight,
+  },
+  menuHeaderTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: C.text,
+    marginBottom: 4,
+  },
+  menuHeaderSub: {
+    fontSize: 12,
+    color: C.text3,
+    lineHeight: 16,
+  },
+  menuAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+  },
+  menuActionIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  menuActionLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  menuActionDesc: {
+    fontSize: 11,
+    color: C.text3,
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  menuActionChevron: {
+    fontSize: 20,
+    fontWeight: "700",
+    opacity: 0.5,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: C.borderLight,
+    marginVertical: 8,
+  },
+
+
   container: {
     paddingHorizontal: 24,
     paddingVertical: 16,
@@ -1433,6 +1921,20 @@ const st = StyleSheet.create({
   },
   deleteBtnText: {
     color: C.redText,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  finalizeBtn: {
+    backgroundColor: C.greenBg,
+    borderWidth: 1,
+    borderColor: "rgba(16,185,129,0.3)",
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: "center",
+    marginTop: 6,
+  },
+  finalizeBtnText: {
+    color: C.success,
     fontSize: 12,
     fontWeight: "700",
   },

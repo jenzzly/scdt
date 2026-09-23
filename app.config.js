@@ -64,7 +64,7 @@ module.exports = {
       // (Firebase Hosting, Netlify, Vercel static, S3+CDN, etc.) with no
       // Node server required at runtime. All data access goes through the
       // Firebase client SDK, so nothing here needs server-side rendering.
-      output: "static",
+      output: "single",
     },
     plugins: [
       "expo-router",

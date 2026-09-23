@@ -27,6 +27,9 @@ const MEMBER_WEB_NAV: NavItem[] = [
   { label: "Contributions", route: "/(tabs)/contributions" },
   { label: "Loans", route: "/(tabs)/loans" },
   { label: "Meetings", route: "/(tabs)/meetings" },
+  // Members tab is the "me" page — a member sees only their own card
+  // (personal view) and their own risk breakdown. Both mobile and web.
+  { label: "Members", route: "/(tabs)/members" },
   { label: "Settings", route: "/(tabs)/more" },
 ];
 

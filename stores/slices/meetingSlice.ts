@@ -228,7 +228,7 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
         const meeting = meetings.find((m: Meeting) => m.id === meetingId);
         if (!meeting) return;
         
-        const member = members.find((m: Meeting) => m.id === memberId);
+        const member = members.find((m: Member) => m.id === memberId);
         const group = groups.find((g) => g.id === activeGroupId);
 
         // Interest-based penalties: a percentage of the group's standard
@@ -293,10 +293,26 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
           ];
         }
 
+        // Local store update is instant; the server write below is
+        // awaited so a failure surfaces to the caller instead of being
+        // silently swallowed. Previously this was fire-and-forget, so
+        // a network blip left local state showing the new attendees
+        // while the server kept the old ones — the next subscription
+        // snapshot then overwrote the local change.
         get().updateMeetingLocal(meetingId, { attendees: updatedAttendees });
-        
+
         if (activeGroupId) {
-          FS.updateMeeting(activeGroupId, meetingId, { attendees: updatedAttendees }).catch(console.warn);
+          try {
+            await FS.updateMeeting(activeGroupId, meetingId, {
+              attendees: updatedAttendees,
+            });
+          } catch (e) {
+            console.error(
+              "[recordAttendance] failed to persist attendees:",
+              e,
+            );
+            throw e;
+          }
         }
 
         const penaltyTxId = `meeting-penalty-${meetingId}-${memberId}`;
@@ -326,7 +342,15 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
               createdAt: new Date().toISOString(),
             };
             get().addWalletTxLocal(tx);
-            FS.addWalletTx(activeGroupId, tx).catch(console.warn);
+            try {
+              await FS.addWalletTx(activeGroupId, tx);
+            } catch (e) {
+              console.error(
+                "[recordAttendance] failed to persist penalty tx:",
+                e,
+              );
+              throw e;
+            }
             set((s: StoreState) => recalcGroupTotals(s));
 
             // Alert the member directly — this is the "late fees,

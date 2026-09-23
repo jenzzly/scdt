@@ -1,705 +1,1203 @@
 // app/modals/meeting-attendance.tsx
-import React, { useState, useEffect, useCallback, useRef } from "react";
+//
+// Attendance recording, redesigned for speed.
+//
+// The workflow this optimises for:
+//   1. Open the modal — everyone shows up already marked Present.
+//   2. Tap "Absent" on the 2-3 people who didn't show.
+//   3. Tap Save.
+//
+// Every other affordance (Late minutes, bulk actions, penalty preview)
+// is available but secondary.
+//
+// Defaulting to Present (instead of Absent) is the single biggest
+// change — the old flow required 15 taps to record attendance for a
+// 15-person meeting where everyone showed up. Now it's 0 taps + Save.
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Platform, ActivityIndicator, TextInput, useWindowDimensions} from "react-native";
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Platform,
+  ActivityIndicator,
+  TextInput,
+  useWindowDimensions,
+} from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { useStore, useGroupMembers, useActiveGroup, useGroupMeetings } from "../../stores/useStore";
-import { Colors, S, R, fmtCurrency, showConfirm } from "../../utils/theme";
-import { Button, useToast, Toast } from "../../components/ui";
+import {
+  useStore,
+  useGroupMembers,
+  useActiveGroup,
+  useGroupMeetings,
+} from "../../stores/useStore";
+import {
+  Colors,
+  S,
+  R,
+  fmtCurrency,
+  round2,
+  showConfirm,
+} from "../../utils/theme";
+import { useToast, Toast } from "../../components/ui";
 
-interface AttendeeWithStatus {
+// ─── Model ──────────────────────────────────────────────────────────────
+
+type AttendanceState = "present" | "late" | "absent";
+
+interface AttendeeRow {
   memberId: string;
   fullName: string;
   role: string;
-  present: boolean;
+  state: AttendanceState;
   lateMinutes: number;
-  penaltyAmount: number;
-  originalStatus?: boolean;
-  originalLateMinutes?: number;
+  // Original state from the meeting doc, for dirty comparison.
+  originalState: AttendanceState;
+  originalLateMinutes: number;
+  // True when the meeting had no attendee record for this member at
+  // load time. Used only for the "previously unrecorded" hint.
+  wasUnrecorded: boolean;
 }
+
+const DEFAULT_LATE_MINUTES = 15;
+
+// ─── Screen ─────────────────────────────────────────────────────────────
 
 export default function MeetingAttendanceModal() {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const isWide = width >= 768;
+  const twoCol = width >= 720;
   const { meetingId } = useLocalSearchParams<{ meetingId: string }>();
-  // const { show, Toast } = useToast();
   const { show, visible, msg, type } = useToast();
-  
+
   const members = useGroupMembers();
   const meetings = useGroupMeetings();
   const group = useActiveGroup();
   const { recordAttendance, activeGroupId } = useStore();
-  
-  const [attendees, setAttendees] = useState<AttendeeWithStatus[]>([]);
+
+  const [rows, setRows] = useState<AttendeeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [selectAll, setSelectAll] = useState(false);
-  const [meeting, setMeeting] = useState<any>(null);
-  
-  // Use ref to track if initialized to prevent infinite loop
-  const initializedRef = useRef(false);
-  const meetingIdRef = useRef(meetingId);
+  const [search, setSearch] = useState("");
 
-  // Interest-based penalties: percentage of the group's standard contribution
-  // amount, configured in Group Settings → Meeting Penalties. Falls back to
-  // legacy fixed amounts only if the group hasn't set a percentage rate.
+  const initializedRef = useRef<string | null>(null);
+  const meeting = meetings.find((m) => m.id === meetingId);
+
+  // ── Penalty preview ─────────────────────────────────────────────────
+  // Mirrors recordAttendance in meetingSlice.ts exactly.
+
   const contributionBase = group?.contributionAmount ?? 0;
-  const pctToAmount = (pct: number | undefined, legacyFixed: number | undefined, legacyDefault: number) => {
-    if (pct !== undefined && pct > 0 && contributionBase > 0) {
-      return Math.round(contributionBase * (pct / 100) * 100) / 100;
-    }
-    return legacyFixed ?? legacyDefault;
-  };
-  const pMember  = pctToAmount(group?.absencePenaltyMemberRatePct,  group?.absencePenaltyMember,  2000);
-  const pOfficer = pctToAmount(group?.absencePenaltyOfficerRatePct, group?.absencePenaltyOfficer, 5000);
 
-  // Memoize the initialize function to prevent recreation
-  const initializeAttendees = useCallback((meetingData: any) => {
-    if (!members.length) return;
-    
-    const activeMembers = members.filter(m => m.status === "active");
-    
-    const attendeesWithStatus = activeMembers.map(member => {
-      const existing = meetingData.attendees?.find((a: any) => a.memberId === member.id);
-      const isPresent = existing?.attended ?? false;
-      const lateMinutes = existing?.lateMinutes ?? 0;
-      
-      let penaltyAmount = 0;
-      if (!isPresent) {
-        penaltyAmount = member.role === "member" ? pMember : pOfficer;
-      } else if (lateMinutes > 0) {
-        penaltyAmount = Math.floor(lateMinutes / 15) * 500;
+  const absencePenaltyFor = useCallback(
+    (role: string): number => {
+      const isOfficer = role !== "member";
+      const pct = isOfficer
+        ? group?.absencePenaltyOfficerRatePct
+        : group?.absencePenaltyMemberRatePct;
+      const legacy = isOfficer
+        ? group?.absencePenaltyOfficer
+        : group?.absencePenaltyMember;
+      const fallback = isOfficer ? 5000 : 2000;
+      if (pct !== undefined && pct > 0 && contributionBase > 0) {
+        return round2(contributionBase * (pct / 100));
       }
-      
-      return {
-        memberId: member.id,
-        fullName: member.fullName,
-        role: member.role,
-        present: isPresent,
-        lateMinutes: lateMinutes,
-        penaltyAmount,
-        originalStatus: isPresent,
-        originalLateMinutes: lateMinutes,
-      };
-    });
-    
-    setAttendees(attendeesWithStatus);
-    setSelectAll(attendeesWithStatus.length > 0 && attendeesWithStatus.every(a => a.present));
-  }, [members, pMember, pOfficer]);
+      return legacy ?? fallback;
+    },
+    [
+      group?.absencePenaltyOfficerRatePct,
+      group?.absencePenaltyMemberRatePct,
+      group?.absencePenaltyOfficer,
+      group?.absencePenaltyMember,
+      contributionBase,
+    ],
+  );
 
-  // Load meeting data - single effect with proper dependencies
+  const latePenaltyFor = useCallback(
+    (lateMinutes: number): number => {
+      if (lateMinutes <= 0) return 0;
+      const blocks = Math.floor(lateMinutes / 15);
+      if (blocks <= 0) return 0;
+      const ratePct = group?.latePenaltyRatePct;
+      if (ratePct !== undefined && ratePct > 0 && contributionBase > 0) {
+        return round2(contributionBase * (ratePct / 100) * blocks);
+      }
+      return blocks * (group?.latePenaltyAmount ?? 500);
+    },
+    [
+      group?.latePenaltyRatePct,
+      group?.latePenaltyAmount,
+      contributionBase,
+    ],
+  );
+
+  const penaltyForRow = useCallback(
+    (row: AttendeeRow): number => {
+      if (row.state === "absent") return absencePenaltyFor(row.role);
+      if (row.state === "late") return latePenaltyFor(row.lateMinutes);
+      return 0;
+    },
+    [absencePenaltyFor, latePenaltyFor],
+  );
+
+  // ── Initialisation ──────────────────────────────────────────────────
+  //
+  // The key change vs the previous version: a member with NO existing
+  // attendee record on the meeting defaults to PRESENT, not ABSENT.
+  // This makes the common case (everyone showed up) a zero-tap flow.
+  // Members WITH an existing record are respected as-is.
+
+  const buildRows = useCallback(
+    (meetingData: any): AttendeeRow[] => {
+      const activeMembers = members.filter((m) => m.status === "active");
+
+      return activeMembers.map((member) => {
+        const existing = meetingData.attendees?.find(
+          (a: any) => a.memberId === member.id,
+        );
+        const isRecorded = !!existing;
+
+        let state: AttendanceState;
+        let lateMinutes = 0;
+
+        if (!isRecorded) {
+          // Default for a fresh record — assume present.
+          state = "present";
+        } else if (existing.attended) {
+          lateMinutes = existing.lateMinutes ?? 0;
+          state = lateMinutes > 0 ? "late" : "present";
+        } else {
+          state = "absent";
+        }
+
+        return {
+          memberId: member.id,
+          fullName: member.fullName,
+          role: member.role ?? "member",
+          state,
+          lateMinutes: state === "late" ? lateMinutes : 0,
+          originalState: state,
+          originalLateMinutes: state === "late" ? lateMinutes : 0,
+          wasUnrecorded: !isRecorded,
+        };
+      });
+    },
+    [members],
+  );
+
   useEffect(() => {
-    // Only run if we have meetingId, meetings loaded, and not initialized yet
-    if (!meetingId || !meetings.length || initializedRef.current) return;
-    
-    const foundMeeting = meetings.find(m => m.id === meetingId);
-    if (foundMeeting) {
-      setMeeting(foundMeeting);
-      initializeAttendees(foundMeeting);
-      initializedRef.current = true;
-    }
+    if (!meetingId || !meeting) return;
+    if (initializedRef.current === meetingId) return;
+    setRows(buildRows(meeting));
+    initializedRef.current = meetingId;
     setLoading(false);
-  }, [meetingId, meetings, initializeAttendees]);
+  }, [meetingId, meeting, buildRows]);
 
-  // Reset initialized ref when meetingId changes
   useEffect(() => {
-    if (meetingIdRef.current !== meetingId) {
-      meetingIdRef.current = meetingId;
-      initializedRef.current = false;
-      setLoading(true);
-      setMeeting(null);
-      setAttendees([]);
-    }
+    return () => {
+      initializedRef.current = null;
+    };
   }, [meetingId]);
 
-  const handleToggleMember = useCallback((memberId: string) => {
-    setAttendees(prev => prev.map(attendee => {
-      if (attendee.memberId === memberId) {
-        const newPresent = !attendee.present;
-        let penaltyAmount = 0;
-        let lateMinutes = attendee.lateMinutes;
-        
-        if (!newPresent) {
-          penaltyAmount = attendee.role === "member" ? pMember : pOfficer;
-          lateMinutes = 0;
-        } else if (lateMinutes > 0) {
-          penaltyAmount = Math.floor(lateMinutes / 15) * 500;
-        }
-        
-        return {
-          ...attendee,
-          present: newPresent,
-          penaltyAmount,
-          lateMinutes: newPresent ? lateMinutes : 0,
-        };
-      }
-      return attendee;
-    }));
-  }, [pMember, pOfficer]);
+  // ── Derived state ───────────────────────────────────────────────────
 
-  const handleToggleAll = useCallback(() => {
-    setSelectAll(prev => !prev);
-    setAttendees(prev => prev.map(attendee => {
-      const newPresent = !selectAll;
-      return {
-        ...attendee,
-        present: newPresent,
-        penaltyAmount: newPresent ? 0 : (attendee.role === "member" ? pMember : pOfficer),
-        lateMinutes: newPresent ? attendee.lateMinutes : 0,
-      };
-    }));
-  }, [selectAll, pMember, pOfficer]);
+  // A row is "dirty" — and therefore needs saving — if EITHER:
+  //   • it has no prior attendee record on the meeting (wasUnrecorded),
+  //     so the Present default is a real decision to persist; OR
+  //   • its state or late minutes differ from the original load.
+  //
+  // Without the wasUnrecorded check, a fresh meeting where everyone
+  // defaults to Present produced dirtyCount = 0, so Save was a no-op
+  // and no attendee records were ever written. That's the "0 present,
+  // 2 absent" bug on the meetings list.
+  const dirtyCount = useMemo(
+    () =>
+      rows.filter(
+        (r) =>
+          r.wasUnrecorded ||
+          r.state !== r.originalState ||
+          (r.state === "late" &&
+            r.lateMinutes !== r.originalLateMinutes),
+      ).length,
+    [rows],
+  );
 
-  const handleLateMinutesChange = useCallback((memberId: string, minutes: string) => {
-    const lateMins = parseInt(minutes) || 0;
-    setAttendees(prev => prev.map(attendee => {
-      if (attendee.memberId === memberId && attendee.present) {
-        const penaltyAmount = Math.floor(lateMins / 15) * 500;
-        return {
-          ...attendee,
-          lateMinutes: lateMins,
-          penaltyAmount,
-        };
-      }
-      return attendee;
-    }));
+  const counts = useMemo(() => {
+    let present = 0;
+    let late = 0;
+    let absent = 0;
+    for (const r of rows) {
+      if (r.state === "present") present++;
+      else if (r.state === "late") late++;
+      else absent++;
+    }
+    return { present, late, absent, total: rows.length };
+  }, [rows]);
+
+  const totalPenalties = useMemo(
+    () =>
+      round2(rows.reduce((sum, r) => sum + penaltyForRow(r), 0)),
+    [rows, penaltyForRow],
+  );
+
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (r) =>
+        r.fullName.toLowerCase().includes(q) ||
+        r.role.toLowerCase().includes(q),
+    );
+  }, [rows, search]);
+
+  // Search only pays for itself once the list gets long.
+  const showSearch = rows.length > 10;
+
+  // ── Handlers ────────────────────────────────────────────────────────
+
+  const setMemberState = useCallback(
+    (memberId: string, state: AttendanceState) => {
+      setRows((prev) =>
+        prev.map((r) => {
+          if (r.memberId !== memberId) return r;
+          if (state === "present") {
+            return { ...r, state, lateMinutes: 0 };
+          }
+          if (state === "late") {
+            return {
+              ...r,
+              state,
+              lateMinutes:
+                r.lateMinutes > 0 ? r.lateMinutes : DEFAULT_LATE_MINUTES,
+            };
+          }
+          return { ...r, state, lateMinutes: 0 };
+        }),
+      );
+    },
+    [],
+  );
+
+  const adjustLateMinutes = useCallback(
+    (memberId: string, delta: number) => {
+      setRows((prev) =>
+        prev.map((r) => {
+          if (r.memberId !== memberId || r.state !== "late") return r;
+          const next = Math.max(0, Math.min(600, r.lateMinutes + delta));
+          return { ...r, lateMinutes: next };
+        }),
+      );
+    },
+    [],
+  );
+
+  const setLateMinutesText = useCallback(
+    (memberId: string, text: string) => {
+      const digits = text.replace(/[^0-9]/g, "");
+      const n = digits ? parseInt(digits, 10) : 0;
+      setRows((prev) =>
+        prev.map((r) =>
+          r.memberId === memberId && r.state === "late"
+            ? { ...r, lateMinutes: Math.max(0, Math.min(600, n)) }
+            : r,
+        ),
+      );
+    },
+    [],
+  );
+
+  const markEveryonePresent = useCallback(() => {
+    setRows((prev) =>
+      prev.map((r) => ({ ...r, state: "present", lateMinutes: 0 })),
+    );
   }, []);
 
-  const getTotalPenalties = useCallback(() => {
-    return attendees.reduce((sum, a) => sum + (a.present ? a.penaltyAmount : a.penaltyAmount), 0);
-  }, [attendees]);
-
-  const getPresentCount = useCallback(() => attendees.filter(a => a.present).length, [attendees]);
-  const getAbsentCount = useCallback(() => attendees.filter(a => !a.present).length, [attendees]);
-  const getLateCount = useCallback(() => attendees.filter(a => a.present && a.lateMinutes > 0).length, [attendees]);
-
-  const hasChanges = useCallback(() => {
-    return attendees.some(a => 
-      a.present !== a.originalStatus || 
-      (a.present && a.lateMinutes !== a.originalLateMinutes)
-    );
-  }, [attendees]);
-
-  const handleSave = async () => {
-    if (!hasChanges()) {
-      show("No changes to save");
-      router.back();
+  const markRemainingAbsent = useCallback(() => {
+    // Anyone not yet explicitly marked absent becomes absent.
+    const remaining = rows.filter((r) => r.state !== "absent").length;
+    if (remaining === 0) {
+      show("Everyone is already marked absent");
       return;
     }
-    
+    showConfirm(
+      "Mark everyone absent",
+      `All ${remaining} member${remaining !== 1 ? "s" : ""} without an absence will be marked absent and incur the absence penalty on save.`,
+      () => {
+        setRows((prev) =>
+          prev.map((r) => ({ ...r, state: "absent", lateMinutes: 0 })),
+        );
+      },
+      undefined,
+      true,
+    );
+  }, [rows, show]);
+
+  const handleReset = useCallback(() => {
+    if (!meeting) return;
+    showConfirm(
+      "Discard changes",
+      "Revert to the last saved attendance?",
+      () => setRows(buildRows(meeting)),
+      undefined,
+      true,
+    );
+  }, [meeting, buildRows]);
+
+  const handleSave = async () => {
+    if (dirtyCount === 0) return;
+    if (!activeGroupId) {
+      show("No active group", "error");
+      return;
+    }
     setSaving(true);
     try {
-      // Process each attendee update
-      for (const attendee of attendees) {
-        const hasChanged = attendee.present !== attendee.originalStatus ||
-                          (attendee.present && attendee.lateMinutes !== attendee.originalLateMinutes);
-        
-        if (hasChanged && activeGroupId) {
-          await recordAttendance(
-            meetingId,
-            attendee.memberId,
-            attendee.present,
-            attendee.present ? attendee.lateMinutes : undefined
-          );
-        }
+      const dirty = rows.filter(
+        (r) =>
+          r.wasUnrecorded ||
+          r.state !== r.originalState ||
+          (r.state === "late" &&
+            r.lateMinutes !== r.originalLateMinutes),
+      );
+      // Sequential — recordAttendance rewrites the whole attendees
+      // array on the meeting, so parallel writes would race.
+      for (const r of dirty) {
+        const attended = r.state !== "absent";
+        const lateMinutes = r.state === "late" ? r.lateMinutes : 0;
+        await recordAttendance(
+          meetingId,
+          r.memberId,
+          attended,
+          attended ? lateMinutes : undefined,
+        );
       }
-      
-      show(`Attendance saved: ${getPresentCount()} present, ${getAbsentCount()} absent, ${getLateCount()} late`);
+      show(
+        `Saved · ${counts.present} present · ${counts.late} late · ${counts.absent} absent`,
+      );
       router.back();
     } catch (error) {
-      show("Failed to save attendance", "error");
+      console.error("[meeting-attendance] save failed:", error);
+      show(
+        error instanceof Error ? error.message : "Failed to save",
+        "error",
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  const handleReset = useCallback(() => {
+  const handleCancel = useCallback(() => {
+    if (dirtyCount === 0) {
+      router.back();
+      return;
+    }
     showConfirm(
-      "Reset Changes",
-      "Are you sure you want to reset all changes?",
-      () => {
-        if (meeting) {
-          initializeAttendees(meeting);
-        }
-      }
+      "Discard changes?",
+      `${dirtyCount} unsaved change${dirtyCount !== 1 ? "s" : ""} will be lost.`,
+      () => router.back(),
+      undefined,
+      true,
     );
-  }, [meeting, initializeAttendees]);
+  }, [dirtyCount, router]);
+
+  // ── Guards ──────────────────────────────────────────────────────────
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View style={styles.center}>
         <ActivityIndicator size="large" color={Colors.primary} />
-        <Text style={styles.loadingText}>Loading meeting...</Text>
+        <Text style={styles.centerText}>Loading…</Text>
       </View>
     );
   }
 
   if (!meeting) {
     return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.errorText}>Meeting not found</Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>Go Back</Text>
+      <View style={styles.center}>
+        <Text style={styles.errorTitle}>Meeting not found</Text>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.errorBtn}
+        >
+          <Text style={styles.errorBtnText}>Go back</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
+  const isDirty = dirtyCount > 0;
+  const dateLabel = new Date(meeting.date).toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+  const timeLabel = meeting.startTime ? ` · ${meeting.startTime}` : "";
+
+  // ── Main render ─────────────────────────────────────────────────────
+
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* ── Header ───────────────────────────────────────────────── */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.closeButton}>
-          <Text style={styles.closeButtonText}>Cancel</Text>
+        <TouchableOpacity
+          onPress={handleCancel}
+          hitSlop={10}
+          style={styles.headerLeft}
+        >
+          <Text style={styles.headerCancel}>Cancel</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Meeting Attendance</Text>
+
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          Attendance
+        </Text>
+
         <View style={styles.headerRight}>
-          {hasChanges() && (
-            <TouchableOpacity onPress={handleReset} style={styles.resetButton}>
-              <Text style={styles.resetButtonText}>Reset</Text>
+          {isDirty ? (
+            <TouchableOpacity
+              onPress={handleReset}
+              hitSlop={10}
+              style={styles.headerReset}
+            >
+              <Text style={styles.headerResetText}>Reset</Text>
             </TouchableOpacity>
+          ) : (
+            <View style={{ width: 48 }} />
           )}
-          <TouchableOpacity onPress={handleSave} style={styles.saveButton}>
-            {saving ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.saveButtonText}>Save</Text>
-            )}
+        </View>
+      </View>
+
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={[
+          styles.scroll,
+          twoCol && styles.scrollWide,
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* ── Meeting summary line ───────────────────────────────── */}
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryTitle} numberOfLines={2}>
+            {meeting.title}
+          </Text>
+          <Text style={styles.summaryMeta} numberOfLines={1}>
+            {dateLabel}
+            {timeLabel}
+            {meeting.location ? `  ·  📍 ${meeting.location}` : ""}
+          </Text>
+        </View>
+
+        {/* ── Live tally ─────────────────────────────────────────── */}
+        <View style={styles.tallyRow}>
+          <View style={styles.tallyCell}>
+            <Text style={[styles.tallyValue, { color: Colors.success }]}>
+              {counts.present}
+            </Text>
+            <Text style={styles.tallyLabel}>Present</Text>
+          </View>
+          <View style={styles.tallyDivider} />
+          <View style={styles.tallyCell}>
+            <Text
+              style={[
+                styles.tallyValue,
+                { color: counts.late > 0 ? Colors.gold : Colors.text3 },
+              ]}
+            >
+              {counts.late}
+            </Text>
+            <Text style={styles.tallyLabel}>Late</Text>
+          </View>
+          <View style={styles.tallyDivider} />
+          <View style={styles.tallyCell}>
+            <Text
+              style={[
+                styles.tallyValue,
+                { color: counts.absent > 0 ? Colors.error : Colors.text3 },
+              ]}
+            >
+              {counts.absent}
+            </Text>
+            <Text style={styles.tallyLabel}>Absent</Text>
+          </View>
+          {totalPenalties > 0 ? (
+            <>
+              <View style={styles.tallyDivider} />
+              <View style={styles.tallyCell}>
+                <Text
+                  style={[styles.tallyValue, { color: Colors.error }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {fmtCurrency(totalPenalties)}
+                </Text>
+                <Text style={styles.tallyLabel}>Fees</Text>
+              </View>
+            </>
+          ) : null}
+        </View>
+
+        {/* ── Bulk actions ───────────────────────────────────────── */}
+        <View style={styles.bulkRow}>
+          <TouchableOpacity
+            style={styles.bulkBtn}
+            onPress={markEveryonePresent}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.bulkBtnText}>✓ Everyone present</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.bulkBtn, styles.bulkBtnDanger]}
+            onPress={markRemainingAbsent}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.bulkBtnText, { color: Colors.error }]}>
+              ✗ Mark rest absent
+            </Text>
           </TouchableOpacity>
         </View>
-      </View>
 
-      {/* Meeting Info */}
-      <View style={styles.meetingInfo}>
-        <Text style={styles.meetingTitle}>{meeting.title}</Text>
-        <Text style={styles.meetingDate}>
-          {new Date(meeting.date).toLocaleDateString()} at {new Date(meeting.date).toLocaleTimeString()}
-        </Text>
-        {meeting.location && (
-          <Text style={styles.meetingLocation}>📍 {meeting.location}</Text>
-        )}
-      </View>
-
-      {/* Summary Stats */}
-      <View style={styles.statsRow}>
-        <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: Colors.success }]}>{getPresentCount()}</Text>
-          <Text style={styles.statLabel}>Present</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: getLateCount() > 0 ? Colors.gold : Colors.text3 }]}>
-            {getLateCount()}
-          </Text>
-          <Text style={styles.statLabel}>Late</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: Colors.error }]}>{getAbsentCount()}</Text>
-          <Text style={styles.statLabel}>Absent</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: Colors.gold }]}>{fmtCurrency(getTotalPenalties())}</Text>
-          <Text style={styles.statLabel}>Penalties</Text>
-        </View>
-      </View>
-
-      {/* Select All Button */}
-      <TouchableOpacity style={styles.selectAllButton} onPress={handleToggleAll}>
-        <View style={[styles.checkbox, selectAll && styles.checkboxChecked]}>
-          {selectAll && <Text style={styles.checkmark}>✓</Text>}
-        </View>
-        <Text style={styles.selectAllText}>Mark All Present</Text>
-        <Text style={styles.selectAllSubtext}>
-          {attendees.length} members
-        </Text>
-      </TouchableOpacity>
-
-      {/* Members List */}
-      <ScrollView 
-        style={styles.membersList}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.membersListContent}
-      >
-        {attendees.map((attendee) => (
-          <View key={attendee.memberId} style={styles.attendeeRow}>
-            <TouchableOpacity
-              style={styles.attendeeInfo}
-              onPress={() => handleToggleMember(attendee.memberId)}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.checkbox, attendee.present && styles.checkboxChecked]}>
-                {attendee.present && <Text style={styles.checkmark}>✓</Text>}
-              </View>
-              <View style={styles.attendeeDetails}>
-                <Text style={styles.attendeeName}>{attendee.fullName}</Text>
-                <Text style={styles.attendeeRole}>
-                  {attendee.role} • {attendee.present ? (attendee.lateMinutes > 0 ? `${attendee.lateMinutes} min late` : "On time") : "Absent"}
-                </Text>
-              </View>
-            </TouchableOpacity>
-            
-            <View style={styles.attendeeActions}>
-              {attendee.present ? (
-                <View style={styles.lateInputContainer}>
-                  <TouchableOpacity
-                    style={styles.lateMinusButton}
-                    onPress={() => {
-                      const current = attendee.lateMinutes || 0;
-                      const newValue = Math.max(0, current - 5);
-                      handleLateMinutesChange(attendee.memberId, String(newValue));
-                    }}
-                  >
-                    <Text style={styles.lateButtonText}>-</Text>
-                  </TouchableOpacity>
-                  <TextInput
-                    style={styles.lateInput}
-                    value={String(attendee.lateMinutes || 0)}
-                    onChangeText={(text) => handleLateMinutesChange(attendee.memberId, text)}
-                    keyboardType="numeric"
-                    placeholder="0"
-                  />
-                  <TouchableOpacity
-                    style={styles.latePlusButton}
-                    onPress={() => {
-                      const current = attendee.lateMinutes || 0;
-                      const newValue = current + 5;
-                      handleLateMinutesChange(attendee.memberId, String(newValue));
-                    }}
-                  >
-                    <Text style={styles.lateButtonText}>+</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <View style={styles.penaltyBadge}>
-                  <Text style={styles.penaltyAmount}>{fmtCurrency(attendee.penaltyAmount)}</Text>
-                </View>
-              )}
-            </View>
+        {/* ── Search (only for long lists) ───────────────────────── */}
+        {showSearch ? (
+          <View style={styles.searchWrap}>
+            <Text style={styles.searchIcon}>🔍</Text>
+            <TextInput
+              style={styles.searchInput}
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search member…"
+              placeholderTextColor={Colors.text3}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {search ? (
+              <TouchableOpacity
+                onPress={() => setSearch("")}
+                hitSlop={8}
+              >
+                <Text style={styles.searchClear}>✕</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
-        ))}
+        ) : null}
+
+        {/* ── Rows ───────────────────────────────────────────────── */}
+        {filteredRows.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>No matching members</Text>
+          </View>
+        ) : (
+          <View style={[styles.grid, twoCol && styles.gridWide]}>
+            {filteredRows.map((row) => (
+              <MemberCard
+                key={row.memberId}
+                row={row}
+                penalty={penaltyForRow(row)}
+                twoCol={twoCol}
+                onSetState={(s) => setMemberState(row.memberId, s)}
+                onAdjustLate={(d) =>
+                  adjustLateMinutes(row.memberId, d)
+                }
+                onLateText={(t) => setLateMinutesText(row.memberId, t)}
+              />
+            ))}
+          </View>
+        )}
+
+        <View style={{ height: 24 }} />
       </ScrollView>
 
-      {/* Footer Summary */}
+      {/* ── Footer ───────────────────────────────────────────────── */}
       <View style={styles.footer}>
-        <View style={styles.footerSummary}>
-          <View style={styles.footerStats}>
-            <Text style={styles.footerStatText}>
-              ✅ {getPresentCount()} present
-            </Text>
-            <Text style={[styles.footerStatText, { color: Colors.error }]}>
-              ❌ {getAbsentCount()} absent
-            </Text>
-            <Text style={[styles.footerStatText, { color: Colors.gold }]}>
-              💰 {fmtCurrency(getTotalPenalties())}
+        {isDirty ? (
+          <View style={styles.dirtyBar}>
+            <Text style={styles.dirtyBarText}>
+              {dirtyCount} unsaved change{dirtyCount !== 1 ? "s" : ""}
             </Text>
           </View>
-          <Text style={styles.footerHint}>
-            Late penalty: 500 RWF per 15 minutes
+        ) : (
+          <Text style={styles.savedHint}>
+            Tap a status above if you need to correct anyone
           </Text>
-        </View>
-        <Button
-          label="Save Attendance"
+        )}
+
+        <TouchableOpacity
+          style={[
+            styles.saveBtn,
+            (!isDirty || saving) && styles.saveBtnDisabled,
+          ]}
           onPress={handleSave}
-          loading={saving}
-          fullWidth
-          size="lg"
-        />
+          disabled={!isDirty || saving}
+          activeOpacity={0.85}
+        >
+          {saving ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.saveBtnText}>
+              {isDirty
+                ? `Save attendance · ${counts.present + counts.late} in`
+                : "All changes saved"}
+            </Text>
+          )}
+        </TouchableOpacity>
       </View>
 
-      <Toast visible={visible} msg={msg} type={type}/>
+      <Toast visible={visible} msg={msg} type={type} />
     </View>
   );
 }
 
+// ─── Member card ────────────────────────────────────────────────────────
+
+function MemberCard({
+  row,
+  penalty,
+  twoCol,
+  onSetState,
+  onAdjustLate,
+  onLateText,
+}: {
+  row: AttendeeRow;
+  penalty: number;
+  twoCol: boolean;
+  onSetState: (s: AttendanceState) => void;
+  onAdjustLate: (delta: number) => void;
+  onLateText: (text: string) => void;
+}) {
+  const dirty =
+    row.state !== row.originalState ||
+    (row.state === "late" && row.lateMinutes !== row.originalLateMinutes);
+
+  const initials = row.fullName
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  const stateMeta = {
+    present: {
+      color: Colors.success,
+      bg: Colors.greenBg,
+      icon: "✓",
+      label: "Present",
+    },
+    late: {
+      color: Colors.gold,
+      bg: Colors.goldBg,
+      icon: "⏱",
+      label: "Late",
+    },
+    absent: {
+      color: Colors.error,
+      bg: Colors.redBg,
+      icon: "✗",
+      label: "Absent",
+    },
+  }[row.state];
+
+  return (
+    <View
+      style={[
+        styles.card,
+        twoCol && styles.cardWide,
+        dirty && styles.cardDirty,
+        { borderLeftColor: stateMeta.color },
+      ]}
+    >
+      {/* Header row: avatar + name/role + penalty badge */}
+      <View style={styles.cardHeader}>
+        <View
+          style={[styles.avatar, { backgroundColor: stateMeta.bg }]}
+        >
+          <Text style={[styles.avatarText, { color: stateMeta.color }]}>
+            {initials}
+          </Text>
+        </View>
+
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.cardName} numberOfLines={1}>
+            {row.fullName}
+          </Text>
+          <Text style={styles.cardRole} numberOfLines={1}>
+            {row.role.replace(/_/g, " ")}
+            {row.wasUnrecorded && row.state === "present"
+              ? " · new"
+              : ""}
+          </Text>
+        </View>
+
+        {penalty > 0 ? (
+          <View style={styles.penaltyBadge}>
+            <Text style={styles.penaltyText}>
+              {fmtCurrency(penalty)}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+
+      {/* Three big status buttons */}
+      <View style={styles.statusRow}>
+        {(["present", "late", "absent"] as AttendanceState[]).map(
+          (key) => {
+            const meta = {
+              present: {
+                color: Colors.success,
+                icon: "✓",
+                label: "Present",
+              },
+              late: { color: Colors.gold, icon: "⏱", label: "Late" },
+              absent: { color: Colors.error, icon: "✗", label: "Absent" },
+            }[key];
+            const active = row.state === key;
+            return (
+              <TouchableOpacity
+                key={key}
+                style={[
+                  styles.statusBtn,
+                  active && {
+                    backgroundColor: meta.color,
+                    borderColor: meta.color,
+                  },
+                ]}
+                onPress={() => onSetState(key)}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel={meta.label}
+              >
+                <Text
+                  style={[
+                    styles.statusBtnText,
+                    active && { color: "#fff" },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {meta.icon} {meta.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          },
+        )}
+      </View>
+
+      {/* Late minutes only when Late is active */}
+      {row.state === "late" ? (
+        <View style={styles.lateRow}>
+          <Text style={styles.lateLabel}>Minutes late</Text>
+          <View style={styles.stepper}>
+            <TouchableOpacity
+              style={styles.stepperBtn}
+              onPress={() => onAdjustLate(-5)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.stepperBtnText}>−</Text>
+            </TouchableOpacity>
+            <TextInput
+              style={styles.stepperInput}
+              value={String(row.lateMinutes)}
+              onChangeText={onLateText}
+              keyboardType="number-pad"
+              maxLength={3}
+              selectTextOnFocus
+            />
+            <TouchableOpacity
+              style={[styles.stepperBtn, styles.stepperBtnPrimary]}
+              onPress={() => onAdjustLate(5)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.stepperBtnText, { color: "#fff" }]}>
+                +
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+// ─── Styles ─────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.bg,
-  },
-  loadingContainer: {
+  container: { flex: 1, backgroundColor: Colors.bg },
+
+  center: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: Colors.bg,
+    gap: 12,
+    padding: 24,
   },
-  loadingText: {
-    marginTop: S.md,
-    fontSize: 14,
-    color: Colors.text3,
-  },
-  errorText: {
+  centerText: { fontSize: 14, color: Colors.text3 },
+  errorTitle: {
     fontSize: 16,
     color: Colors.error,
-    marginBottom: S.md,
+    fontWeight: "700",
   },
-  backButton: {
+  errorBtn: {
     backgroundColor: Colors.primary,
     paddingHorizontal: S.lg,
     paddingVertical: S.sm,
     borderRadius: R.md,
   },
-  backButtonText: {
-    color: "#fff",
-    fontWeight: "600",
-  },
+  errorBtnText: { color: "#fff", fontWeight: "700" },
+
+  // ── Header ──────────────────────────────────────────────────────
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: S.lg,
-    paddingTop: Platform.OS === "ios" ? 56 : 36,
+    paddingTop: Platform.OS === "ios" ? 56 : 20,
     paddingBottom: S.md,
     backgroundColor: Colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
-  closeButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 4,
+  headerLeft: { minWidth: 70 },
+  headerRight: {
+    minWidth: 70,
+    alignItems: "flex-end",
   },
-  closeButtonText: {
+  headerCancel: {
     color: Colors.text3,
     fontSize: 15,
     fontWeight: "600",
   },
   headerTitle: {
     fontSize: 17,
-    fontWeight: "700",
+    fontWeight: "800",
     color: Colors.text,
+    flex: 1,
+    textAlign: "center",
   },
-  headerRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  resetButton: {
+  headerReset: {
     paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     backgroundColor: Colors.elevated,
     borderRadius: R.sm,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  resetButtonText: {
+  headerResetText: {
     color: Colors.text3,
     fontSize: 12,
-    fontWeight: "600",
-  },
-  saveButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: Colors.primary,
-    borderRadius: R.md,
-  },
-  saveButtonText: {
-    color: "#fff",
-    fontSize: 14,
     fontWeight: "700",
   },
-  meetingInfo: {
-    padding: S.lg,
-    backgroundColor: Colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+
+  // ── Scroll ──────────────────────────────────────────────────────
+  scroll: { padding: S.lg, paddingBottom: 40 },
+  scrollWide: {
+    paddingHorizontal: 32,
+    maxWidth: 1100,
+    alignSelf: "center",
+    width: "100%",
   },
-  meetingTitle: {
-    fontSize: 18,
+
+  // ── Summary card ────────────────────────────────────────────────
+  summaryCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: R.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: S.lg,
+    marginBottom: S.md,
+  },
+  summaryTitle: {
+    fontSize: 17,
     fontWeight: "800",
     color: Colors.text,
     marginBottom: 4,
   },
-  meetingDate: {
-    fontSize: 13,
-    color: Colors.text3,
-    marginBottom: 2,
-  },
-  meetingLocation: {
-    fontSize: 13,
+  summaryMeta: {
+    fontSize: 12,
     color: Colors.text3,
   },
-  statsRow: {
+
+  // ── Tally ───────────────────────────────────────────────────────
+  tallyRow: {
     flexDirection: "row",
-    padding: S.lg,
-    gap: 8,
-    backgroundColor: Colors.surface,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: Colors.elevated,
-    borderRadius: R.lg,
-    padding: S.sm,
     alignItems: "center",
+    backgroundColor: Colors.surface,
+    borderRadius: R.lg,
     borderWidth: 1,
     borderColor: Colors.border,
+    paddingVertical: 12,
+    marginBottom: S.md,
   },
-  statValue: {
-    fontSize: 18,
+  tallyCell: {
+    flex: 1,
+    alignItems: "center",
+    minWidth: 0,
+    paddingHorizontal: 4,
+  },
+  tallyDivider: {
+    width: 1,
+    alignSelf: "stretch",
+    backgroundColor: Colors.borderLight,
+    marginVertical: 4,
+  },
+  tallyValue: {
+    fontSize: 20,
     fontWeight: "800",
-    color: Colors.text,
-    marginBottom: 2,
+    lineHeight: 24,
   },
-  statLabel: {
-    fontSize: 10,
+  tallyLabel: {
+    fontSize: 9,
+    fontWeight: "700",
     color: Colors.text3,
-    fontWeight: "600",
     textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginTop: 2,
   },
-  selectAllButton: {
+
+  // ── Bulk actions ────────────────────────────────────────────────
+  bulkRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: S.md,
+  },
+  bulkBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.surface,
+    borderRadius: R.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: "center",
+  },
+  bulkBtnDanger: {
+    borderColor: "rgba(239,68,68,0.3)",
+    backgroundColor: "rgba(239,68,68,0.04)",
+  },
+  bulkBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: Colors.text2,
+  },
+
+  // ── Search ──────────────────────────────────────────────────────
+  searchWrap: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: S.lg,
-    paddingVertical: S.md,
     backgroundColor: Colors.surface,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
+    borderRadius: R.md,
+    borderWidth: 1,
     borderColor: Colors.border,
+    paddingHorizontal: 12,
+    height: 44,
+    marginBottom: S.md,
   },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
+  searchIcon: { fontSize: 14, marginRight: 8 },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: Colors.text,
+    paddingVertical: 0,
+  },
+  searchClear: {
+    fontSize: 14,
+    color: Colors.text3,
+    fontWeight: "700",
+    paddingHorizontal: 6,
+  },
+
+  // ── Grid of member cards ────────────────────────────────────────
+  grid: { gap: 10 },
+  gridWide: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+
+  card: {
+    backgroundColor: Colors.surface,
+    borderRadius: R.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.border,
+    padding: 14,
+    gap: 12,
+  },
+  cardWide: {
+    flexBasis: "49%",
+    flexGrow: 1,
+  },
+  cardDirty: {
+    backgroundColor: "rgba(245,158,11,0.04)",
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { fontSize: 13, fontWeight: "800" },
+  cardName: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: Colors.text,
+  },
+  cardRole: {
+    fontSize: 11,
+    color: Colors.text3,
+    textTransform: "capitalize",
+    marginTop: 1,
+  },
+  penaltyBadge: {
+    backgroundColor: "rgba(239,68,68,0.1)",
+    borderRadius: R.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.2)",
+  },
+  penaltyText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: Colors.error,
+  },
+
+  // ── Status buttons ──────────────────────────────────────────────
+  statusRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  statusBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    paddingHorizontal: 6,
+    borderRadius: R.md,
+    borderWidth: 1.5,
     borderColor: Colors.border,
     backgroundColor: Colors.surface,
     alignItems: "center",
     justifyContent: "center",
   },
-  checkboxChecked: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
+  statusBtnText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: Colors.text2,
   },
-  checkmark: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  selectAllText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: Colors.text,
-    flex: 1,
-    marginLeft: 8,
-  },
-  selectAllSubtext: {
-    fontSize: 11,
-    color: Colors.text3,
-  },
-  membersList: {
-    flex: 1,
-  },
-  membersListContent: {
-    paddingBottom: 20,
-  },
-  attendeeRow: {
+
+  // ── Late minutes stepper ────────────────────────────────────────
+  lateRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: S.lg,
-    paddingVertical: S.md,
-    backgroundColor: Colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
   },
-  attendeeInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    flex: 2,
-  },
-  attendeeDetails: {
-    flex: 1,
-  },
-  attendeeName: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: Colors.text,
-  },
-  attendeeRole: {
-    fontSize: 11,
+  lateLabel: {
+    fontSize: 12,
     color: Colors.text3,
+    fontWeight: "600",
   },
-  attendeeActions: {
-    flex: 1,
-    alignItems: "flex-end",
-  },
-  lateInputContainer: {
+  stepper: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
   },
-  lateMinusButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+  stepperBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: Colors.elevated,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  latePlusButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+  stepperBtnPrimary: {
     backgroundColor: Colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
+    borderColor: Colors.primary,
   },
-  lateButtonText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: Colors.text,
+  stepperBtnText: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: Colors.text2,
+    lineHeight: 20,
   },
-  lateInput: {
-    width: 45,
-    height: 36,
+  stepperInput: {
+    width: 54,
+    height: 34,
     textAlign: "center",
     backgroundColor: Colors.elevated,
     borderRadius: R.sm,
     borderWidth: 1,
     borderColor: Colors.border,
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "700",
     color: Colors.text,
   },
-  penaltyBadge: {
-    backgroundColor: "rgba(220,38,38,0.1)",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: R.md,
-    borderWidth: 1,
-    borderColor: "rgba(220,38,38,0.2)",
+
+  // ── Empty ───────────────────────────────────────────────────────
+  empty: {
+    paddingVertical: 48,
+    alignItems: "center",
   },
-  penaltyAmount: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: Colors.error,
-  },
+  emptyText: { fontSize: 14, color: Colors.text3 },
+
+  // ── Footer ──────────────────────────────────────────────────────
   footer: {
-    padding: S.lg,
+    paddingHorizontal: S.lg,
+    paddingTop: S.md,
+    paddingBottom: Platform.OS === "ios" ? 28 : S.md,
     backgroundColor: Colors.surface,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
-    gap: S.md,
+    gap: 8,
   },
-  footerSummary: {
+  dirtyBar: {
+    backgroundColor: Colors.goldBg,
+    borderRadius: R.sm,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(217,119,6,0.3)",
   },
-  footerStats: {
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 16,
-    marginBottom: 4,
-  },
-  footerStatText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: Colors.text,
-  },
-  footerHint: {
-    fontSize: 10,
+  savedHint: {
+    fontSize: 11,
     color: Colors.text3,
+    textAlign: "center",
+  },
+  dirtyBarText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: Colors.gold,
+    letterSpacing: 0.3,
+  },
+  saveBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: R.lg,
+    paddingVertical: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 52,
+  },
+  saveBtnDisabled: {
+    backgroundColor: Colors.mutedBg,
+  },
+  saveBtnText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: 0.2,
   },
 });
