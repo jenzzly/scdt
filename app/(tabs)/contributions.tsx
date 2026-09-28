@@ -231,6 +231,22 @@ export default function ContributionsScreen() {
       : fees.filter((item) => item.memberId === currentMember?.id);
   }, [overdueContributions, allWallet, isGroupView, currentMember?.id]);
 
+  // Search narrowed to the late-fee list only. The "Total Owed" KPI and
+  // per-member goal rows still read the unfiltered `visibleLateFees`
+  // so those numbers stay honest no matter what you're typing.
+  const filteredLateFees = useMemo(() => {
+    if (!search) return visibleLateFees;
+    const term = search.toLowerCase();
+    return visibleLateFees.filter((item) => {
+      const memberName = (
+        item.memberName ?? getMemberName(item.memberId)
+      ).toLowerCase();
+      const periodLabel = (item.periodLabel ?? "").toLowerCase();
+      return memberName.includes(term) || periodLabel.includes(term);
+    });
+  }, [visibleLateFees, search, allMembers]);
+
+
   // ---------------------------------------------------------------------------
   // Load current goal period
   // ---------------------------------------------------------------------------
@@ -351,6 +367,18 @@ export default function ContributionsScreen() {
     currentMember?.id,
     visibleLateFees,
   ]);
+
+  // Search narrowed to the per-member Goal Progress view.
+  // The KPI cards and the group-scope totals above keep
+  // reading `memberGoalRows` directly so those figures
+  // stay honest regardless of what's typed in the box.
+  const filteredGoalRows = useMemo(() => {
+    if (!search) return memberGoalRows;
+    const term = search.toLowerCase();
+    return memberGoalRows.filter((row) =>
+      row.memberName.toLowerCase().includes(term)
+    );
+  }, [memberGoalRows, search]);
 
   const goalProgress = useMemo(() => {
     if (!goalPeriod) return null;
@@ -878,12 +906,14 @@ export default function ContributionsScreen() {
             <GoalProgressList
               isWide={isWide}
               goalPeriod={goalPeriod}
-              rows={memberGoalRows}
+              rows={filteredGoalRows}
             />
           ) : statusFilter === "late_fee" ? (
             <LateFeeList
-              items={visibleLateFees}
+              items={filteredLateFees}
+        isWide={isWide}
               isGroupView={isGroupView}
+              isWide={isWide}
               group={group}
               canManageFees={canManageFees}
               applyingFeeId={applyingFeeId}
@@ -1486,6 +1516,7 @@ function GoalProgressList({
 
 function LateFeeList({
   items,
+  isWide,
   isGroupView,
   group,
   canManageFees,
@@ -1495,6 +1526,7 @@ function LateFeeList({
   onWaive,
 }: {
   items: any[];
+  isWide: boolean;
   isGroupView: boolean;
   group: any;
   canManageFees: boolean;
@@ -1503,19 +1535,14 @@ function LateFeeList({
   onClear: (item: any) => void;
   onWaive: (item: any) => void;
 }) {
-  const [customAmounts, setCustomAmounts] = useState<
-    Record<string, string>
-  >({});
+  const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   if (items.length === 0) {
     return <EmptyState icon="✓" text="No late fees owed" />;
   }
 
-  const totalOwed = items.reduce(
-    (sum, item) => sum + (item.feeAmount || 0),
-    0
-  );
+  const totalOwed = items.reduce((sum, item) => sum + (item.feeAmount || 0), 0);
   const appliedCount = items.filter((i) => i.applied).length;
   const accruedCount = items.length - appliedCount;
 
@@ -1551,10 +1578,7 @@ function LateFeeList({
           {appliedCount > 0 && (
             <View style={st.feeStatusChipWrap}>
               <View
-                style={[
-                  st.feeStatusChipDot,
-                  { backgroundColor: C.info },
-                ]}
+                style={[st.feeStatusChipDot, { backgroundColor: C.info }]}
               />
               <Text style={st.feeStatusChipText}>
                 {appliedCount} recorded
@@ -1564,10 +1588,7 @@ function LateFeeList({
           {accruedCount > 0 && (
             <View style={st.feeStatusChipWrap}>
               <View
-                style={[
-                  st.feeStatusChipDot,
-                  { backgroundColor: C.gold },
-                ]}
+                style={[st.feeStatusChipDot, { backgroundColor: C.gold }]}
               />
               <Text style={st.feeStatusChipText}>
                 {accruedCount} accruing
@@ -1586,9 +1607,7 @@ function LateFeeList({
         const statusColor = item.applied ? C.info : C.gold;
         const statusBg = item.applied ? C.infoBg : C.goldBg;
 
-        const headline = isGroupView
-          ? item.memberName
-          : item.periodLabel;
+        const headline = isGroupView ? item.memberName : item.periodLabel;
         const subline = isGroupView ? item.periodLabel : null;
 
         const customNum = customVal.trim() ? Number(customVal) : undefined;
@@ -1597,6 +1616,146 @@ function LateFeeList({
             ? customNum
             : item.feeAmount;
 
+        // ─── Wide (web) layout ───────────────────────────────────────
+        // Single horizontal row: identity + meta | amount | action
+        // chips. Detail strip collapses into one meta line so the card
+        // stays short. Buttons are content-width, not full-width.
+        if (isWide) {
+          return (
+            <View key={item.feeTxId} style={st.feeCardWide}>
+              <View style={st.feeCardWideRow}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <View style={st.feeCardNameRow}>
+                    <Text style={st.feeMember} numberOfLines={1}>
+                      {headline}
+                    </Text>
+                    <View
+                      style={[
+                        st.feeStatusPill,
+                        { backgroundColor: statusBg },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          st.feeStatusPillText,
+                          { color: statusColor },
+                        ]}
+                      >
+                        {statusLabel}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={st.feeMetaLine} numberOfLines={1}>
+                    {subline ? `${subline} · ` : ""}
+                    {item.daysLate ?? 0}d late · {item.daysNewlyOwed ?? 0}{" "}
+                    newly · {group?.contributionLateFeeRatePct ?? 0}%
+                  </Text>
+                </View>
+
+                <Text style={st.feeAmountWide} numberOfLines={1}>
+                  {fmtCurrency(item.feeAmount)}
+                </Text>
+
+                {canManageFees && (
+                  <View style={st.feeActionsWide}>
+                    {item.applied ? (
+                      <>
+                        <TouchableOpacity
+                          style={st.feeBtnSm}
+                          onPress={() => onWaive(item)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={st.feeBtnSmText}>Waive</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={st.feeBtnSm}
+                          onPress={() => onClear(item)}
+                          disabled={isSaving}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={st.feeBtnSmText}>
+                            {isSaving ? "Clearing…" : "Clear"}
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    ) : (
+                      <>
+                        <TouchableOpacity
+                          style={[
+                            st.feeBtnSm,
+                            isExpanded && st.feeBtnSmActive,
+                          ]}
+                          onPress={() =>
+                            setExpandedId(
+                              isExpanded ? null : item.feeTxId
+                            )
+                          }
+                          activeOpacity={0.8}
+                        >
+                          <Text
+                            style={[
+                              st.feeBtnSmText,
+                              isExpanded && st.feeBtnSmTextActive,
+                            ]}
+                          >
+                            {isExpanded ? "Cancel" : "Custom"}
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[st.feeBtnSm, st.feeBtnSmPrimary]}
+                          onPress={() => onApply(item, customNum)}
+                          disabled={isSaving}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={st.feeBtnSmPrimaryText}>
+                            {isSaving
+                              ? "Applying…"
+                              : `Apply ${fmtCurrency(effectiveAmount)}`}
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={st.feeLinkSm}
+                          onPress={() => onWaive(item)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={st.feeLinkSmText}>Waive</Text>
+                        </TouchableOpacity>
+                      </>
+                    )}
+                  </View>
+                )}
+              </View>
+
+              {!item.applied && isExpanded && (
+                <View style={st.feeCustomRowWide}>
+                  <Text style={st.feeCustomLabel}>Custom amount</Text>
+                  <TextInput
+                    style={st.feeCustomInputWide}
+                    placeholder={String(item.feeAmount)}
+                    placeholderTextColor={C.text3}
+                    keyboardType="numeric"
+                    value={customVal}
+                    onChangeText={(v) =>
+                      setCustomAmounts((prev) => ({
+                        ...prev,
+                        [item.feeTxId]: v,
+                      }))
+                    }
+                  />
+                  <Text style={st.feeCustomHint}>
+                    Blank = full {fmtCurrency(item.feeAmount)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          );
+        }
+
+        // ─── Narrow (mobile) layout — unchanged ──────────────────────
         return (
           <View key={item.feeTxId} style={st.feeCard}>
             <View style={st.feeCardTop}>
@@ -2931,6 +3090,40 @@ const st = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
+
+  // Web-only overrides. flex-grow on the buttons is right for a phone
+  // (two buttons split the card width), but on a 900px desktop card it
+  // stretches them to 500px each. On wide screens, drop flex and use a
+  // sensible min-width instead, and left-align the row so it reads as
+  // an action cluster rather than a banner.
+  feeActionRowWide: {
+    justifyContent: "flex-start",
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  feeBtnWide: {
+    flex: 0,
+    minWidth: 130,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  feePrimaryBtnWide: {
+    flex: 0,
+    minWidth: 170,
+    paddingVertical: 9,
+    paddingHorizontal: 18,
+  },
+  feeClearBtnWide: {
+    flex: 0,
+    minWidth: 110,
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+  },
+  feeWaiveLinkInline: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginLeft: 4,
+  },
   feeSecondaryBtn: {
     flex: 1,
     paddingVertical: 10,
@@ -3027,6 +3220,116 @@ const st = StyleSheet.create({
     fontSize: 10,
     color: C.text3,
     fontStyle: "italic",
+  },
+
+  // ─── Wide (web) fee card ─────────────────────────────────────────
+  // Single horizontal row so the card collapses from ~230px to ~64px
+  // on desktop. Amount sits right-aligned before the action chips so
+  // the eye reads identity → amount → action, left to right. Buttons
+  // use min-width instead of flex so they don't stretch to fill the
+  // card.
+  feeCardWide: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+
+  feeCardWideRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+  },
+
+  feeMetaLine: {
+    fontSize: 12,
+    color: C.text3,
+    marginTop: 4,
+  },
+
+  feeAmountWide: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#991B1B",
+    letterSpacing: -0.3,
+    flexShrink: 0,
+  },
+
+  feeActionsWide: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 0,
+  },
+
+  // Compact action chip — content-width, ~30px tall. Reads as a
+  // button, not a full-width banner.
+  feeBtnSm: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.elevated,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  feeBtnSmActive: {
+    backgroundColor: C.pill,
+    borderColor: C.primary,
+  },
+  feeBtnSmText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text2,
+  },
+  feeBtnSmTextActive: {
+    color: C.primary,
+  },
+  feeBtnSmPrimary: {
+    backgroundColor: "#DC2626",
+    borderColor: "#DC2626",
+  },
+  feeBtnSmPrimaryText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#fff",
+  },
+
+  feeLinkSm: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  feeLinkSmText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.text3,
+    textDecorationLine: "underline",
+  },
+
+  // Custom-amount row on web — sits under the main row when expanded.
+  feeCustomRowWide: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: C.borderLight,
+  },
+  feeCustomInputWide: {
+    width: 140,
+    height: 36,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: C.text,
+    fontWeight: "600",
   },
 
   // Waiver modal

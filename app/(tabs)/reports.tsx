@@ -11,6 +11,7 @@ import {
   useWindowDimensions,
   Modal,
   Platform,
+  Alert,
 } from "react-native";
 import Svg, { Circle, Path } from "react-native-svg";
 
@@ -3060,6 +3061,42 @@ export default function ReportsScreen() {
       <Toast visible={visible} msg={msg} type={type} />
     </View>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Confirm dialog — window.confirm on web, Alert.alert on native.
+// Module-scope helper so MemberDetail's Remove Waiver flow (and any
+// future yes/no prompt) has a single place to call. Before this was
+// extracted, the handler referenced a `showConfirm` symbol that was
+// never imported or defined — the app compiled fine because the name
+// only resolves at call time, then threw ReferenceError on tap.
+// ─────────────────────────────────────────────────────────────────────────
+function showConfirm(
+  title: string,
+  message: string,
+  onConfirm: () => void,
+  onCancel?: () => void,
+  destructive = false,
+) {
+  if (Platform.OS === "web") {
+    const ok =
+      typeof window !== "undefined" &&
+      window.confirm(`${title}
+
+${message}`);
+    if (ok) onConfirm();
+    else onCancel?.();
+    return;
+  }
+
+  Alert.alert(title, message, [
+    { text: "Cancel", style: "cancel", onPress: onCancel },
+    {
+      text: "Confirm",
+      style: destructive ? "destructive" : "default",
+      onPress: onConfirm,
+    },
+  ]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
