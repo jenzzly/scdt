@@ -839,6 +839,14 @@ function LoanDetailModal({
                 </Text>
               </View>
             ) : null}
+            {loan.firstPaymentDate ? (
+              <View style={detailSt.detailRow}>
+                <Text style={detailSt.detailLbl}>First payment due</Text>
+                <Text style={detailSt.detailVal}>
+                  {fmtDate(loan.firstPaymentDate)}
+                </Text>
+              </View>
+            ) : null}
             {loan.purpose ? (
               <View style={detailSt.detailRow}>
                 <Text style={detailSt.detailLbl}>Purpose</Text>

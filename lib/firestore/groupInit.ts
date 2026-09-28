@@ -42,6 +42,7 @@ export async function ensureGroupExists(groupId: string, userId: string): Promis
     loanInterestMethod: BRAND.defaults.loanInterestMethod,
     latePenaltyRatePct: BRAND.defaults.latePenaltyRatePct,
     loanInterestRatePeriod: BRAND.defaults.loanInterestRatePeriod,
+    loanFirstPaymentSkipMonths: 1,
     absencePenaltyMemberRatePct: BRAND.defaults.absencePenaltyMemberRatePct,
     absencePenaltyOfficerRatePct: BRAND.defaults.absencePenaltyOfficerRatePct,
     createdBy: userId,

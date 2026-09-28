@@ -593,6 +593,17 @@ export default function GroupSettingsScreen() {
   const [showCreateMember, setShowCreateMember] = useState(false);
   const [showEditMember, setShowEditMember] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // Dedicated state for the delete confirmation modal.
+  // Deliberately NOT `selectedMember`: the detail modal's
+  // onClose schedules `setSelectedMember(null)` at t=300ms,
+  // and the delete flow re-sets selectedMember at t=260ms.
+  // Sharing the same variable meant the pending clear nulled
+  // the member the confirm modal was about to read, so the
+  // modal would open and then vanish before the user could
+  // confirm. Two separate variables remove the race.
+  const [memberToDelete, setMemberToDelete] = useState<Member | null>(
+    null,
+  );
   const [creatingMember, setCreatingMember] = useState(false);
   const [savingMember, setSavingMember] = useState(false);
 
@@ -623,6 +634,9 @@ export default function GroupSettingsScreen() {
   const [loanRate, setLoanRate] = useState(String(group?.loanInterestRate ?? 2));
   const [loanMethod, setLoanMethod] = useState(group?.loanInterestMethod ?? "flat");
   const [ratePeriod, setRatePeriod] = useState<"monthly" | "annual">(group?.loanInterestRatePeriod ?? "monthly");
+
+  const [loanFirstPaymentSkipMonths, setLoanFirstPaymentSkipMonths] =
+    useState(String(group?.loanFirstPaymentSkipMonths ?? 1));
 
   const [lateRatePct, setLateRatePct] = useState(String(group?.latePenaltyRatePct ?? 5));
   const [absenceMemberPct, setAbsenceMemberPct] = useState(String(group?.absencePenaltyMemberRatePct ?? 10));
@@ -1014,9 +1028,12 @@ export default function GroupSettingsScreen() {
       `Approve ${member.fullName}? They will be able to access the group immediately.`,
       async () => {
         try {
-          await FS.updateMember(activeGroupId!, member.id, {
-            status: "active",
-          });
+          // Route through the store action — updates local
+          // Zustand state optimistically so the UI reflects
+          // the change instantly, and rolls back on failure.
+          // The store action still calls FS.updateMember
+          // underneath, so groupMemberships stays in sync.
+          await updateMember(member.id, { status: "active" });
           show(`${member.fullName} approved`, "success");
         } catch (e: any) {
           show(e.message || "Failed to approve member", "error");
@@ -1033,10 +1050,10 @@ export default function GroupSettingsScreen() {
 They won't be able to sign in or participate in group activities, and any new late fees on their loans will pause until they're reactivated.`,
       async () => {
         try {
-          await FS.updateMember(activeGroupId!, member.id, {
-            status: "inactive",
-          });
-          show("Member deactivated");
+          // Route through the store action — see the
+          // comment in handleApproveMember.
+          await updateMember(member.id, { status: "inactive" });
+          show("Member deactivated", "success");
         } catch (e: any) {
           show(e.message || "Failed to deactivate", "error");
         }
@@ -1052,9 +1069,9 @@ They won't be able to sign in or participate in group activities, and any new la
       `Reactivate ${member.fullName}? They'll regain access and normal participation will resume.`,
       async () => {
         try {
-          await FS.updateMember(activeGroupId!, member.id, {
-            status: "active",
-          });
+          // Route through the store action — see the
+          // comment in handleApproveMember.
+          await updateMember(member.id, { status: "active" });
           show("Member reactivated", "success");
         } catch (e: any) {
           show(e.message || "Failed to reactivate", "error");
@@ -1080,7 +1097,7 @@ They won't be able to sign in or participate in group activities, and any new la
       await deleteMember(member.id);
       show(`Member ${member.fullName} removed`, "success");
       setShowDeleteConfirm(false);
-      setSelectedMember(null);
+      setMemberToDelete(null);
     } catch (e: any) {
       show(e.message || "Failed to delete member", "error");
     }
@@ -1307,6 +1324,16 @@ They won't be able to sign in or participate in group activities, and any new la
     if (contributionLateFeeGraceDays !== undefined && contributionLateFeeGraceDays < 0) { show("Grace days cannot be negative", "error"); return; }
     if (loanLateFeeGraceDays !== undefined && loanLateFeeGraceDays < 0) { show("Grace days cannot be negative", "error"); return; }
 
+    const loanFirstPaymentSkipMonthsNum = parseNum(loanFirstPaymentSkipMonths);
+    if (
+      loanFirstPaymentSkipMonthsNum !== undefined &&
+      (loanFirstPaymentSkipMonthsNum < 0 ||
+        !Number.isInteger(loanFirstPaymentSkipMonthsNum))
+    ) {
+      show("First payment skip must be a whole number of months (0 or more)", "error");
+      return;
+    }
+
     if (goalEnabled) {
       if (contributionGoalPeriodMonths === undefined || contributionGoalPeriodMonths < 1 || !Number.isInteger(contributionGoalPeriodMonths)) {
         show("Goal period must be a whole number of months (1 or more)", "error");
@@ -1343,6 +1370,9 @@ They won't be able to sign in or participate in group activities, and any new la
       contributionLateFeeStartDate: trimmedStartDate || undefined,
       ...(loanLateFeeRatePct !== undefined && { loanLateFeeRatePct }),
       ...(loanLateFeeGraceDays !== undefined && { loanLateFeeGraceDays }),
+      ...(loanFirstPaymentSkipMonthsNum !== undefined && {
+        loanFirstPaymentSkipMonths: loanFirstPaymentSkipMonthsNum,
+      }),
       ...(goalEnabled && {
         contributionGoalPeriodMonths,
         contributionGoalTargetAmount,
@@ -1723,7 +1753,10 @@ They won't be able to sign in or participate in group activities, and any new la
                       tone="danger"
                       onPress={() =>
                         runDetailAction(() => {
-                          setSelectedMember(member);
+                          // Use the dedicated state, not
+                          // selectedMember — see the
+                          // memberToDelete declaration above.
+                          setMemberToDelete(member);
                           setShowDeleteConfirm(true);
                         })
                       }
@@ -2228,6 +2261,14 @@ They won't be able to sign in or participate in group activities, and any new la
                   {' — '}
                   {loanMethod === "reducing_balance" ? "Calculated on outstanding balance" : "Calculated on original amount"}
                 </Text>
+                <Divider />
+                <Input
+                  label="First payment after (months)"
+                  value={loanFirstPaymentSkipMonths}
+                  onChangeText={setLoanFirstPaymentSkipMonths}
+                  keyboardType="numeric"
+                  hint="Months between disbursement and the first installment due date. Default 1 (next month). Set 0 to make the first installment due on the disbursement date."
+                />
               </SettingCard>
             </View>
 
@@ -3322,21 +3363,21 @@ They won't be able to sign in or participate in group activities, and any new la
 
       {/* Delete Confirmation Modal */}
       <BottomModal
-        visible={showDeleteConfirm && !!selectedMember}
+        visible={showDeleteConfirm && !!memberToDelete}
         onClose={() => {
           setShowDeleteConfirm(false);
-          setSelectedMember(null);
+          setMemberToDelete(null);
         }}
         title="Delete member?"
       >
-        {selectedMember && (
+        {memberToDelete && (
           <View style={{ padding: 16, gap: 12, paddingBottom: 24 }}>
             <View style={deleteStyles.iconCircle}>
               <Text style={deleteStyles.icon}>🗑</Text>
             </View>
 
             <Text style={deleteStyles.title}>
-              Delete {selectedMember.fullName}?
+              Delete {memberToDelete.fullName}?
             </Text>
             <Text style={deleteStyles.body}>
               This will permanently remove this member from the group. Their
@@ -3359,14 +3400,14 @@ They won't be able to sign in or participate in group activities, and any new la
                 variant="secondary"
                 onPress={() => {
                   setShowDeleteConfirm(false);
-                  setSelectedMember(null);
+                  setMemberToDelete(null);
                 }}
                 style={{ flex: 1 }}
               />
               <Button
                 label="Delete member"
                 variant="danger"
-                onPress={() => handleDeleteMember(selectedMember)}
+                onPress={() => handleDeleteMember(memberToDelete)}
                 style={{ flex: 1 }}
               />
             </View>

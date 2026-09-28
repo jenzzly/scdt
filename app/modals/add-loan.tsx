@@ -39,6 +39,7 @@ import {
   round2,
   loanSchedule,
   showConfirm,
+  addMonthsToYmd,
 } from "../../utils/theme";
 
 import { useUnpaidPenalties } from "../../hooks/useUnpaidPenalties";
@@ -226,29 +227,40 @@ export default function AddLoanModal() {
 
   const monthsNum = parseInt(months) || 0;
 
+  // Skip-months is read from the group's Loan Rules setting: the
+  // first installment is due `skipMonths` calendar months after
+  // the application date. Default 1 — next month.
+  const skipMonths = Math.max(
+    0,
+    Math.floor(Number(group?.loanFirstPaymentSkipMonths ?? 1)),
+  );
+
   const {
     totalInterest,
     totalRepayable,
     monthlyPayment,
+    schedule,
   } = useMemo(() => {
     if (parsed <= 0 || monthsNum <= 0) {
       return {
         totalInterest: 0,
         totalRepayable: parsed,
         monthlyPayment: 0,
+        schedule: [] as any[],
       };
     }
 
-    const loanDateForCalc = loanDate
-      ? new Date(loanDate).toISOString()
-      : new Date().toISOString();
+    const baseYmd = loanDate
+      ? loanDate.slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    const firstPaymentYmd = addMonthsToYmd(baseYmd, skipMonths);
 
     return loanSchedule(
       {
         amount: parsed,
         interestRate: rate,
         repaymentMonths: monthsNum,
-        firstPaymentDate: loanDateForCalc,
+        firstPaymentDate: firstPaymentYmd,
       },
       interestMethod,
       interestRatePeriod
@@ -260,7 +272,11 @@ export default function AddLoanModal() {
     interestMethod,
     interestRatePeriod,
     loanDate,
+    skipMonths,
   ]);
+
+  const firstPaymentDue =
+    schedule && schedule.length > 0 ? schedule[0].dueDate : null;
 
   // ------------------------------------------------------------
   // MEMBER OPTIONS
@@ -1386,6 +1402,20 @@ export default function AddLoanModal() {
                   : "Today"}
               </Text>
             </View>
+
+            {firstPaymentDue ? (
+              <View style={styles.calcRow}>
+                <Text style={styles.calcLbl}>
+                  First payment due
+                </Text>
+                <Text style={styles.calcVal}>
+                  {new Date(firstPaymentDue).toLocaleDateString()}
+                  {skipMonths > 0
+                    ? `  (+${skipMonths} month${skipMonths !== 1 ? "s" : ""})`
+                    : "  (same day)"}
+                </Text>
+              </View>
+            ) : null}
 
             <View style={styles.calcRow}>
               <Text

@@ -1020,6 +1020,40 @@ export function findOverdueInstallments(
           return;
         }
 
+        // ── Minimum-interest-paid rule ────────────────────────────
+        //
+        // If the borrower's cumulative interest payments cover the
+        // interest portion of every installment up to and including
+        // this one, the loan is "current on interest" — the minimum
+        // obligation to keep the loan in good standing has been met
+        // even if principal is behind. Late fees do not accrue for
+        // installments whose interest is already settled.
+        //
+        // Rationale: interest is what services the loan. A member
+        // who pays the interest every month is paying for the time
+        // value of the money — the substantive obligation. Principal
+        // can be rescheduled or paid down later without the group
+        // losing money. Charging late fees on top of already-paid
+        // interest punishes the member twice for the same period.
+        //
+        // This is a soft check — legacy loans without a schedule or
+        // without interest fields fall through to the normal
+        // late-fee logic unchanged.
+        if (loan.schedule && loan.schedule.length > 0) {
+          let cumInterestThroughHere = 0;
+          for (let k = 0; k <= index; k++) {
+            const it = loan.schedule[k];
+            if (!it) break;
+            cumInterestThroughHere += it.interest || 0;
+          }
+          const interestPaid = Number(
+            (loan as any).totalInterestPaid ?? 0,
+          );
+          if (interestPaid + 0.01 >= cumInterestThroughHere) {
+            return;
+          }
+        }
+
         const graceDate =
           new Date(dueDate);
 

@@ -2,7 +2,14 @@
 import type { SetFn, GetFn, StoreState } from "../storeTypes";
 import type { ID, Loan, LoanApprovals, Group, Member } from "../../types";
 import * as FS from "../../lib/firestore";
-import { uid, loanSchedule, round2 } from "../../utils/theme";
+import {
+  uid,
+  loanSchedule,
+  round2,
+  addMonthsToYmd,
+  addDaysToYmd,
+  daysBetweenYmd,
+} from "../../utils/theme";
 import { recalcGroupTotals } from "../recalcGroupTotals";
 import {
   findLoanDisbursementWalletTx,
@@ -97,6 +104,24 @@ export const createLoanSlice = (
     const lateFeeGraceDays =
       (data as any).lateFeeGraceDays ?? group?.loanLateFeeGraceDays;
 
+    // Compute the actual first-payment date. The group setting
+    // loanFirstPaymentSkipMonths (default 1) is the number of
+    // calendar months between the application date and the
+    // first installment due date. This value is the ESTIMATE
+    // used before disbursement; disburseLoanServer regenerates
+    // the real one anchored to the disbursement date.
+    const applicationDateYmd = String(
+      (data as any).applicationDate ?? now,
+    ).slice(0, 10);
+    const skipMonths = Math.max(
+      0,
+      Math.floor(Number(group?.loanFirstPaymentSkipMonths ?? 1)),
+    );
+    const firstPaymentDate = addMonthsToYmd(
+      applicationDateYmd,
+      skipMonths,
+    );
+
     const {
       schedule,
       monthlyPayment,
@@ -107,7 +132,7 @@ export const createLoanSlice = (
         amount: data.amount,
         interestRate: data.interestRate,
         repaymentMonths: data.repaymentMonths,
-        firstPaymentDate: data.firstPaymentDate,
+        firstPaymentDate,
       },
       interestMethod,
       interestRatePeriod,
@@ -129,6 +154,10 @@ export const createLoanSlice = (
       interestRatePeriod,
       lateFeeRatePct,
       lateFeeGraceDays,
+      // Override the caller's raw value (which is the
+      // application date) with the computed first installment
+      // due date. See the addMonthsToYmd call above.
+      firstPaymentDate,
       schedule,
       monthlyPayment,
       totalInterest,
@@ -520,6 +549,22 @@ export const createLoanSlice = (
   // ═══════════════════════════════════════════════════════════════════════
   // RESCHEDULE AN INSTALLMENT'S DUE DATE
   // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════
+  // RESCHEDULE AN INSTALLMENT'S DUE DATE (cascading)
+  // ═══════════════════════════════════════════════════════════════════════
+  //
+  // Moving installment N shifts that installment AND every later
+  // unpaid installment by the same number of calendar days. That
+  // keeps the monthly cadence intact — moving #2 by +5 days also
+  // moves #3, #4, #5... by +5 days, so the interval between any two
+  // consecutive installments stays the same as originally planned.
+  //
+  // Paid installments are never moved. If any LATER installment has
+  // already been paid, this throws instead — shifting a paid row
+  // would move its paidDate out of position.
+  //
+  // When installmentIndex === 0, loan.firstPaymentDate is also
+  // updated so the two stay consistent.
   rescheduleLoanInstallment: async (loanId, installmentIndex, newDueDate) => {
     const { activeGroupId, loans } = get();
     if (!activeGroupId) throw new Error("No active group");
@@ -533,20 +578,56 @@ export const createLoanSlice = (
       throw new Error("Cannot reschedule a paid installment");
     }
 
-    const previousSchedule = loan.schedule.map((item) => ({ ...item }));
+    const dateValid = /^\d{4}-\d{2}-\d{2}/.test(newDueDate);
+    if (!dateValid) throw new Error("Invalid date");
 
-    const newSchedule = loan.schedule.map((item, i) =>
-      i === installmentIndex ? { ...item, dueDate: newDueDate } : item,
+    const laterPaidIdx = loan.schedule.findIndex(
+      (item, i) => i > installmentIndex && item.paid,
     );
+    if (laterPaidIdx >= 0) {
+      throw new Error(
+        `Cannot reschedule installment #${installmentIndex + 1} — ` +
+        `installment #${laterPaidIdx + 1} has already been paid, ` +
+        `and shifting it would move it out of position.`,
+      );
+    }
 
-    get().updateLoanLocal(loanId, { schedule: newSchedule });
+    const previousSchedule = loan.schedule.map((item) => ({ ...item }));
+    const previousFirstPaymentDate = loan.firstPaymentDate;
+
+    const oldDueYmd = String(
+      loan.schedule[installmentIndex].dueDate,
+    ).slice(0, 10);
+    const newDueYmd = newDueDate.slice(0, 10);
+
+    const sameDirection = newDueYmd >= oldDueYmd ? 1 : -1;
+    const deltaDays = sameDirection * daysBetweenYmd(oldDueYmd, newDueYmd);
+
+    const newSchedule = loan.schedule.map((item, i) => {
+      if (i < installmentIndex) return item;
+      if (item.paid) return item;
+      const ymd = String(item.dueDate).slice(0, 10);
+      return { ...item, dueDate: addDaysToYmd(ymd, deltaDays) };
+    });
+
+    const patch: Partial<Loan> = { schedule: newSchedule };
+
+    if (installmentIndex === 0 && newSchedule[0]) {
+      patch.firstPaymentDate = String(newSchedule[0].dueDate);
+    }
+
+    get().updateLoanLocal(loanId, patch);
 
     try {
       get().setSyncStatus("pending");
-      await FS.updateLoan(activeGroupId, loanId, { schedule: newSchedule });
+      await FS.updateLoan(activeGroupId, loanId, patch);
       get().setSyncStatus("synced");
     } catch (e) {
-      get().updateLoanLocal(loanId, { schedule: previousSchedule });
+      const rollback: Partial<Loan> = { schedule: previousSchedule };
+      if (installmentIndex === 0) {
+        rollback.firstPaymentDate = previousFirstPaymentDate;
+      }
+      get().updateLoanLocal(loanId, rollback);
       get().setSyncStatus(
         "failed",
         e instanceof Error ? e.message : "Failed to reschedule installment",

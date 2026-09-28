@@ -136,6 +136,15 @@ export interface Group {
   contributionGoalAnchorDate?: string;
 
   /**
+   * How many months after the loan is disbursed the FIRST
+   * installment is due. Default 1 — a loan disbursed on Oct 15
+   * has its first installment due Nov 15. Set to 0 to make the
+   * first installment due on the disbursement date itself
+   * (rare, but valid).
+   */
+  loanFirstPaymentSkipMonths?: number;
+
+  /**
    * Minutes after `startTime` before a no-show is treated as past-due
    * and eligible for an absence penalty. Defaults to 15 if unset.
    */

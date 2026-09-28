@@ -196,6 +196,64 @@ export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * Add N days to a YYYY-MM-DD date, operating in local time so
+ * the calendar day doesn't shift across a timezone boundary.
+ * Used by the cascading installment reschedule.
+ */
+export function addDaysToYmd(ymd: string, days: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd ?? '').trim());
+  if (!m) return ymd;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  d.setDate(d.getDate() + Math.round(days));
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+/**
+ * Whole calendar days between two YYYY-MM-DD (or ISO) dates.
+ * Always non-negative.
+ */
+export function daysBetweenYmd(a: string, b: string): number {
+  const ma = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(a ?? '').trim());
+  const mb = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(b ?? '').trim());
+  if (!ma || !mb) return 0;
+  const da = Date.UTC(Number(ma[1]), Number(ma[2]) - 1, Number(ma[3]));
+  const db = Date.UTC(Number(mb[1]), Number(mb[2]) - 1, Number(mb[3]));
+  return Math.round(Math.abs(db - da) / 86_400_000);
+}
+
+/**
+ * Add N months to a YYYY-MM-DD date, clamping to the last day
+ * of the target month when the original day doesn't exist
+ * (e.g. Jan 31 + 1mo → Feb 28/29, not Mar 2/3). Used by the
+ * loan first-payment-date computation so a disbursement on the
+ * 31st of a month doesn't skip the intended first-payment
+ * month.
+ */
+export function addMonthsToYmd(ymd: string, months: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd ?? '').trim());
+  if (!m) return ymd;
+  const year = Number(m[1]);
+  const month0 = Number(m[2]) - 1;
+  const day = Number(m[3]);
+
+  // Roll the year forward if the target month index overflows.
+  const totalMonths = year * 12 + month0 + months;
+  const targetYear = Math.floor(totalMonths / 12);
+  const targetMonth0 = ((totalMonths % 12) + 12) % 12;
+
+  const lastDay = new Date(targetYear, targetMonth0 + 1, 0).getDate();
+  const clampedDay = Math.min(day, lastDay);
+
+  const yy = targetYear;
+  const mm = String(targetMonth0 + 1).padStart(2, '0');
+  const dd = String(clampedDay).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Loan math — PREVIEW/ESTIMATE ONLY.
 //

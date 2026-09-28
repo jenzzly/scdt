@@ -12,6 +12,7 @@ import {
   db,
   walletCol,
   loansCol,
+  groupDoc,
   getCurrentUserInfo,
   logError,
   stripUndefined,
@@ -34,7 +35,7 @@ import { writeAuditLog } from "./audit";
 // rather than after the money actually moved. Re-anchoring here keeps
 // installment due dates, interest accrual start, wallet tx date, and
 // late-fee evaluation all keyed to the same day.
-import { loanSchedule } from "../../utils/theme";
+import { loanSchedule, addMonthsToYmd } from "../../utils/theme";
 
 // ============================================================
 // Helpers
@@ -470,13 +471,32 @@ export async function disburseLoanServer(
   const repaymentMonths = safeNumber(loan.repaymentMonths);
   const canRebuildSchedule = repaymentMonths > 0;
 
+  // Read the group's first-payment skip setting. The first
+  // installment is due `skipMonths` calendar months after the
+  // disbursement date — default 1, meaning next month. This was
+  // the bug: the schedule used to be anchored to the
+  // disbursement date directly, so installment #0 was due the
+  // same day the money left.
+  const groupSnap = await getDoc(groupDoc(gId));
+  const skipMonths = Math.max(
+    0,
+    Math.floor(
+      Number(groupSnap.data()?.loanFirstPaymentSkipMonths ?? 1),
+    ),
+  );
+  const firstPaymentYmd = addMonthsToYmd(
+    resolvedDisbursementDate,
+    skipMonths,
+  );
+  const firstPaymentIso = normalizeDateTime(firstPaymentYmd);
+
   const scheduleRebuild = canRebuildSchedule
     ? loanSchedule(
         {
           amount,
           interestRate: safeNumber(loan.interestRate),
           repaymentMonths,
-          firstPaymentDate: disbursementIso,
+          firstPaymentDate: firstPaymentIso,
         },
         loan.interestMethod ?? "flat",
         (loan as any).interestRatePeriod ?? "monthly",
@@ -508,6 +528,10 @@ export async function disburseLoanServer(
 
     disbursementDate: disbursementIso,
     disbursedBy: userInfo.userId,
+    // Overwrite the submission-time estimate with the real
+    // first-payment date, anchored to the actual disbursement
+    // date + skipMonths.
+    firstPaymentDate: firstPaymentIso,
 
     // Schedule (and everything derived from it) re-anchored to the
     // disbursement date. When the rebuild guard fails, these fields
@@ -662,6 +686,29 @@ export async function recordRepaymentServer(
     previousTotalInterestPaid + result.interest,
   );
 
+  // Walk the schedule forward and mark installments whose
+  // cumulative `total` is now covered by `newAmountRepaid`.
+  // `findOverdueInstallments` reads `paidDate` off the schedule
+  // to stop accruing late fees once an installment is settled,
+  // so without this every paid installment kept accruing late
+  // fees forever.
+  const existingSchedule = loan.schedule ?? [];
+  let cumulativeScheduleTotal = 0;
+  const updatedSchedule = existingSchedule.map((item) => {
+    cumulativeScheduleTotal = round2(
+      cumulativeScheduleTotal + (item.total || 0),
+    );
+    const isCovered = newAmountRepaid + 0.01 >= cumulativeScheduleTotal;
+    if (isCovered && !item.paid) {
+      return {
+        ...item,
+        paid: true,
+        paidDate: item.paidDate || paymentDate,
+      };
+    }
+    return item;
+  });
+
   const loanUpdate = stripUndefined({
     amountRepaid: newAmountRepaid,
     balance: result.remainingBalance,
@@ -670,6 +717,7 @@ export async function recordRepaymentServer(
     totalInterestPaid: newTotalInterestPaid,
     status: newStatus,
     completionDate: newStatus === "repaid" ? paymentDate : undefined,
+    ...(updatedSchedule.length > 0 && { schedule: updatedSchedule }),
     updatedAt: transactionDate,
     updatedBy: userInfo.userId,
   });

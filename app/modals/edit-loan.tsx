@@ -30,7 +30,13 @@ import {
 import { Input, Button, useToast, Toast, DatePicker } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
-import { Colors, S, fmtCurrency, fmtDate } from "../../utils/theme";
+import {
+  Colors,
+  S,
+  fmtCurrency,
+  fmtDate,
+  showConfirm,
+} from "../../utils/theme";
 
 import type { Loan } from "../../types";
 
@@ -186,17 +192,42 @@ export default function EditLoanModal() {
       show("Enter a valid date", "error");
       return;
     }
-    setReschedulingLoading(true);
-    try {
-      await rescheduleLoanInstallment(loan.id, index, newDueDate);
-      show(`Installment #${index + 1} rescheduled`);
-      setReschedulingIndex(null);
-      setNewDueDate("");
-    } catch (error: any) {
-      console.error("Failed to reschedule installment:", error);
-      show(error?.message || "Failed to reschedule installment", "error");
-    } finally {
-      setReschedulingLoading(false);
+
+    const affected = (loan.schedule ?? []).filter(
+      (item, i) => i >= index && !item.paid,
+    );
+
+    const doReschedule = async () => {
+      setReschedulingLoading(true);
+      try {
+        await rescheduleLoanInstallment(loan.id, index, newDueDate);
+        show(
+          affected.length > 1
+            ? `Installments #${index + 1}–#${index + affected.length} shifted`
+            : `Installment #${index + 1} rescheduled`,
+        );
+        setReschedulingIndex(null);
+        setNewDueDate("");
+      } catch (error: any) {
+        console.error("Failed to reschedule installment:", error);
+        show(error?.message || "Failed to reschedule installment", "error");
+      } finally {
+        setReschedulingLoading(false);
+      }
+    };
+
+    if (affected.length > 1) {
+      showConfirm(
+        "Shift later installments?",
+        `Moving installment #${index + 1} to ${newDueDate} will also ` +
+          `shift the next ${affected.length - 1} unpaid installment${
+            affected.length - 1 !== 1 ? "s" : ""
+          } by the same number of days, keeping the monthly cadence ` +
+          `intact. Continue?`,
+        doReschedule,
+      );
+    } else {
+      doReschedule();
     }
   };
 
@@ -304,10 +335,13 @@ export default function EditLoanModal() {
           <View style={styles.rescheduleSection}>
             <Text style={styles.sectionTitle}>Reschedule Installments</Text>
             <Text style={styles.sectionSubtitle}>
-              Move an unpaid installment's due date. This does not change the
-              amount owed or any other installment, and does not refund any
-              late fee already applied for days that were overdue before the
-              reschedule.
+              Move an unpaid installment's due date. Every later
+              installment shifts by the same number of days, so the
+              cadence between installments stays intact — moving #2
+              forward by 5 days also moves #3, #4, #5… forward by 5
+              days. Paid installments are never moved. This does not
+              change the amount owed on any installment, and does not
+              refund any late fee already applied.
             </Text>
 
             {unpaidInstallments.map((item) => (
@@ -323,6 +357,31 @@ export default function EditLoanModal() {
 
                 {reschedulingIndex === item.index ? (
                   <View style={{ flex: 1 }}>
+                    {(() => {
+                      const remainingUnpaid = (loan.schedule ?? []).filter(
+                        (s, i) => i >= item.index && !s.paid,
+                      ).length;
+                      if (remainingUnpaid <= 1) return null;
+                      return (
+                        <Text
+                          style={{
+                            fontSize: 11,
+                            color: Colors.primary,
+                            fontWeight: "600",
+                            backgroundColor: Colors.primaryFaint,
+                            paddingHorizontal: 8,
+                            paddingVertical: 4,
+                            borderRadius: 6,
+                            marginBottom: 6,
+                            alignSelf: "flex-start",
+                          }}
+                        >
+                          {remainingUnpaid - 1} later installment
+                          {remainingUnpaid - 1 !== 1 ? "s" : ""} will
+                          shift by the same amount
+                        </Text>
+                      );
+                    })()}
                     <DatePicker
                       label=""
                       value={newDueDate}
