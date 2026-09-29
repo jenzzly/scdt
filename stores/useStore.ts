@@ -49,12 +49,14 @@ import { createNotificationSlice } from "./slices/notificationSlice";
 import { createAuditSlice } from "./slices/auditSlice";
 import { createSyncSlice } from "./slices/syncSlice";
 import { createLateFeeExemptionSlice } from "./slices/lateFeeExemptionSlice";
+import { createThemeSlice } from "./slices/themeSlice";
 
 export const useStore = create<StoreState>()(
   persist(
     (set: SetFn, get: GetFn) => ({
       // ── Initial state ──────────────────────────────────────────────────
       dataViewMode: "personal",
+      themeMode: "light",
       authUid: null,
       authName: null,
       authEmail: null,
@@ -91,6 +93,7 @@ export const useStore = create<StoreState>()(
       ...createAuditSlice(set, get),
       ...createSyncSlice(set, get),
       ...createLateFeeExemptionSlice(set, get),
+      ...createThemeSlice(set, get),
 
       // ── Cross-cutting (touches every slice's state, stays here) ────────
       setDataViewMode: (mode) => set({ dataViewMode: mode }),
@@ -216,6 +219,7 @@ export const useStore = create<StoreState>()(
         };
       }),
       partialize: (s: StoreState) => ({
+        themeMode: s.themeMode,
         authUid: s.authUid,
         authName: s.authName,
         authEmail: s.authEmail,

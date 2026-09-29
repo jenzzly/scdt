@@ -26,7 +26,10 @@ export interface LinkedRecordEditPatch {
   description?: string;
 }
 
+export type ThemeMode = "light" | "dark";
+
 export interface StoreState {
+  themeMode: ThemeMode;
   dataViewMode: DataViewMode;
   authUid: string | null;
   authName: string | null;
@@ -51,6 +54,11 @@ export interface StoreState {
   isLoading: boolean;
 
   setDataViewMode: (mode: DataViewMode) => void;
+  /**
+   * Set the light/dark theme mode. Persisted via partialize, so the
+   * preference survives a reload.
+   */
+  setThemeMode: (mode: ThemeMode) => void;
   /**
    * Set the current member (or clear it with `null`). Called during
    * login, rehydration, and the member-lookup effect in

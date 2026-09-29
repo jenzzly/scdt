@@ -1687,7 +1687,7 @@ export default function MembersScreen() {
           onClose={() => setShowCreateModal(false)}
           title="Create New User"
         >
-          <View style={{ gap: 12, paddingBottom: 20 }}>
+          <View style={{ gap: 12, paddingHorizontal: 16, paddingBottom: 20 }}>
             <Input
               label="Full Name"
               value={createForm.fullName}
@@ -1737,7 +1737,7 @@ export default function MembersScreen() {
           title={selectedMember?.fullName}
         >
           {selectedMember && (
-            <View style={{ gap: 12, paddingBottom: 20 }}>
+            <View style={{ gap: 12, paddingHorizontal: 16, paddingBottom: 20 }}>
               {renderDetailBreakdown(selectedMember)}
 
               {isAdmin && (
@@ -1856,7 +1856,7 @@ export default function MembersScreen() {
           title="Delete Member?"
         >
           {selectedMember && (
-            <View style={{ gap: 12, paddingBottom: 20 }}>
+            <View style={{ gap: 12, paddingHorizontal: 16, paddingBottom: 20 }}>
               <Text style={[T.small, { color: C.text2 }]}>
                 This will remove {selectedMember.fullName} from the group.
                 This action cannot be undone.
@@ -1938,7 +1938,7 @@ export default function MembersScreen() {
         onClose={() => setShowCreateModal(false)}
         title="Create User"
       >
-        <View style={{ gap: 12, paddingBottom: 20 }}>
+        <View style={{ gap: 12, paddingHorizontal: 16, paddingBottom: 20 }}>
           <Input
             label="Full Name"
             value={createForm.fullName}
@@ -1988,7 +1988,7 @@ export default function MembersScreen() {
         title={selectedMember?.fullName}
       >
         {selectedMember && (
-          <View style={{ gap: 12, paddingBottom: 20 }}>
+          <View style={{ gap: 12, paddingHorizontal: 16, paddingBottom: 20 }}>
             {renderDetailBreakdown(selectedMember)}
 
             {isAdmin && (
@@ -2059,7 +2059,7 @@ export default function MembersScreen() {
         title="Delete Member?"
       >
         {selectedMember && (
-          <View style={{ gap: 12, paddingBottom: 20 }}>
+          <View style={{ gap: 12, paddingHorizontal: 16, paddingBottom: 20 }}>
             <Text style={[T.small, { color: C.text2 }]}>
               This will remove {selectedMember.fullName} from the group.
               This action cannot be undone.

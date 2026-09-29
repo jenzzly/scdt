@@ -1716,6 +1716,60 @@ export default function ReportsScreen() {
     loanLateFees.reduce((sum, item) => sum + item.feeAmount, 0)
   );
 
+  // Group-wide projected interest (unscoped — same value on every
+  // device). The Financial Position card slices this by active-member
+  // count in personal view; the Earnings tab uses the same slice.
+  const projectedLoanInterestAll = useMemo(() => {
+    const fromDate = selectedFromDate || "";
+    const toDate = selectedToDate || "";
+    return round2(
+      allLoans
+        .filter((l) => l.status === "disbursed")
+        .reduce(
+          (sum, loan) =>
+            sum + calculateLoanInterestProjection(loan, fromDate, toDate),
+          0,
+        ),
+    );
+  }, [allLoans, selectedFromDate, selectedToDate]);
+
+  // Group-wide projected late fees (unscoped). findOverdueInstallments
+  // is already group-wide, so no source swap is needed here — only the
+  // slice in personal view.
+  const projectedLoanLateFeesAll = useMemo(() => {
+    if (!group) return 0;
+
+    const fromDate = selectedFromDate || "";
+    const toDate = selectedToDate || "";
+    const asOfDate = toDate ? new Date(toDate) : new Date();
+
+    try {
+      const overdue =
+        findOverdueInstallments(
+          group,
+          allMembers,
+          allLoans,
+          allWallet,
+          asOfDate,
+        ) || [];
+      return round2(
+        overdue
+          .filter((item: any) => !fromDate || item.dueDate >= fromDate)
+          .reduce((s, o) => s + (o.feeAmount || 0), 0),
+      );
+    } catch (e) {
+      console.error("[reports] projectedLoanLateFeesAll failed:", e);
+      return 0;
+    }
+  }, [
+    group,
+    allMembers,
+    allLoans,
+    allWallet,
+    selectedFromDate,
+    selectedToDate,
+  ]);
+
 
   // ── Total loan late fees owed ────────────────────────────────────
   //
@@ -1837,6 +1891,15 @@ export default function ReportsScreen() {
       ),
     [allMembers]
   );
+
+  // Slice a group-wide figure for the active view.
+  //
+  // Group view    → the figure as-is (whole-group total).
+  // Personal view → the figure ÷ active-member count, matching the
+  //                 equal-share model used by the profit donut and the
+  //                 dashboard's "My Share" card.
+  const slice = (groupValue: number) =>
+    isPersonalView ? round2(groupValue / activeMemberCount) : groupValue;
 
   const donutScale = isPersonalView ? 1 / activeMemberCount : 1;
 
@@ -2437,22 +2500,50 @@ export default function ReportsScreen() {
       actualInterest + actualLateFees + actualInvestmentReturns + actualOther
     );
 
-    const totalProjectedInterest = projectedLoanInterest;
-    const totalLoanLateFees = projectedLoanLateFees;
+    const totalProjectedInterest = slice(projectedLoanInterestAll);
+    const totalLoanLateFees = slice(projectedLoanLateFeesAll);
     const totalProjected = round2(totalProjectedInterest + totalLoanLateFees);
 
     const combinedTotal = round2(totalEarnings + totalProjected);
     const totalInterestAllIn = round2(actualInterest + totalProjectedInterest);
     const totalLateFeesAllIn = round2(actualLateFees + totalLoanLateFees);
 
+    // Both halves of "Total Projected" must come from the same set of
+    // loans. In personal view, source the interest projection from
+    // allLoans (group-wide) — matching the late-fee projection, which
+    // is already group-wide — then slice each row's amount by the
+    // active-member count so the table reconciles to the sliced KPI.
+    const projectedInterestSource = isPersonalView
+      ? allLoans
+          .filter((l) => l.status === "disbursed")
+          .map((loan) => ({
+            loanId: loan.id,
+            memberId: loan.memberId,
+            memberName: getMemberName(loan.memberId),
+            amount: loan.amount,
+            projectedInterest: calculateLoanInterestProjection(
+              loan,
+              selectedFromDate || "",
+              selectedToDate || "",
+            ),
+            applicationDate: loan.applicationDate,
+          }))
+          .filter((r) => r.projectedInterest > 0)
+      : loanInterestProjections;
+
+    const rowAmount = (rawAmount: number) =>
+      isPersonalView ? round2(rawAmount / activeMemberCount) : rawAmount;
+
     const allProjectedRows = [
-      ...loanInterestProjections.map((item) => ({
+      ...projectedInterestSource.map((item) => ({
         type: "projected_interest",
         date: item.applicationDate,
         memberId: item.memberId,
         memberName: item.memberName,
-        description: `Projected interest for loan ${item.loanId.slice(0, 8)}...`,
-        amount: item.projectedInterest,
+        description: isPersonalView
+          ? `Projected interest \u2014 my 1/${activeMemberCount} share`
+          : `Projected interest for loan ${item.loanId.slice(0, 8)}...`,
+        amount: rowAmount(item.projectedInterest),
         loanId: item.loanId,
       })),
       ...loanLateFees.map((item) => ({
@@ -2461,7 +2552,7 @@ export default function ReportsScreen() {
         memberId: item.memberId,
         memberName: item.memberName,
         description: `Late fee - Installment ${item.installmentIndex + 1} (${item.daysLate} days late)`,
-        amount: item.feeAmount,
+        amount: rowAmount(item.feeAmount),
         loanId: item.loanId,
       })),
     ];
@@ -2499,9 +2590,22 @@ export default function ReportsScreen() {
     } else if (earningsMode === "projected") {
       earningsRows = projectedRowsTagged;
       earningsKpis = [
-        { label: "Total Projected", value: fmtCurrency(totalProjected) },
-        { label: "Projected Interest", value: fmtCurrency(totalProjectedInterest) },
-        { label: "Projected Late Fees", value: fmtCurrency(totalLoanLateFees) },
+        {
+          label: isPersonalView ? "Total Projected (1/N)" : "Total Projected",
+          value: fmtCurrency(totalProjected),
+        },
+        {
+          label: isPersonalView
+            ? "Projected Interest (1/N)"
+            : "Projected Interest",
+          value: fmtCurrency(totalProjectedInterest),
+        },
+        {
+          label: isPersonalView
+            ? "Projected Late Fees (1/N)"
+            : "Projected Late Fees",
+          value: fmtCurrency(totalLoanLateFees),
+        },
         { label: "Records", value: String(projectedRowsTagged.length) },
       ];
     } else {
@@ -2901,7 +3005,7 @@ export default function ReportsScreen() {
                 { label: "Late fees (actual)", value: donutLateFees, color: "#eb6834" },
                 { label: "Investment returns", value: donutInvestmentReturns, color: "#1baf7a" },
                 { label: "Accrued (unpaid)", value: donutAccruedUnpaid, color: "#a855f7" },
-                { label: "Projected interest (schedule)", value: donutProjectedInterest, color: "#6366f1" },
+                { label: isPersonalView ? "Projected interest (my 1/N share)" : "Projected interest (schedule)", value: donutProjectedInterest, color: "#6366f1" },
                 { label: "Projected late fees", value: donutProjectedLateFees, color: "#f97316" },
                 { label: "Other", value: donutOther, color: "#eda100" },
               ]}

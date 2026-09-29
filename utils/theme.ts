@@ -91,6 +91,84 @@ export const C = {
   ],
 };
 
+export type Palette = typeof C;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Dark palette — mirrors C's shape exactly, one entry per key.
+//
+// Brand-driven entries (primary, accent, brandBlue, brandAmber) read from
+// the same BRAND.colors source as C, so a client's brand identity is
+// preserved across both modes. Everything else is a mode-appropriate
+// offset of its light counterpart — surfaces go dark, text goes light,
+// status backgrounds go from pastel to deep, and status foregrounds go
+// from dark to light.
+//
+// A screen consumes this by wrapping its StyleSheet:
+//
+//     const makeStyles = (C: Palette) => StyleSheet.create({ ... });
+//     // in the component:
+//     const C = useTheme();
+//     const styles = useMemo(() => makeStyles(C), [C]);
+//
+// See hooks/useTheme.ts. Until a screen is migrated, it uses the static
+// light C and simply won't respond to the toggle.
+// ─────────────────────────────────────────────────────────────────────────
+export const D: Palette = {
+  bg:           "#0F172A",
+  surface:      "#1E293B",
+  card:         "#0A2E1F",
+  cardText:     "#FFFFFF",
+  primary:      BRAND.colors.secondary || "#0F766E",
+  accent:       BRAND.colors.primary || "#10B981",
+  brandBlue:    BRAND.colors.accent || "#3B82F6",
+  brandAmber:   BRAND.colors.highlight || "#EAB308",
+  debit:        "#F87171",
+  text:         "#F1F5F9",
+  text2:        "#CBD5E1",
+  text3:        "#94A3B8",
+  border:       "#334155",
+  pill:         "#1E293B",
+  pillText:     BRAND.colors.secondary || "#0F766E",
+  goldBg:       "#2D1F0A",
+  goldText:     "#FCD34D",
+  greenBg:      "#052E1B",
+  greenText:    "#6EE7B7",
+  redBg:        "#3F1212",
+  redText:      "#FCA5A5",
+  info:         "#60A5FA",
+  infoText:     "#93C5FD",
+  infoBg:       "#1E3A5F",
+  mutedBg:      "#1E293B",
+  success:      "#34D399",
+  warning:      "#FBBF24",
+  error:        "#F87171",
+  gold:         "#FBBF24",
+  elevated:     "#293548",
+  tealBg:       "#134E4A",
+  tealText:     "#5EEAD4",
+  tealDim:      "#0A2E1F",
+  borderLight:  "#293548",
+  teal:         BRAND.colors.secondary || "#0F766E",
+  bgWhite:      "#1E293B",
+  muted:        "#475569",
+  primaryLight: BRAND.colors.secondary || "#0F766E",
+  primaryFaint: "#0F2E2A",
+  accentLight:  BRAND.colors.primary || "#10B981",
+  accentFaint:  "#052E1B",
+  brandNavy:    "#0A1828",
+  tealLight:    BRAND.colors.primary || "#10B981",
+  tealFaint:    "#134E4A",
+  goldDim:      "#FCD34D",
+  chartColors: [
+    BRAND.colors.secondary || "#0F766E",
+    BRAND.colors.primary || "#10B981",
+    BRAND.colors.accent || "#3B82F6",
+    BRAND.colors.highlight || "#EAB308",
+    "#0B1C3D",
+    "#EA580C",
+  ],
+};
+
 export const T = StyleSheet.create({
   label:  { fontSize: 11, fontWeight: "600", color: C.text3, letterSpacing: 0.6, textTransform: "uppercase" },
   amount: { fontSize: 28, fontWeight: "800", color: C.text,  letterSpacing: -1 },
@@ -100,6 +178,20 @@ export const T = StyleSheet.create({
   small:  { fontSize: 11, fontWeight: "500", color: C.text3 },
   mono:   { fontVariant: ["tabular-nums"] as any },
 });
+
+// Themed text-style sheet — same shape as T, built against whichever
+// palette the caller passes. Screens migrated to dark mode call this
+// via hooks/useTheme.ts's useT() rather than the static T above.
+export const makeT = (palette: Palette) =>
+  StyleSheet.create({
+    label:  { fontSize: 11, fontWeight: "600", color: palette.text3, letterSpacing: 0.6, textTransform: "uppercase" },
+    amount: { fontSize: 28, fontWeight: "800", color: palette.text,  letterSpacing: -1 },
+    h2:     { fontSize: 15, fontWeight: "700", color: palette.text,  letterSpacing: -0.2 },
+    body:   { fontSize: 13, fontWeight: "500", color: palette.text2 },
+    bold:   { fontSize: 13, fontWeight: "700", color: palette.text },
+    small:  { fontSize: 11, fontWeight: "500", color: palette.text3 },
+    mono:   { fontVariant: ["tabular-nums"] as any },
+  });
 
 // Always shows the full comma-separated amount (e.g. "RWF 10,000", not
 // "RWF 10K") — abbreviated forms hide real values and make it hard to
@@ -115,6 +207,101 @@ export function fmtCurrency(amount: number, currency = BRAND.defaultCurrency): s
 // Alias kept for existing call sites — identical behavior to fmtCurrency now.
 export function fmtFull(amount: number, currency = BRAND.defaultCurrency): string {
   return fmtCurrency(amount, currency);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Live amount-input formatting
+//
+// These three helpers implement the "type 900000, see 900,000" pattern
+// used by the loan amount field (and available to any other amount
+// input that wants it).
+//
+//   formatAmountInput      — call from onChangeText
+//   padAmountOnBlur        — call from onBlur
+//   parseFormattedAmount   — call wherever you used to call parseFloat
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Live-formats a numeric input string as the user types.
+ *
+ *   "900000"        → "900,000"
+ *   "900000.5"      → "900,000.5"
+ *   "900000.50"     → "900,000.50"
+ *   "900,000.00"    → "900,000.00"   (idempotent — paste-safe)
+ *   "abc900,000xy"  → "900,000"
+ *   ""              → ""
+ *
+ * Strips every non-digit / non-dot character, keeps only the first dot,
+ * clamps the fractional part to 2 digits, and inserts thousands
+ * separators on the integer part. Partial decimal entry ("900,000.")
+ * is preserved so the user can continue typing after the dot.
+ */
+export function formatAmountInput(raw: string): string {
+  if (!raw) return "";
+
+  // Strip everything except digits and dots.
+  let s = String(raw).replace(/[^\d.]/g, "");
+
+  // Keep only the first dot; drop any later ones.
+  const firstDot = s.indexOf(".");
+  if (firstDot !== -1) {
+    s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, "");
+  }
+
+  // Split into integer and fractional parts.
+  let intPart: string;
+  let fracPart: string | undefined;
+  const dotIdx = s.indexOf(".");
+  if (dotIdx === -1) {
+    intPart = s;
+  } else {
+    intPart = s.slice(0, dotIdx);
+    fracPart = s.slice(dotIdx + 1).slice(0, 2);
+  }
+
+  // Strip leading zeros ("007" → "7"), except a lone "0" before a dot.
+  intPart = intPart.replace(/^0+(?=\d)/, "");
+
+  // Empty everything? Return empty.
+  if (intPart === "" && fracPart === undefined) return "";
+  if (intPart === "" && fracPart !== undefined) intPart = "0";
+
+  // Thousands separators on the integer part.
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+  return fracPart !== undefined ? `${grouped}.${fracPart}` : grouped;
+}
+
+/**
+ * Pads a formatted amount string with ".00" when it has no decimal
+ * part. Idempotent:
+ *
+ *   "900,000"     → "900,000.00"
+ *   "900,000.5"   → "900,000.5"      (user is mid-entry, leave alone)
+ *   "900,000.50"  → "900,000.50"
+ *   "0"           → "0.00"
+ *   ""            → ""
+ *
+ * Call from onBlur.
+ */
+export function padAmountOnBlur(formatted: string): string {
+  if (!formatted) return "";
+  if (formatted.includes(".")) return formatted;
+  return `${formatted}.00`;
+}
+
+/**
+ * Inverse of formatAmountInput — pulls the numeric value out of a
+ * formatted string. Safe to call on an unformatted string too.
+ *
+ *   "900,000"       → 900000
+ *   "900,000.50"    → 900000.5
+ *   "abc"           → 0
+ *   ""              → 0
+ */
+export function parseFormattedAmount(formatted: string): number {
+  const n = Number(String(formatted).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : 0;
 }
 
 export function fmtDate(iso: string): string {

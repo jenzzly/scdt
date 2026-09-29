@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -21,9 +21,13 @@ import {
   DatePicker,
 } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
-import { S, C } from "../../utils/theme";
+import { type Palette, S } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 
 export default function AddMeetingModal() {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+
   const router = useRouter();
   const { scheduleMeeting, activeGroupId } = useStore();
   const members = useGroupMembers();
@@ -215,7 +219,7 @@ export default function AddMeetingModal() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   body: { padding: S.lg, paddingBottom: 40 },
 
   startTimePreview: {

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 ;
 import {
   View, Text, ScrollView, TouchableOpacity,
@@ -5,7 +6,8 @@ import {
 import { useRouter } from "expo-router";
 import { useStore } from "../stores/useStore";
 import { Card, CardRow, Empty } from "../components/ui";
-import { C, S, fmtDate } from "../utils/theme";
+import { type Palette, S, fmtDate } from "../utils/theme";
+import { useTheme } from "../hooks/useTheme";
 
 const TYPE_ICON: Record<string, string> = {
   contribution_due: "📅",
@@ -23,6 +25,8 @@ const TYPE_ICON: Record<string, string> = {
 };
 
 export default function NotificationsScreen() {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
@@ -240,7 +244,7 @@ export default function NotificationsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",

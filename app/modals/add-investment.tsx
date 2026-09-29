@@ -26,7 +26,8 @@ import {
   DatePicker,
 } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
-import { C, R, S, round2 } from "../../utils/theme";
+import { type Palette, R, S, round2 } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Type registry
@@ -163,6 +164,9 @@ const REP_LABELS: Record<
 // ─────────────────────────────────────────────────────────────────────────
 
 export default function AddInvestmentModal() {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+
   const router = useRouter();
   const { createInvestment } = useStore();
   const group = useActiveGroup();
@@ -478,7 +482,7 @@ export default function AddInvestmentModal() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   body: { padding: S.lg, paddingBottom: 60 },
 
   sectionLbl: {

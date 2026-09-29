@@ -38,7 +38,8 @@ import {
   useActiveGroup,
   useGroupMeetings,
 } from "../../stores/useStore";
-import { C, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
+import { type Palette, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 import { useToast, Toast } from "../../components/ui";
 
 // ─── Model ──────────────────────────────────────────────────────────────
@@ -64,6 +65,9 @@ const DEFAULT_LATE_MINUTES = 15;
 // ─── Screen ─────────────────────────────────────────────────────────────
 
 export default function MeetingAttendanceModal() {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+
   const router = useRouter();
   const { width } = useWindowDimensions();
   const twoCol = width >= 720;
@@ -663,6 +667,9 @@ function MemberCard({
   onAdjustLate: (delta: number) => void;
   onLateText: (text: string) => void;
 }) {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+
   const dirty =
     row.state !== row.originalState ||
     (row.state === "late" && row.lateMinutes !== row.originalLateMinutes);
@@ -817,7 +824,7 @@ function MemberCard({
 
 // ─── Styles ─────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   container: { flex: 1, backgroundColor: C.bg },
 
   center: {

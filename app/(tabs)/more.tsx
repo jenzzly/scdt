@@ -6,7 +6,7 @@
 // drift. This version is a single responsive layout: `isWide` only
 // controls the outer content width, and the shared pieces (profile
 // header, section cards, admin rows, edit modal) are defined once.
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ScrollView,
   View,
@@ -32,19 +32,20 @@ import {
   InfoRow,
 } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
-import { C, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
+import { type Palette, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Config
 // ─────────────────────────────────────────────────────────────────────────
 
-const SYNC_COLOR: Record<string, string> = {
+const makeSyncColor = (C: Palette): Record<string, string> => ({
   synced:  C.success,
   syncing: C.warning,
   pending: C.warning,
   failed:  C.error,
   offline: C.text3,
-};
+});
 
 const ADMIN_ACTIONS: { label: string; icon: string; section: string }[] = [
   // Re-add "Permissions" / "Audit Log" here when those sections ship.
@@ -62,6 +63,8 @@ const LANGUAGE_OPTIONS = [
 // ─────────────────────────────────────────────────────────────────────────
 
 export default function MoreScreen() {
+  const C = useTheme();
+  const st = useMemo(() => makeSt(C), [C]);
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
@@ -193,7 +196,7 @@ export default function MoreScreen() {
     latePenaltyAmount,
   )} per 15min`;
 
-  const syncColor = SYNC_COLOR[syncStatus] ?? C.text3;
+  const syncColor = makeSyncColor(C)[syncStatus] ?? C.text3;
   const lastSyncLabel = lastSyncTimestamp
     ? new Date(lastSyncTimestamp).toLocaleString()
     : "Never";
@@ -419,7 +422,7 @@ export default function MoreScreen() {
 // Styles
 // ─────────────────────────────────────────────────────────────────────────
 
-const st = StyleSheet.create({
+const makeSt = (C: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
 
   scrollContent: {

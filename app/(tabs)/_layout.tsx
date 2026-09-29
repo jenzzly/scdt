@@ -1,5 +1,5 @@
 // app/(tabs)/_layout.tsx
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo } from "react";
 import { Tabs, useRouter, usePathname } from "expo-router";
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
@@ -36,10 +36,12 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useFirebaseSync, useNotificationSync } from "../../hooks/useFirebaseSync";
 import { useNetworkStatus } from "../../hooks/useNetworkStatus";
-import { C, R, fmtDateLong, showConfirm } from "../../utils/theme";
+import { type Palette, R, fmtDateLong, showConfirm } from "../../utils/theme";
 import { BRAND } from "../../lib/brand";
 import { getWebNavForRole } from "../../lib/auth/permissions";
 import { ViewSwitch } from "../../components/ui/ViewSwitch";
+import { ThemeSwitch } from "../../components/ui/ThemeSwitch";
+import { useTheme } from "../../hooks/useTheme";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Route registry
@@ -109,6 +111,9 @@ function SidebarItem({
   onPress: () => void;
   collapsed?: boolean;
 }) {
+  const C = useTheme();
+  const sb = useMemo(() => makeSb(C), [C]);
+
   const Icon = NAV_ICONS[label];
 
   const iconEmoji: Record<string, string> = {
@@ -180,6 +185,9 @@ function SpinningRefreshIcon({
 }
 
 function TabItem({ label, focused }: { label: string; focused: boolean }) {
+  const C = useTheme();
+  const tb = useMemo(() => makeTb(C), [C]);
+
   const Icon = NAV_ICONS[label];
 
   const iconEmoji: Record<string, string> = {
@@ -217,6 +225,9 @@ function PendingApprovalScreen({
   memberName: string;
   variant?: BlockedVariant;
 }) {
+  const C = useTheme();
+  const pa = useMemo(() => makePa(C), [C]);
+
   const config: Record<
     BlockedVariant,
     { icon: string; iconBg: string; title: string; body: string; hint: string }
@@ -287,6 +298,9 @@ function DesktopTopHeader({
   isSyncing: boolean; onBellPress: () => void; groupName?: string;
   onRefresh: () => void; onEditProfile: () => void; onSignOut: () => void;
 }) {
+  const C = useTheme();
+  const dh = useMemo(() => makeDh(C), [C]);
+
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
 
   const initials = (authName ?? "U")
@@ -364,6 +378,13 @@ function DesktopTopHeader({
                 >
                   <Text style={dh.dropdownItemText}>Edit Profile</Text>
                 </TouchableOpacity>
+                <View
+                  style={dh.dropdownThemeRow}
+                  accessibilityLabel="Theme"
+                >
+                  <Text style={dh.dropdownItemText}>Theme</Text>
+                  <ThemeSwitch compact />
+                </View>
                 <TouchableOpacity
                   style={dh.dropdownItem}
                   onPress={() => { setUserMenuOpen(false); onSignOut(); }}
@@ -386,6 +407,9 @@ function MobileTopHeader({
   title: string; unreadCount: number; isSyncing: boolean;
   onBellPress: () => void; groupName?: string; onRefresh: () => void;
 }) {
+  const C = useTheme();
+  const mh = useMemo(() => makeMh(C), [C]);
+
   return (
     <View style={mh.root}>
       <View style={mh.left}>
@@ -430,7 +454,7 @@ function MobileTopHeader({
   );
 }
 
-const pa = StyleSheet.create({
+const makePa = (C: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg, alignItems: "center", justifyContent: "center", padding: 24 },
   card: { width: "100%", maxWidth: 400, backgroundColor: C.surface, borderRadius: 20, borderWidth: 1, borderColor: C.border, padding: 32, alignItems: "center" },
   iconCircle: { width: 72, height: 72, borderRadius: 36, backgroundColor: "#FEF3C7", alignItems: "center", justifyContent: "center", marginBottom: 20 },
@@ -444,7 +468,7 @@ const pa = StyleSheet.create({
   signOutText: { fontSize: 14, fontWeight: "700", color: C.text2 },
 });
 
-const dh = StyleSheet.create({
+const makeDh = (C: Palette) => StyleSheet.create({
   root: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 32, paddingVertical: 14, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border, zIndex: 100, elevation: 10 },
   left: { flexDirection: "column", gap: 2 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
@@ -468,9 +492,16 @@ const dh = StyleSheet.create({
   dropdownDivider: { height: 1, backgroundColor: C.border },
   dropdownItem: { paddingVertical: 10, paddingHorizontal: 12 },
   dropdownItemText: { fontSize: 13, fontWeight: "600", color: C.text2 },
+  dropdownThemeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
 });
 
-const mh = StyleSheet.create({
+const makeMh = (C: Palette) => StyleSheet.create({
   root: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
   left: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0, marginRight: 8 },
   brandMark: { width: 28, height: 28, borderRadius: 7, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
@@ -484,14 +515,14 @@ const mh = StyleSheet.create({
   badgeText: { fontSize: 8, fontWeight: "800", color: "#fff" },
 });
 
-const shared = StyleSheet.create({
+const makeShared = (C: Palette) => StyleSheet.create({
   offlineBanner: { backgroundColor: C.error, paddingVertical: 6, alignItems: "center" },
   offlineBannerText: { color: "#fff", fontSize: 11, fontWeight: "700", letterSpacing: 0.3 },
   desktopRoot: { flex: 1, flexDirection: "row", backgroundColor: C.bg },
   desktopContent: { flex: 1, overflow: "hidden" },
 });
 
-const sb = StyleSheet.create({
+const makeSb = (C: Palette) => StyleSheet.create({
   sidebar: { width: 224, backgroundColor: C.surface, borderRightWidth: 1, borderRightColor: C.border, flexDirection: "column" },
   sidebarCollapsed: { width: 68 },
   brand: { flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 18, paddingTop: 26, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: C.border },
@@ -516,7 +547,7 @@ const sb = StyleSheet.create({
   signOutText: { fontSize: 12, fontWeight: "700", color: C.error },
 });
 
-const tb = StyleSheet.create({
+const makeTb = (C: Palette) => StyleSheet.create({
   bar: { backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.border, height: Platform.OS === "ios" ? 82 : 66, paddingHorizontal: 2, paddingTop: 4, paddingBottom: Platform.OS === "ios" ? 20 : 4, shadowColor: "#000", shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 12 },
   itemStyle: { flex: 1, minWidth: 0, paddingHorizontal: 0 },
   item: { flex: 1, minWidth: 0, maxWidth: "100%" as any, alignItems: "center", justifyContent: "center", gap: 2 },
@@ -527,6 +558,11 @@ const tb = StyleSheet.create({
 });
 
 export default function TabsLayout() {
+  const C = useTheme();
+  const shared = useMemo(() => makeShared(C), [C]);
+  const sb = useMemo(() => makeSb(C), [C]);
+  const tb = useMemo(() => makeTb(C), [C]);
+
   const { width } = useWindowDimensions();
   const isWide = Platform.OS === "web" && width >= 768;
 

@@ -15,7 +15,8 @@ import {
   useIsGroupView,
 } from "../../stores/useStore";
 import { TabRow, SearchBar, useToast, Toast } from "../../components/ui";
-import { C, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
+import { type Palette, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 import type { WalletTransaction } from "../../types";
 import { useStore } from "../../stores/useStore";
 import { useCurrentMemberPermissions, useMyMemberIds} from "../../stores/selectors";
@@ -60,11 +61,17 @@ const SORT_OPTIONS = [
   { label: "Year",           value: "year"      },
 ];
 
-const Divider = () => (
-  <View style={{ height: 1, backgroundColor: C.border, marginHorizontal: 16 }} />
-);
+const Divider = () => {
+  const C = useTheme();
+  return (
+    <View style={{ height: 1, backgroundColor: C.border, marginHorizontal: 16 }} />
+  );
+};
 
 export default function WalletScreen() {
+  const C = useTheme();
+  const wt = useMemo(() => makeWt(C), [C]);
+
   const router   = useRouter();
   const { width } = useWindowDimensions();
   const isWide   = width >= 768;
@@ -393,6 +400,9 @@ function TxRow({ tx, memberName, isAdmin, canEdit, onDelete, onEdit }: {
   tx: WalletTransaction; memberName: string; isAdmin: boolean; canEdit: boolean;
   onDelete: () => void; onEdit: () => void;
 }) {
+  const C = useTheme();
+  const wt = useMemo(() => makeWt(C), [C]);
+
   const isCredit = tx.amount > 0;
   const abbr = TX_ABBR[tx.type] ?? "TX";
 
@@ -467,7 +477,7 @@ function TxRow({ tx, memberName, isAdmin, canEdit, onDelete, onEdit }: {
   );
 }
 
-const wt = StyleSheet.create({
+const makeWt = (C: Palette) => StyleSheet.create({
   topBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6,

@@ -31,13 +31,17 @@ import {
 
 import { ModalShell } from "../../components/ui/ModalShell";
 
-import { C, R, S, addMonthsToYmd, fmtCurrency, loanSchedule, round2, showConfirm } from "../../utils/theme";
+import { type Palette, R, S, addMonthsToYmd, fmtCurrency, loanSchedule, round2, showConfirm, formatAmountInput, padAmountOnBlur, parseFormattedAmount } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 
 import { useUnpaidPenalties } from "../../hooks/useUnpaidPenalties";
 
 // Months are free-typed by the user.
 
 export default function AddLoanModal() {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+
   const router = useRouter();
 
   const group = useActiveGroup();
@@ -108,7 +112,9 @@ export default function AddLoanModal() {
   // ------------------------------------------------------------
 
   const [amount, setAmount] = useState(
-    params.prefillAmount ?? ""
+    params.prefillAmount
+      ? formatAmountInput(String(params.prefillAmount))
+      : ""
   );
 
   const [purpose, setPurpose] = useState(
@@ -214,7 +220,7 @@ export default function AddLoanModal() {
   // LOAN CALCULATION
   // ------------------------------------------------------------
 
-  const parsed = parseFloat(amount) || 0;
+  const parsed = parseFormattedAmount(amount);
 
   const monthsNum = parseInt(months) || 0;
 
@@ -376,7 +382,7 @@ export default function AddLoanModal() {
     // AMOUNT VALIDATION
     // ----------------------------------------------------------
 
-    const amt = parseFloat(amount);
+    const amt = parseFormattedAmount(amount);
 
     if (!amt || amt <= 0) {
       show("Enter a valid amount", "error");
@@ -1256,7 +1262,8 @@ export default function AddLoanModal() {
             group?.currency ?? "RWF"
           }) *`}
           value={amount}
-          onChangeText={setAmount}
+          onChangeText={(v) => setAmount(formatAmountInput(v))}
+          onBlur={() => setAmount(padAmountOnBlur(amount))}
           keyboardType="numeric"
           prefix={group?.currency ?? "RWF"}
           hint="Principal amount before interest"
@@ -1612,7 +1619,7 @@ export default function AddLoanModal() {
 // STYLES
 // ============================================================
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",

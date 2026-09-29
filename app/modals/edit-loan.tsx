@@ -30,13 +30,17 @@ import {
 import { Input, Button, useToast, Toast, DatePicker } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
-import { C, S, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
+import { type Palette, S, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 
 import type { Loan } from "../../types";
 
 const EDIT_ROLES = ["admin", "loan_officer", "accountant"];
 
 export default function EditLoanModal() {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+
   const router = useRouter();
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const loanId = Array.isArray(params.id) ? params.id[0] : params.id;
@@ -426,7 +430,7 @@ export default function EditLoanModal() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   body: { padding: S.lg, paddingBottom: 60 },
   center: { padding: S.lg, gap: 12 },
   title: {

@@ -28,13 +28,17 @@ import {
 } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
-import { C, S, fmtCurrency } from "../../utils/theme";
+import { type Palette, S, fmtCurrency } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 
 import type { Investment } from "../../types";
 
 const EDIT_ROLES = ["admin", "loan_officer", "accountant"];
 
 export default function EditInvestmentModal() {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+
   const router = useRouter();
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const investmentId = Array.isArray(params.id) ? params.id[0] : params.id;
@@ -234,7 +238,7 @@ export default function EditInvestmentModal() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   body: { padding: S.lg, paddingBottom: 60 },
   center: { padding: S.lg, gap: 12 },
   title: { fontSize: 17, fontWeight: "800", color: C.text, textAlign: "center" },

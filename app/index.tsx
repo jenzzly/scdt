@@ -6,9 +6,10 @@ import { View, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../hooks/useAuth";
 import { useStore } from "../stores/useStore";
-import { C } from "../utils/theme";
+import { useTheme } from "../hooks/useTheme";
 
 export default function Index() {
+  const C = useTheme();
   const router = useRouter();
   const { user, loading } = useAuth();
   const { authUid } = useStore();

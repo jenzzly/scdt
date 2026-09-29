@@ -29,6 +29,8 @@ import {
   logError,
   fromSnap,
   round2,
+  stripUndefined,
+  groupDoc,
 } from "./core";
 import type { DeletionRecord, Contribution, WalletTransaction, Loan, Investment, Meeting, Expense } from "./core";
 import { writeAuditLog } from "./audit";
@@ -112,8 +114,66 @@ export function subscribeDeletionHistory(
   );
 }
 
+// Compute the exclusive end of the contribution period that starts at
+// `periodStartYmd`, mirroring nextPeriod() in utils/lateFees.ts so the
+// "does this contribution date fall in this fee's period?" check uses
+// the same boundaries the fee was generated under. Returns YYYY-MM-DD.
+function contributionPeriodEnd(
+  periodStartYmd: string,
+  frequency: string,
+): string {
+  const d = new Date(`${periodStartYmd}T00:00:00Z`);
+  const f = String(frequency ?? "monthly").toLowerCase();
+  switch (f) {
+    case "daily":     d.setUTCDate(d.getUTCDate() + 1); break;
+    case "weekly":    d.setUTCDate(d.getUTCDate() + 7); break;
+    case "biweekly":  d.setUTCDate(d.getUTCDate() + 14); break;
+    case "monthly":   d.setUTCMonth(d.getUTCMonth() + 1); break;
+    case "quarterly": d.setUTCMonth(d.getUTCMonth() + 3); break;
+    case "yearly":
+    case "annual":    d.setUTCFullYear(d.getUTCFullYear() + 1); break;
+    default:          d.setUTCMonth(d.getUTCMonth() + 1); break;
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+// Resolve the member-doc id from either key a contribution might carry.
+//
+// Legacy contributions were written with memberId = auth uid; newer ones
+// with memberId = member-doc id. Contribution late-fee txs are ALWAYS
+// keyed by the member-doc id (findOverdueContributions walks members[]
+// and reads member.id). So the fee's prefix must be built from the
+// canonical doc id, regardless of what the contribution carries.
+//
+// Returns the doc id when a member matches either key, otherwise the
+// input unchanged — preserves the current behavior when there's nothing
+// to reconcile against.
+async function resolveCanonicalMemberId(
+  gId: string,
+  rawMemberId: string,
+): Promise<string> {
+  try {
+    const byDocId = await getDoc(doc(membersCol(gId), rawMemberId));
+    if (byDocId.exists()) return rawMemberId;
+
+    const byUserIdSnap = await getDocs(
+      query(membersCol(gId), where("userId", "==", rawMemberId)),
+    );
+    if (!byUserIdSnap.empty) return byUserIdSnap.docs[0].id;
+  } catch (e) {
+    console.warn(
+      "[resolveCanonicalMemberId] lookup failed, using raw id:",
+      e,
+    );
+  }
+  return rawMemberId;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Contribution — cascades to: every wallet tx with contributionId === id
+// Contribution — cascades to:
+//   • every wallet tx with contributionId === id
+//   • any UNPAID contribution late-fee tx for the same member whose
+//     encoded period contains the deleted contribution's date
 // ─────────────────────────────────────────────────────────────────────────────
 export async function deleteContributionWithRelations(gId: string, contributionId: string, reason: string): Promise<void> {
   try {
@@ -125,8 +185,74 @@ export async function deleteContributionWithRelations(gId: string, contributionI
     if (!contributionSnap.exists()) throw new Error("Contribution not found");
     const contribution = fromSnap<Contribution>(contributionSnap);
 
-    // Find ALL related wallet transactions before touching anything
-    const walletSnap = await getDocs(query(walletCol(gId), where("contributionId", "==", contributionId)));
+    // ── Every wallet tx tied to this contribution ─────────────────
+    //
+    // Two sources:
+    //
+    //   1. Direct — txs written with contributionId set (the
+    //      "contribution"-type wallet tx recordContribution creates).
+    //
+    //   2. Contribution late fees — written by
+    //      applyContributionLateFee with a deterministic ID of the
+    //      form `late-fee-contrib-{memberId}-{periodStart}-d{days}`
+    //      and sourceId = memberId. They carry NO contributionId, so
+    //      the direct query never returns them; they must be matched
+    //      separately by member + period.
+    //
+    // Only the fee covering the deleted contribution's own period is
+    // removed. Fees for other periods stay. Paid fees are left in
+    // place — the money was collected and the ledger should say so.
+    const directWalletSnap = await getDocs(
+      query(walletCol(gId), where("contributionId", "==", contributionId)),
+    );
+
+    const groupSnap = await getDoc(groupDoc(gId));
+    const groupFrequency = String(
+      (groupSnap.exists() ? groupSnap.data()?.contributionFrequency : null) ??
+        "monthly",
+    );
+
+    const canonicalMemberId = await resolveCanonicalMemberId(
+      gId,
+      contribution.memberId,
+    );
+    const memberFeePrefix = `late-fee-contrib-${canonicalMemberId}-`;
+    const contributionYmd = String(contribution.date ?? "").slice(0, 10);
+
+    const memberLateFeeSnap = await getDocs(
+      query(walletCol(gId), where("sourceId", "==", canonicalMemberId)),
+    );
+
+    const matchedLateFeeDocs = memberLateFeeSnap.docs.filter((d) => {
+      if (!d.id.startsWith(memberFeePrefix)) return false;
+
+      const data = d.data() as Record<string, unknown>;
+      if (data.type !== "late_fee") return false;
+      if ((data as any).feePaid === true) return false;
+
+      // Period start is encoded in the ID right after the member
+      // prefix: `late-fee-contrib-{memberId}-YYYY-MM-DD-d{N}`.
+      const periodStartYmd = d.id.slice(
+        memberFeePrefix.length,
+        memberFeePrefix.length + 10,
+      );
+      const periodEndYmd = contributionPeriodEnd(
+        periodStartYmd,
+        groupFrequency,
+      );
+
+      return (
+        contributionYmd >= periodStartYmd &&
+        contributionYmd < periodEndYmd
+      );
+    });
+
+    // Dedupe: a late fee should never overlap with the direct query,
+    // but Map by id makes that impossible to get wrong.
+    const walletDocsById = new Map<string, any>();
+    for (const d of directWalletSnap.docs) walletDocsById.set(d.id, d);
+    for (const d of matchedLateFeeDocs) walletDocsById.set(d.id, d);
+    const allWalletDocs = [...walletDocsById.values()];
 
     const batch = writeBatch((contributionRef as any).firestore);
 
@@ -134,8 +260,8 @@ export async function deleteContributionWithRelations(gId: string, contributionI
     batch.delete(contributionRef);
     batchRecordDeletion(batch, gId, "contribution", contributionId, contribution as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
 
-    // 2. Delete every related wallet transaction
-    walletSnap.docs.forEach((walletDoc) => {
+    // 2. Delete every related wallet transaction (direct + period-matched fees)
+    allWalletDocs.forEach((walletDoc) => {
       batch.delete(walletDoc.ref);
       batchRecordDeletion(batch, gId, "wallet_transaction", walletDoc.id, walletDoc.data() as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
     });
@@ -167,7 +293,7 @@ export async function deleteContributionWithRelations(gId: string, contributionI
       entityType: "contribution",
       entityId: contributionId,
       before: contribution as unknown as Record<string, unknown>,
-      reason: `${reason} (cascaded to ${walletSnap.docs.length} wallet transaction${walletSnap.docs.length !== 1 ? "s" : ""})`,
+      reason: `${reason} (cascaded to ${allWalletDocs.length} wallet transaction${allWalletDocs.length !== 1 ? "s" : ""})`,
     });
   } catch (error) {
     logError("deleteContributionWithRelations", "contribution", error, { groupId: gId, id: contributionId });
@@ -251,28 +377,251 @@ export async function deleteWalletTransactionWithRelations(gId: string, transact
     const contributionId = walletTx.contributionId || (walletTx.sourceType === "contribution" ? walletTx.sourceId : undefined);
     const investmentId = walletTx.investmentId || (walletTx.sourceType === "investment" ? walletTx.sourceId : undefined);
 
-    // ── Cascade: if this tx is tied to a loan, cascade delete the loan and ALL loan transactions ──
+    // Collected as the cascade runs; written as separate audit entries
+    // after batch.commit() so reverting each restores each.
+    const cascadeAuditEntries: Array<{
+      entityType: string;
+      entityId: string;
+      before: Record<string, unknown>;
+      // Defaults to "deleted" at write time. The loan-counter rollback
+      // below uses "updated" because the loan doc itself survives — its
+      // counters just change.
+      action?: string;
+    }> = [];
+
+    // ── Cascade: if this tx is tied to a loan ──────────────────────
+    //
+    // Only the loan DISBURSEMENT tx is the loan's origin event —
+    // deleting it cascades to the loan document and every one of the
+    // loan's transactions. Every other loan-linked tx (a repayment
+    // leg, interest, principal, or loan late fee) is a downstream
+    // event: deleting it removes only the tx itself plus any sibling
+    // leg written in the same Firestore batch, and leaves the loan
+    // intact.
+    //
+    // The previous version cascaded unconditionally, so deleting a
+    // single repayment wiped the whole loan — which made reverting
+    // awkward, since the audit trail only recorded the wallet-tx
+    // deletion and had no loan entry to restore from.
     if (loanId) {
-      const loanRef = doc(loansCol(gId), loanId);
-      const loanSnap = await getDoc(loanRef);
-      if (loanSnap.exists()) {
-        const loan = fromSnap<Loan>(loanSnap);
-        batch.delete(loanRef);
-        batchRecordDeletion(batch, gId, "loan", loanId, loan as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
-      }
+      const isLoanDisbursement = walletTx.type === "loan_disbursement";
 
-      // Find and delete all wallet transactions tied to this loan
-      const [byLoanIdSnap, bySourceSnap] = await Promise.all([
-        getDocs(query(walletCol(gId), where("loanId", "==", loanId))),
-        getDocs(query(walletCol(gId), where("sourceId", "==", loanId))),
-      ]);
+      if (isLoanDisbursement) {
+        const loanRef = doc(loansCol(gId), loanId);
+        const loanSnap = await getDoc(loanRef);
+        if (loanSnap.exists()) {
+          const loan = fromSnap<Loan>(loanSnap);
+          batch.delete(loanRef);
+          batchRecordDeletion(batch, gId, "loan", loanId, loan as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+          cascadeAuditEntries.push({
+            entityType: "loan",
+            entityId: loanId,
+            before: loan as unknown as Record<string, unknown>,
+          });
+        }
 
-      const allLoanTxDocs = [...byLoanIdSnap.docs, ...bySourceSnap.docs];
-      for (const d of allLoanTxDocs) {
-        if (!deletedTxIds.has(d.id)) {
-          deletedTxIds.add(d.id);
-          batch.delete(d.ref);
-          batchRecordDeletion(batch, gId, "wallet_transaction", d.id, d.data() as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+        // Find and delete all wallet transactions tied to this loan
+        const [byLoanIdSnap, bySourceSnap] = await Promise.all([
+          getDocs(query(walletCol(gId), where("loanId", "==", loanId))),
+          getDocs(query(walletCol(gId), where("sourceId", "==", loanId))),
+        ]);
+
+        const allLoanTxDocs = [...byLoanIdSnap.docs, ...bySourceSnap.docs];
+        for (const d of allLoanTxDocs) {
+          if (!deletedTxIds.has(d.id)) {
+            deletedTxIds.add(d.id);
+            batch.delete(d.ref);
+            batchRecordDeletion(batch, gId, "wallet_transaction", d.id, d.data() as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+            cascadeAuditEntries.push({
+              entityType: "wallet_transaction",
+              entityId: d.id,
+              before: d.data() as Record<string, unknown>,
+            });
+          }
+        }
+      } else {
+        // Repayment / interest / principal / loan late fee. The loan
+        // doc stays. Two things happen here:
+        //
+        //   1. Sibling legs written in the same Firestore batch (e.g.
+        //      the interest leg paired with a principal leg) are
+        //      collected for deletion alongside this tx.
+        //
+        //   2. If the tx is a repayment-type event, the loan's
+        //      counters are rolled back so they no longer reflect the
+        //      repayment(s) being removed.
+        const siblingSnap = await getDocs(
+          query(walletCol(gId), where("loanId", "==", loanId)),
+        );
+
+        const myCreatedAt = String((walletTx as any).createdAt ?? "");
+        const myKey = myCreatedAt ? myCreatedAt.slice(0, 19) : "";
+        const myDate = (walletTx as any).date;
+
+        // Collect siblings first so the rollback can exclude them from
+        // the surviving-tx computation. Nothing is applied to the
+        // batch until after the rollback math runs.
+        const siblingDeletes: Array<{
+          id: string;
+          ref: any;
+          data: Record<string, unknown>;
+        }> = [];
+
+        for (const d of siblingSnap.docs) {
+          if (d.id === transactionId) continue;
+          if (deletedTxIds.has(d.id)) continue;
+
+          const sibData = d.data() as Record<string, unknown>;
+          const sibCreatedAt = String((sibData as any).createdAt ?? "");
+          const sibKey = sibCreatedAt ? sibCreatedAt.slice(0, 19) : "";
+          const sibDate = (sibData as any).date;
+
+          const samePaymentEvent =
+            (myKey && sibKey && myKey === sibKey) ||
+            (!myKey &&
+              !sibKey &&
+              myDate &&
+              sibDate === myDate &&
+              ["loan_interest_income", "loan_principal_recovery", "loan_repayment"].includes(
+                String((sibData as any).type),
+              ));
+
+          if (samePaymentEvent) {
+            siblingDeletes.push({ id: d.id, ref: d.ref, data: sibData });
+          }
+        }
+
+        // ── Roll back the loan's repayment counters ──────────────
+        //
+        // amountRepaid / totalInterestPaid / balance / schedule[].paid
+        // are recomputed from the SURVIVING repayment txs (every
+        // repayment-type tx with this loanId that is not being
+        // deleted). Legacy combined `loan_repayment` txs are prorated
+        // by the loan's interest-to-repayable ratio — same rule
+        // recordRepaymentServer applies when writing them.
+        //
+        // Late-fee deletions skip this block: they don't touch any of
+        // the loan's repayment counters.
+        const isRepaymentTx = [
+          "loan_interest_income",
+          "loan_principal_recovery",
+          "loan_repayment",
+        ].includes(walletTx.type);
+
+        if (isRepaymentTx) {
+          const loanRef = doc(loansCol(gId), loanId);
+          const loanSnap = await getDoc(loanRef);
+
+          if (loanSnap.exists()) {
+            const loan = fromSnap<Loan>(loanSnap);
+
+            const deleting = new Set<string>([
+              transactionId,
+              ...siblingDeletes.map((s) => s.id),
+            ]);
+
+            const ratio =
+              loan.totalRepayable > 0
+                ? loan.totalInterest / loan.totalRepayable
+                : 0;
+
+            let newInterestPaid = 0;
+            let newPrincipalPaid = 0;
+
+            for (const d of siblingSnap.docs) {
+              if (deleting.has(d.id)) continue;
+              const t = d.data() as any;
+              const amt = Number(t.amount) || 0;
+
+              if (t.type === "loan_interest_income") {
+                newInterestPaid += amt;
+              } else if (t.type === "loan_principal_recovery") {
+                newPrincipalPaid += amt;
+              } else if (t.type === "loan_repayment") {
+                const interestPart = round2(amt * ratio);
+                newInterestPaid += interestPart;
+                newPrincipalPaid += amt - interestPart;
+              }
+            }
+
+            newInterestPaid = round2(newInterestPaid);
+            newPrincipalPaid = round2(newPrincipalPaid);
+            const newAmountRepaid = round2(
+              newInterestPaid + newPrincipalPaid,
+            );
+            const newBalance = round2(
+              Math.max(0, (loan.amount || 0) - newPrincipalPaid),
+            );
+
+            // Un-mark any installment whose cumulative total is no
+            // longer covered by the reduced amountRepaid. Only
+            // un-marking is possible here — a deletion can only
+            // reduce amountRepaid, never increase it.
+            let cumulative = 0;
+            const newSchedule = (loan.schedule || []).map((item) => {
+              cumulative = round2(cumulative + (item.total || 0));
+              const isCovered = newAmountRepaid + 0.01 >= cumulative;
+              if (item.paid && !isCovered) {
+                return { ...item, paid: false, paidDate: undefined };
+              }
+              return item;
+            });
+
+            const previousStatus = loan.status;
+            const newStatus =
+              newBalance <= 0 && newAmountRepaid > 0
+                ? "repaid"
+                : previousStatus === "repaid"
+                  ? "disbursed"
+                  : previousStatus;
+
+            const loanUpdate = stripUndefined({
+              amountRepaid: newAmountRepaid,
+              totalInterestPaid: newInterestPaid,
+              balance: newBalance,
+              schedule: newSchedule,
+              status: newStatus,
+              completionDate:
+                newStatus === "repaid"
+                  ? (loan as any).completionDate
+                  : undefined,
+              updatedAt: new Date().toISOString(),
+            });
+
+            batch.update(loanRef, loanUpdate);
+
+            // Audit entry with action "updated" — the loan survives
+            // the transaction; only its counters change. Reverting
+            // restores the pre-rollback state via revertAuditLog's
+            // default (non-delete) branch.
+            cascadeAuditEntries.push({
+              entityType: "loan",
+              entityId: loanId,
+              before: loan as unknown as Record<string, unknown>,
+              action: "updated",
+            });
+          }
+        }
+
+        // Apply sibling deletions to the batch.
+        for (const sib of siblingDeletes) {
+          deletedTxIds.add(sib.id);
+          batch.delete(sib.ref);
+          batchRecordDeletion(
+            batch,
+            gId,
+            "wallet_transaction",
+            sib.id,
+            sib.data,
+            reason,
+            userInfo.userId,
+            userInfo.userName,
+          );
+          cascadeAuditEntries.push({
+            entityType: "wallet_transaction",
+            entityId: sib.id,
+            before: sib.data,
+          });
         }
       }
     }
@@ -404,6 +753,23 @@ export async function deleteWalletTransactionWithRelations(gId: string, transact
       before: walletTx as unknown as Record<string, unknown>,
       reason,
     });
+
+    // One audit entry per cascade-deleted entity. Without these, a
+    // revert of the top-level tx left the cascade-deleted loan (or
+    // sibling repayment leg) gone — the exact partial-revert behavior
+    // this migration fixes.
+    for (const entry of cascadeAuditEntries) {
+      await writeAuditLog(gId, {
+        groupId: gId,
+        userId: userInfo.userId,
+        userName: userInfo.userName,
+        action: entry.action ?? "deleted",
+        entityType: entry.entityType,
+        entityId: entry.entityId,
+        before: entry.before,
+        reason: `${reason} (cascade)`,
+      });
+    }
   } catch (error) {
     logError("deleteWalletTransactionWithRelations", "wallet_transaction", error, { groupId: gId, id: transactionId });
     throw error;

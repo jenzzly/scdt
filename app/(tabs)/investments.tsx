@@ -14,7 +14,8 @@ import {
   BottomModal,
   Input,
 } from "../../components/ui";
-import { R, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
+import { type Palette, R, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
+import { useTheme, useT } from "../../hooks/useTheme";
 import type { Investment } from "../../types";
 import { KpiCard } from "../../components/ui/KpiCard";
 
@@ -24,7 +25,10 @@ const Chip = ({ label, bg, color }: { label: string; bg: string; color: string }
   </View>
 );
 
-const Divider = () => <View style={{ height: 1, backgroundColor: C.border, marginHorizontal: 16 }} />;
+const Divider = () => {
+  const C = useTheme();
+  return <View style={{ height: 1, backgroundColor: C.border, marginHorizontal: 16 }} />;
+};
 
 const INVESTMENT_STATUS_LABEL: Record<string, string> = {
   pending_committee: "Awaiting Committee",
@@ -33,20 +37,20 @@ const INVESTMENT_STATUS_LABEL: Record<string, string> = {
   closed: "Closed",
   matured: "Matured",
 };
-const INVESTMENT_STATUS_COLOR: Record<string, string> = {
+const makeInvestmentStatusColor = (C: Palette): Record<string, string> => ({
   pending_committee: C.gold,
   pending: C.info,
   open: C.success,
   closed: C.text3,
   matured: C.gold,
-};
-const INVESTMENT_STATUS_BG: Record<string, string> = {
+});
+const makeInvestmentStatusBg = (C: Palette): Record<string, string> => ({
   pending_committee: C.goldBg,
   pending: C.infoBg,
   open: C.greenBg,
   closed: C.mutedBg,
   matured: C.goldBg,
-};
+});
 const INVESTMENT_PENDING_STATUSES = ["pending_committee", "pending"];
 const TABS = ["All", "Pending", "Active", "Matured", "Closed"];
 const SORT_OPTIONS = [
@@ -57,6 +61,12 @@ const SORT_OPTIONS = [
 const PAGE_SIZE = 20;
 
 export default function InvestmentsScreen() {
+  const C = useTheme();
+  const T = useT();
+  const ivt = useMemo(() => makeIvt(C), [C]);
+  const INVESTMENT_STATUS_COLOR = useMemo(() => makeInvestmentStatusColor(C), [C]);
+  const INVESTMENT_STATUS_BG = useMemo(() => makeInvestmentStatusBg(C), [C]);
+
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
@@ -965,6 +975,11 @@ function InvestmentRow({
   onPress: () => void;
   actionLabel?: string | null;
 }) {
+  const C = useTheme();
+  const ivt = useMemo(() => makeIvt(C), [C]);
+  const INVESTMENT_STATUS_COLOR = useMemo(() => makeInvestmentStatusColor(C), [C]);
+  const INVESTMENT_STATUS_BG = useMemo(() => makeInvestmentStatusBg(C), [C]);
+
   const statusLabel =
     INVESTMENT_STATUS_LABEL[investment.status] || investment.status;
   const statusColor =
@@ -1025,7 +1040,7 @@ function InvestmentRow({
   );
 }
 
-const ivt = StyleSheet.create({
+const makeIvt = (C: Palette) => StyleSheet.create({
     topBar: {
     flexDirection: "row",
     alignItems: "center",

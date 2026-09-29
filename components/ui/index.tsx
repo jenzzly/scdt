@@ -301,6 +301,8 @@ interface InputProps {
   returnKeyType?: "done" | "go" | "next" | "search" | "send";
   onSubmitEditing?: () => void;
   onKeyPress?: (e: any) => void;
+  onFocus?: (e: any) => void;
+  onBlur?: (e: any) => void;
   clearButtonMode?: "never" | "while-editing" | "unless-editing" | "always";
   containerStyle?: any;
   style?: any;
@@ -312,6 +314,7 @@ export const Input = forwardRef<TextInput, InputProps>(({
   secureTextEntry, error, prefix, leftIcon, right, editable = true, hint,
   autoCapitalize, autoComplete, autoCorrect, returnKeyType,
   onSubmitEditing, onKeyPress, clearButtonMode, containerStyle, style, testID,
+  onFocus: onFocusExternal, onBlur: onBlurExternal,
 }, ref) => {
   const [focused, setFocused] = useState(false);
   return (
@@ -344,8 +347,14 @@ export const Input = forwardRef<TextInput, InputProps>(({
           onSubmitEditing={onSubmitEditing}
           onKeyPress={onKeyPress}
           clearButtonMode={clearButtonMode}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
+          onFocus={(e) => {
+            setFocused(true);
+            onFocusExternal?.(e);
+          }}
+          onBlur={(e) => {
+            setFocused(false);
+            onBlurExternal?.(e);
+          }}
           style={[styles.input, multiline && { height: 80, textAlignVertical: "top" }, style]}
         />
         {right}

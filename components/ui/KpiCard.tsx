@@ -1,7 +1,9 @@
 // components/ui/KpiCard.tsx
 ;
+import { useMemo } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { C } from "../../utils/theme";
+import { type Palette } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 
 interface KpiCardProps {
   label: string;
@@ -28,7 +30,11 @@ interface KpiCardProps {
   layout?: "grid" | "fixed";
 }
 
-export function KpiCard({ label, value, icon, subtext, accentColor = C.primary, onPress, layout = "grid" }: KpiCardProps) {
+export function KpiCard({ label, value, icon, subtext, accentColor, onPress, layout = "grid" }: KpiCardProps) {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+  const accent = accentColor ?? C.primary;
+
   return (
     <TouchableOpacity
       style={[styles.kpiCard, layout === "fixed" && styles.kpiCardFixed]}
@@ -42,13 +48,13 @@ export function KpiCard({ label, value, icon, subtext, accentColor = C.primary, 
           <Text style={{ fontSize: 14 }}>{icon}</Text>
         </View>
       </View>
-      <Text style={[styles.kpiValue, { color: accentColor }]} numberOfLines={1}>{value}</Text>
+      <Text style={[styles.kpiValue, { color: accent }]} numberOfLines={1}>{value}</Text>
       {subtext ? <Text style={styles.kpiSubtext} numberOfLines={1}>{subtext}</Text> : null}
     </TouchableOpacity>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   kpiCard: {
     // A fixed minWidth (150) forces 2-up rows to need 310px+ of usable
     // width once the 10px gap is added. On a 320-375px-wide phone with

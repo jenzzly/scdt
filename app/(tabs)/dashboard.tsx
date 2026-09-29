@@ -11,35 +11,48 @@ import {
   useCurrentUserRole, useCurrentMember, useIsGroupView,
 } from "../../stores/useStore";
 import { useCurrentMemberPermissions } from "../../stores/selectors";
-import { C, T, fmtCurrency, fmtFull, fmtDate, round2 } from "../../utils/theme";
+import { type Palette, fmtCurrency, fmtFull, fmtDate, round2 } from "../../utils/theme";
+import { useTheme, useT } from "../../hooks/useTheme";
 import type { Contribution, WalletTransaction } from "../../types";
 import { BRAND } from "../../lib/brand";
 import { useRecalcTotals } from "../../hooks/useRecalcTotals";
 import { KpiCard } from "../../components/ui/KpiCard";
 
 // ─── Tiny components ──────────────────────────────────────────────
-const Divider = () => (
-  <View style={{ height: 1, backgroundColor: C.border, marginHorizontal: 16 }} />
-);
+const Divider = () => {
+  const C = useTheme();
+  return (
+    <View style={{ height: 1, backgroundColor: C.border, marginHorizontal: 16 }} />
+  );
+};
 
 const SectionHeader = ({
   title, action, actionLabel,
-}: { title: string; action?: () => void; actionLabel?: string }) => (
-  <View style={st.sectionHeader}>
-    <Text style={T.h2}>{title}</Text>
-    {action && (
-      <TouchableOpacity onPress={action} activeOpacity={0.7}>
-        <Text style={{ fontSize: 12, fontWeight: "600", color: C.primary }}>{actionLabel ?? "See all"}</Text>
-      </TouchableOpacity>
-    )}
-  </View>
-);
+}: { title: string; action?: () => void; actionLabel?: string }) => {
+  const C = useTheme();
+  const T = useT();
+  const st = useMemo(() => makeStyles(C), [C]);
+  return (
+    <View style={st.sectionHeader}>
+      <Text style={T.h2}>{title}</Text>
+      {action && (
+        <TouchableOpacity onPress={action} activeOpacity={0.7}>
+          <Text style={{ fontSize: 12, fontWeight: "600", color: C.primary }}>{actionLabel ?? "See all"}</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+};
 
-const Chip = ({ label, bg, color }: { label: string; bg: string; color: string }) => (
-  <View style={[st.chip, { backgroundColor: bg }]}>
-    <Text style={[st.chipText, { color }]}>{label}</Text>
-  </View>
-);
+const Chip = ({ label, bg, color }: { label: string; bg: string; color: string }) => {
+  const C = useTheme();
+  const st = useMemo(() => makeStyles(C), [C]);
+  return (
+    <View style={[st.chip, { backgroundColor: bg }]}>
+      <Text style={[st.chipText, { color }]}>{label}</Text>
+    </View>
+  );
+};
 
 // ─── Year-grouped activity chart ─────────────────────────────────
 type ActivityYear = {
@@ -56,6 +69,8 @@ function ActivityChart({
   years: ActivityYear[];
   mode: "personal" | "group";
 }) {
+  const C = useTheme();
+  const st = useMemo(() => makeStyles(C), [C]);
   if (years.length === 0) {
     return (
       <View style={st.chartEmpty}>
@@ -114,6 +129,10 @@ function ActivityChart({
 
 // ─── Main screen ──────────────────────────────────────────────────
 export default function DashboardScreen() {
+  const C = useTheme();
+  const T = useT();
+  const st = useMemo(() => makeStyles(C), [C]);
+
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
@@ -841,7 +860,7 @@ export default function DashboardScreen() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────
-const st = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   // group banner
   groupBanner: {
     marginHorizontal: 16,

@@ -42,7 +42,8 @@ import {
 } from "../../stores/useStore";
 
 import { useToast, Toast, DatePicker } from "../../components/ui";
-import { C, fmtCurrency, showConfirm } from "../../utils/theme";
+import { type Palette, fmtCurrency, showConfirm } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 import type { WalletTransaction } from "../../types";
 import { projectAccruedInterest, computeFlatAccrued } from "../../utils/accrual";
 
@@ -72,6 +73,9 @@ const TX_LABEL: Record<string, string> = {
 const MANUAL_TYPES = ["bank_fee", "other_credit", "other_debit", "withdrawal"];
 
 export default function EditTransactionModal() {
+  const C = useTheme();
+  const s = useMemo(() => makeS(C), [C]);
+
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
 
@@ -436,7 +440,7 @@ export default function EditTransactionModal() {
   );
 }
 
-const s = StyleSheet.create({
+const makeS = (C: Palette) => StyleSheet.create({
   center: {
     flex: 1,
     alignItems: "center",

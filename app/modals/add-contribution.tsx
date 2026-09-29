@@ -62,7 +62,8 @@ import {
 } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
-import { C, S } from "../../utils/theme";
+import { type Palette, S } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 
 import type { ContributionType } from "../../types";
 
@@ -85,6 +86,9 @@ const TYPE_OPTIONS = Object.entries(TYPE_LABELS).map(([value, label]) => ({
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
 export default function AddContributionModal() {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+
   const router = useRouter();
 
   const allMembers = useGroupMembers();
@@ -264,7 +268,7 @@ export default function AddContributionModal() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   body: { padding: S.lg, paddingBottom: 60 },
   center: { padding: S.lg, gap: 12 },
   title: { fontSize: 17, fontWeight: "800", color: C.text, textAlign: "center" },

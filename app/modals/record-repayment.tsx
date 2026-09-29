@@ -28,7 +28,8 @@ import {
 } from "../../stores/useStore";
 import { Button, useToast, Toast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
-import { C, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
+import { type Palette, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 
 import {
   daysBetween,
@@ -157,6 +158,9 @@ function computeSplit(loan: any, payment: number, paymentDate: string): Split {
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 export default function RecordRepaymentModal() {
+  const C = useTheme();
+  const st = useMemo(() => makeSt(C), [C]);
+
   const router = useRouter();
   const { loanId } = useLocalSearchParams<{ loanId: string }>();
   const { recordRepayment } = useStore();
@@ -1031,7 +1035,7 @@ export default function RecordRepaymentModal() {
   );
 }
 
-const st = StyleSheet.create({
+const makeSt = (C: Palette) => StyleSheet.create({
   body: { padding: S.lg, paddingBottom: 60 },
 
   // ── Header ──────────────────────────────────────────────────────

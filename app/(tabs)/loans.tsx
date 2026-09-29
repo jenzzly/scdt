@@ -38,14 +38,15 @@ import {
   Input,
 } from "../../components/ui";
 import {
+  type Palette,
   R,
-  C,
   T,
   fmtCurrency,
   fmtDate,
   round2,
   showConfirm,
 } from "../../utils/theme";
+import { useTheme, useT } from "../../hooks/useTheme";
 import { exportPdf, generatePaymentScheduleHtml } from "../../utils/export";
 import { Loan, Member } from "../../types";
 import { KpiCard } from "../../components/ui/KpiCard";
@@ -56,9 +57,12 @@ import { useLoanLateFees } from "../../hooks/useLoanLateFees";
 import { LateFeeWaiverModal } from "../../components/ui/LateFeeWaiverModal";
 
 // ─── Tiny components ──────────────────────────────────────────────
-const Divider = () => (
-  <View style={{ height: 1, backgroundColor: C.border, marginHorizontal: 16 }} />
-);
+const Divider = () => {
+  const C = useTheme();
+  return (
+    <View style={{ height: 1, backgroundColor: C.border, marginHorizontal: 16 }} />
+  );
+};
 
 const Chip = ({
   label,
@@ -68,39 +72,37 @@ const Chip = ({
   label: string;
   bg: string;
   color: string;
-}) => (
-  <View style={[styles.chip, { backgroundColor: bg }]}>
-    <Text style={[styles.chipText, { color }]}>{label}</Text>
-  </View>
-);
+}) => {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+  return (
+    <View style={[styles.chip, { backgroundColor: bg }]}>
+      <Text style={[styles.chipText, { color }]}>{label}</Text>
+    </View>
+  );
+};
 
-const STATUS_COLOR: Record<string, string> = {
+const makeStatusColor = (C: Palette): Record<string, string> => ({
   pending_loan_officer: C.gold,
   pending_committee: C.info,
   pending_accountant: C.info,
-  // `approved` means "money hasn't moved yet, waiting on the
-  // accountant to click Disburse." Same action-required family as the
-  // "Ready to disburse" pill and the row's amber stripe. Distinct from
-  // `disbursed` (Active) which is the neutral teal that means "in
-  // flight, nothing to do right now."
   approved: C.gold,
   disbursed: C.teal,
   repaid: C.success,
   rejected: C.text3,
   defaulted: C.error,
-};
+});
 
-const STATUS_BG: Record<string, string> = {
+const makeStatusBg = (C: Palette): Record<string, string> => ({
   pending_loan_officer: C.goldBg,
   pending_committee: C.infoBg,
   pending_accountant: C.infoBg,
-  // Gold background pairs with C.gold above; matches the pill bg.
   approved: C.goldBg,
   disbursed: C.tealBg,
   repaid: C.greenBg,
   rejected: C.mutedBg,
   defaulted: C.redBg,
-};
+});
 
 const STATUS_LABEL: Record<string, string> = {
   pending_loan_officer: "Awaiting Officer",
@@ -215,6 +217,12 @@ function LoanDetailModal({
   canManageFees?: boolean;
   onWaive?: (fee: any) => void;
 }) {
+  const C = useTheme();
+  const detailSt = useMemo(() => makeDetailSt(C), [C]);
+  const styles = useMemo(() => makeStyles(C), [C]);
+  const STATUS_COLOR = useMemo(() => makeStatusColor(C), [C]);
+  const STATUS_BG = useMemo(() => makeStatusBg(C), [C]);
+
   const [applyingFeeId, setApplyingFeeId] = useState<string | null>(null);
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
   const [feesExpanded, setFeesExpanded] = useState(false);
@@ -1171,7 +1179,7 @@ function LoanDetailModal({
 }
 
 // ─── Loan Detail Modal styles ─────────────────────────────────────────────────
-const detailSt = StyleSheet.create({
+const makeDetailSt = (C: Palette) => StyleSheet.create({
   body: { padding: 16, paddingBottom: 40 },
 
   // ── Header ──
@@ -1781,6 +1789,12 @@ function computeInstallmentStatus(loan: any, index: number) {
 }
 
 export default function LoansScreen() {
+  const C = useTheme();
+  const T = useT();
+  const styles = useMemo(() => makeStyles(C), [C]);
+  const STATUS_COLOR = useMemo(() => makeStatusColor(C), [C]);
+  const STATUS_BG = useMemo(() => makeStatusBg(C), [C]);
+
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
@@ -3047,6 +3061,11 @@ function LoanRow({
   isOwn?: boolean;
   canActOnThis?: boolean;
 }) {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+  const STATUS_COLOR = useMemo(() => makeStatusColor(C), [C]);
+  const STATUS_BG = useMemo(() => makeStatusBg(C), [C]);
+
   const statusColor = STATUS_COLOR[loan.status] || C.infoText;
   const statusBg = STATUS_BG[loan.status] || C.mutedBg;
   const statusLabel = STATUS_LABEL[loan.status] || loan.status;
@@ -3127,6 +3146,9 @@ function LoanRow({
 // stage, ringed amber dot = current stage, empty dot = future stage.
 // Rejected / defaulted loans never reach here (not in PENDING_STATUSES).
 function PendingProgress({ status }: { status: string }) {
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+
   const steps = [
     { key: "pending_loan_officer", label: "Officer" },
     { key: "pending_committee", label: "Committee" },
@@ -3185,7 +3207,7 @@ function PendingProgress({ status }: { status: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   topBar: {
     flexDirection: "row",
     alignItems: "center",

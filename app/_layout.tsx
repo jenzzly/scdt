@@ -12,12 +12,15 @@ import {
   PlusJakartaSans_700Bold,
   PlusJakartaSans_800ExtraBold,
 } from "@expo-google-fonts/plus-jakarta-sans";
-import { C } from "../utils/theme";
+import { useTheme } from "../hooks/useTheme";
 import { useStore } from "../stores/useStore";
 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
+  const C = useTheme();
+  const themeMode = useStore((s) => s.themeMode);
+
   const [fontsLoaded] = Font.useFonts({
     PlusJakartaSans_400Regular,
     PlusJakartaSans_500Medium,
@@ -50,7 +53,7 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar style="dark" />
+      <StatusBar style={themeMode === "dark" ? "light" : "dark"} />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg } }}>
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
