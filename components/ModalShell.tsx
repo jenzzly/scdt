@@ -9,7 +9,7 @@ import {
   KeyboardAvoidingView, ScrollView, useWindowDimensions, StatusBar,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Colors, S, R } from "../../utils/theme";
+import { C, S } from "../utils/theme";
 
 interface ModalShellProps {
   title: string;
@@ -87,7 +87,7 @@ export function ModalShell({
 
   return (
     <View style={st.root}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.surface} />
+      <StatusBar barStyle="dark-content" backgroundColor={C.surface} />
       {inner}
     </View>
   );
@@ -96,7 +96,7 @@ export function ModalShell({
 const st = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: Colors.bg,
+    backgroundColor: C.bg,
   },
   backdrop: {
     flex: 1,
@@ -107,7 +107,7 @@ const st = StyleSheet.create({
   },
   card: {
     flex: 1,
-    backgroundColor: Colors.bg,
+    backgroundColor: C.bg,
     // Web: card appearance
     ...(Platform.OS === "web" ? {
       boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
@@ -121,8 +121,8 @@ const st = StyleSheet.create({
     paddingHorizontal: S.lg,
     paddingBottom: S.md,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    backgroundColor: Colors.surface,
+    borderBottomColor: C.border,
+    backgroundColor: C.surface,
     // Rounded top for web card
     borderTopLeftRadius: 0,
     borderTopRightRadius: 0,
@@ -130,13 +130,13 @@ const st = StyleSheet.create({
   title: {
     fontSize: 16,
     fontWeight: "700",
-    color: Colors.text,
+    color: C.text,
     flex: 1,
     textAlign: "center",
   },
   cancel: {
     fontSize: 16,
-    color: Colors.text3,
+    color: C.text3,
     fontWeight: "600",
     minWidth: 40,
   },

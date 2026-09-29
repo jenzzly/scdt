@@ -1,13 +1,13 @@
 // app/(auth)/_layout.tsx
 import { Stack } from "expo-router";
-import { Colors } from "../../utils/theme";
+import { C } from "../../utils/theme";
 
 export default function AuthLayout() {
   return (
     <Stack 
       screenOptions={{ 
         headerShown: false, 
-        contentStyle: { backgroundColor: Colors.bg },
+        contentStyle: { backgroundColor: C.bg },
         animation: "slide_from_right",
       }}
     >

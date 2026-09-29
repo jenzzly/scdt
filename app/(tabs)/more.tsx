@@ -6,7 +6,7 @@
 // drift. This version is a single responsive layout: `isWide` only
 // controls the outer content width, and the shared pieces (profile
 // header, section cards, admin rows, edit modal) are defined once.
-import React, { useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   ScrollView,
   View,
@@ -32,25 +32,18 @@ import {
   InfoRow,
 } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
-import {
-  Colors,
-  S,
-  R,
-  fmtCurrency,
-  showConfirm,
-  round2,
-} from "../../utils/theme";
+import { C, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Config
 // ─────────────────────────────────────────────────────────────────────────
 
 const SYNC_COLOR: Record<string, string> = {
-  synced:  Colors.success,
-  syncing: Colors.warning,
-  pending: Colors.warning,
-  failed:  Colors.error,
-  offline: Colors.text3,
+  synced:  C.success,
+  syncing: C.warning,
+  pending: C.warning,
+  failed:  C.error,
+  offline: C.text3,
 };
 
 const ADMIN_ACTIONS: { label: string; icon: string; section: string }[] = [
@@ -200,7 +193,7 @@ export default function MoreScreen() {
     latePenaltyAmount,
   )} per 15min`;
 
-  const syncColor = SYNC_COLOR[syncStatus] ?? Colors.text3;
+  const syncColor = SYNC_COLOR[syncStatus] ?? C.text3;
   const lastSyncLabel = lastSyncTimestamp
     ? new Date(lastSyncTimestamp).toLocaleString()
     : "Never";
@@ -427,7 +420,7 @@ export default function MoreScreen() {
 // ─────────────────────────────────────────────────────────────────────────
 
 const st = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Colors.bg },
+  root: { flex: 1, backgroundColor: C.bg },
 
   scrollContent: {
     padding: 16,
@@ -446,13 +439,13 @@ const st = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 14,
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     borderRadius: R.lg,
     padding: S.lg,
     marginBottom: S.lg,
-    shadowColor: Colors.primary,
+    shadowColor: C.primary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 8,
@@ -462,34 +455,34 @@ const st = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 16,
-    backgroundColor: Colors.primary,
+    backgroundColor: C.primary,
     alignItems: "center",
     justifyContent: "center",
   },
   userAvatarText: { fontSize: 18, fontWeight: "800", color: "#fff" },
   userInfo: { flex: 1, minWidth: 0 },
-  userName: { fontSize: 16, fontWeight: "800", color: Colors.text },
-  userEmail: { fontSize: 12, color: Colors.text3, marginTop: 2 },
+  userName: { fontSize: 16, fontWeight: "800", color: C.text },
+  userEmail: { fontSize: 12, color: C.text3, marginTop: 2 },
   userRole: {
     fontSize: 11,
-    color: Colors.accent,
+    color: C.accent,
     fontWeight: "700",
     marginTop: 2,
     textTransform: "capitalize",
   },
   editBtn: {
-    backgroundColor: Colors.primaryFaint,
+    backgroundColor: C.primaryFaint,
     borderRadius: R.sm,
     paddingVertical: 6,
     paddingHorizontal: 14,
   },
-  editBtnText: { color: Colors.primary, fontSize: 12, fontWeight: "700" },
+  editBtnText: { color: C.primary, fontSize: 12, fontWeight: "700" },
 
   // ── Section labels & card padding ──
   sectionLabel: {
     fontSize: 11,
     fontWeight: "700",
-    color: Colors.text2,
+    color: C.text2,
     textTransform: "uppercase",
     letterSpacing: 0.6,
     marginBottom: 10,
@@ -504,23 +497,23 @@ const st = StyleSheet.create({
   groupName: {
     fontSize: 16,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
     marginBottom: 4,
   },
-  groupDesc: { fontSize: 12, color: Colors.text3, lineHeight: 18 },
+  groupDesc: { fontSize: 12, color: C.text3, lineHeight: 18 },
 
   // ── Action rows ──
   actionRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     borderRadius: R.lg,
     padding: S.lg,
     marginBottom: 8,
-    shadowColor: Colors.primary,
+    shadowColor: C.primary,
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,
     shadowRadius: 4,
@@ -530,7 +523,7 @@ const st = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 10,
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -541,23 +534,23 @@ const st = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontWeight: "600",
-    color: Colors.text,
+    color: C.text,
   },
   actionLabelText: {
     fontSize: 14,
     fontWeight: "600",
-    color: Colors.text,
+    color: C.text,
   },
 
   actionText: { flex: 1, minWidth: 0 },
-  actionSub: { fontSize: 11, color: Colors.text3, marginTop: 2 },
-  actionError: { fontSize: 11, color: Colors.error, marginTop: 2 },
+  actionSub: { fontSize: 11, color: C.text3, marginTop: 2 },
+  actionError: { fontSize: 11, color: C.error, marginTop: 2 },
   actionTrailing: {
-    color: Colors.primary,
+    color: C.primary,
     fontSize: 13,
     fontWeight: "600",
   },
-  actionChevron: { color: Colors.text3, fontSize: 18 },
+  actionChevron: { color: C.text3, fontSize: 18 },
 
   syncHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
   syncDot: { width: 8, height: 8, borderRadius: 4 },
@@ -566,7 +559,7 @@ const st = StyleSheet.create({
   // ── Bottom buttons ──
   divider: {
     height: 1,
-    backgroundColor: Colors.border,
+    backgroundColor: C.border,
     marginVertical: 24,
   },
   secondaryBtn: {
@@ -578,7 +571,7 @@ const st = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
   },
-  secondaryBtnText: { fontSize: 14, fontWeight: "700", color: Colors.primary },
+  secondaryBtnText: { fontSize: 14, fontWeight: "700", color: C.primary },
   dangerBtn: {
     backgroundColor: "rgba(220,38,38,0.06)",
     borderWidth: 1.5,
@@ -587,7 +580,7 @@ const st = StyleSheet.create({
     paddingVertical: 14,
     alignItems: "center",
   },
-  dangerBtnText: { fontSize: 14, fontWeight: "700", color: Colors.error },
+  dangerBtnText: { fontSize: 14, fontWeight: "700", color: C.error },
 
   // ── Modal ──
   modalContent: { padding: S.lg },

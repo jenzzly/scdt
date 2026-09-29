@@ -11,7 +11,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Platform,
   Animated,
   useWindowDimensions,
   ScrollView,
@@ -22,11 +21,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, {
   Circle,
   Path,
-  Rect,
   Line,
   Polyline,
   Ellipse,
-  G,
 } from "react-native-svg";
 
 // ─── Design tokens (self-contained, no theme dependency) ────────────

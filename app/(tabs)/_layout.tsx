@@ -36,7 +36,7 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useFirebaseSync, useNotificationSync } from "../../hooks/useFirebaseSync";
 import { useNetworkStatus } from "../../hooks/useNetworkStatus";
-import { Colors, R, showConfirm, fmtDateLong } from "../../utils/theme";
+import { C, R, fmtDateLong, showConfirm } from "../../utils/theme";
 import { BRAND } from "../../lib/brand";
 import { getWebNavForRole } from "../../lib/auth/permissions";
 import { ViewSwitch } from "../../components/ui/ViewSwitch";
@@ -126,7 +126,7 @@ function SidebarItem({
     >
       <View style={[sb.iconWrap, isActive && sb.iconWrapActive]}>
         {Icon ? (
-          <Icon size={16} color={isActive ? Colors.primary : Colors.text3} />
+          <Icon size={16} color={isActive ? C.primary : C.text3} />
         ) : (
           <Text style={{ fontSize: 16 }}>{iconEmoji[label] || "•"}</Text>
         )}
@@ -191,7 +191,7 @@ function TabItem({ label, focused }: { label: string; focused: boolean }) {
     <View style={tb.item}>
       <View style={[tb.iconWrap, focused && tb.iconWrapActive]}>
         {Icon ? (
-          <Icon size={19} color={focused ? "#fff" : Colors.text3} />
+          <Icon size={19} color={focused ? "#fff" : C.text3} />
         ) : (
           <Text style={{ fontSize: 19 }}>{iconEmoji[label] || "•"}</Text>
         )}
@@ -315,7 +315,7 @@ function DesktopTopHeader({
           accessibilityRole="button"
           accessibilityLabel="Refresh sync"
         >
-          <SpinningRefreshIcon spinning={isSyncing} size={17} color={Colors.text2} />
+          <SpinningRefreshIcon spinning={isSyncing} size={17} color={C.text2} />
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -324,7 +324,7 @@ function DesktopTopHeader({
           activeOpacity={0.7}
           accessibilityLabel="Notifications"
         >
-          {Bell ? <Bell size={18} color={Colors.text2} /> : <Text style={{ fontSize: 16 }}>🔔</Text>}
+          {Bell ? <Bell size={18} color={C.text2} /> : <Text style={{ fontSize: 16 }}>🔔</Text>}
           {unreadCount > 0 && (
             <View style={dh.badge}>
               <Text style={dh.badgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
@@ -369,7 +369,7 @@ function DesktopTopHeader({
                   onPress={() => { setUserMenuOpen(false); onSignOut(); }}
                   activeOpacity={0.7}
                 >
-                  <Text style={[dh.dropdownItemText, { color: Colors.error }]}>Sign Out</Text>
+                  <Text style={[dh.dropdownItemText, { color: C.error }]}>Sign Out</Text>
                 </TouchableOpacity>
               </View>
             </>
@@ -409,7 +409,7 @@ function MobileTopHeader({
           accessibilityRole="button"
           accessibilityLabel="Refresh sync"
         >
-          <SpinningRefreshIcon spinning={isSyncing} size={15} color={Colors.text2} />
+          <SpinningRefreshIcon spinning={isSyncing} size={15} color={C.text2} />
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -418,7 +418,7 @@ function MobileTopHeader({
           activeOpacity={0.7}
           accessibilityLabel="Notifications"
         >
-          {Bell ? <Bell size={16} color={Colors.text2} /> : <Text style={{ fontSize: 14 }}>🔔</Text>}
+          {Bell ? <Bell size={16} color={C.text2} /> : <Text style={{ fontSize: 14 }}>🔔</Text>}
           {unreadCount > 0 && (
             <View style={mh.badge}>
               <Text style={mh.badgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
@@ -431,99 +431,99 @@ function MobileTopHeader({
 }
 
 const pa = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Colors.bg, alignItems: "center", justifyContent: "center", padding: 24 },
-  card: { width: "100%", maxWidth: 400, backgroundColor: Colors.surface, borderRadius: 20, borderWidth: 1, borderColor: Colors.border, padding: 32, alignItems: "center" },
+  root: { flex: 1, backgroundColor: C.bg, alignItems: "center", justifyContent: "center", padding: 24 },
+  card: { width: "100%", maxWidth: 400, backgroundColor: C.surface, borderRadius: 20, borderWidth: 1, borderColor: C.border, padding: 32, alignItems: "center" },
   iconCircle: { width: 72, height: 72, borderRadius: 36, backgroundColor: "#FEF3C7", alignItems: "center", justifyContent: "center", marginBottom: 20 },
   iconCircleSuspended: { backgroundColor: "#FEE2E2" },
   icon: { fontSize: 32 },
-  title: { fontSize: 19, fontWeight: "800", color: Colors.text, marginBottom: 10, textAlign: "center" },
-  body: { fontSize: 14, color: Colors.text2, textAlign: "center", lineHeight: 21, marginBottom: 20 },
-  divider: { width: "100%" as any, height: 1, backgroundColor: Colors.border, marginBottom: 16 },
-  hint: { fontSize: 12, color: Colors.text3, textAlign: "center", lineHeight: 18, marginBottom: 24 },
-  signOutBtn: { width: "100%" as any, paddingVertical: 13, borderRadius: 12, borderWidth: 1, borderColor: Colors.border, alignItems: "center" },
-  signOutText: { fontSize: 14, fontWeight: "700", color: Colors.text2 },
+  title: { fontSize: 19, fontWeight: "800", color: C.text, marginBottom: 10, textAlign: "center" },
+  body: { fontSize: 14, color: C.text2, textAlign: "center", lineHeight: 21, marginBottom: 20 },
+  divider: { width: "100%" as any, height: 1, backgroundColor: C.border, marginBottom: 16 },
+  hint: { fontSize: 12, color: C.text3, textAlign: "center", lineHeight: 18, marginBottom: 24 },
+  signOutBtn: { width: "100%" as any, paddingVertical: 13, borderRadius: 12, borderWidth: 1, borderColor: C.border, alignItems: "center" },
+  signOutText: { fontSize: 14, fontWeight: "700", color: C.text2 },
 });
 
 const dh = StyleSheet.create({
-  root: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 32, paddingVertical: 14, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border, zIndex: 100, elevation: 10 },
+  root: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 32, paddingVertical: 14, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border, zIndex: 100, elevation: 10 },
   left: { flexDirection: "column", gap: 2 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  title: { fontSize: 20, fontWeight: "800", color: Colors.text },
-  groupTag: { fontSize: 13, fontWeight: "600", color: Colors.primary },
-  date: { fontSize: 12, color: Colors.text3 },
+  title: { fontSize: 20, fontWeight: "800", color: C.text },
+  groupTag: { fontSize: 13, fontWeight: "600", color: C.primary },
+  date: { fontSize: 12, color: C.text3 },
   right: { flexDirection: "row", alignItems: "center", gap: 14, zIndex: 100 },
-  refreshBtn: { width: 36, height: 36, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: Colors.elevated, borderWidth: 1, borderColor: Colors.border },
-  bellBtn: { width: 36, height: 36, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: Colors.elevated, borderWidth: 1, borderColor: Colors.border },
-  badge: { position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 3, backgroundColor: Colors.error, alignItems: "center", justifyContent: "center" },
+  refreshBtn: { width: 36, height: 36, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border },
+  bellBtn: { width: 36, height: 36, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border },
+  badge: { position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 3, backgroundColor: C.error, alignItems: "center", justifyContent: "center" },
   badgeText: { fontSize: 9, fontWeight: "800", color: "#fff" },
   avatarWrap: { position: "relative", zIndex: 1000 },
   avatarBtn: { borderRadius: 10 },
-  avatar: { width: 36, height: 36, borderRadius: 10, backgroundColor: Colors.primary, alignItems: "center", justifyContent: "center" },
+  avatar: { width: 36, height: 36, borderRadius: 10, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
   avatarText: { fontSize: 13, fontWeight: "800", color: "#fff" },
   menuBackdrop: { position: "absolute", top: -1000, left: -1000, right: -1000, bottom: -1000, zIndex: 999, elevation: 999 },
-  dropdown: { position: "absolute", top: 44, right: 0, width: 200, backgroundColor: Colors.surface, borderRadius: 12, borderWidth: 1, borderColor: Colors.border, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 1000, zIndex: 1000, overflow: "hidden" },
+  dropdown: { position: "absolute", top: 44, right: 0, width: 200, backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 1000, zIndex: 1000, overflow: "hidden" },
   dropdownHeader: { padding: 12 },
-  dropdownName: { fontSize: 13, fontWeight: "700", color: Colors.text },
-  dropdownRole: { fontSize: 11, color: Colors.text3, textTransform: "capitalize", marginTop: 2 },
-  dropdownDivider: { height: 1, backgroundColor: Colors.border },
+  dropdownName: { fontSize: 13, fontWeight: "700", color: C.text },
+  dropdownRole: { fontSize: 11, color: C.text3, textTransform: "capitalize", marginTop: 2 },
+  dropdownDivider: { height: 1, backgroundColor: C.border },
   dropdownItem: { paddingVertical: 10, paddingHorizontal: 12 },
-  dropdownItemText: { fontSize: 13, fontWeight: "600", color: Colors.text2 },
+  dropdownItemText: { fontSize: 13, fontWeight: "600", color: C.text2 },
 });
 
 const mh = StyleSheet.create({
-  root: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  root: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
   left: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0, marginRight: 8 },
-  brandMark: { width: 28, height: 28, borderRadius: 7, backgroundColor: Colors.primary, alignItems: "center", justifyContent: "center" },
+  brandMark: { width: 28, height: 28, borderRadius: 7, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
   brandLetter: { fontSize: 13, fontWeight: "800", color: "#fff" },
-  title: { fontSize: 16, fontWeight: "800", color: Colors.text },
-  groupSub: { fontSize: 9, color: Colors.text3, fontWeight: "600" },
+  title: { fontSize: 16, fontWeight: "800", color: C.text },
+  groupSub: { fontSize: 9, color: C.text3, fontWeight: "600" },
   right: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 },
-  refreshBtn: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: Colors.elevated, borderWidth: 1, borderColor: Colors.border },
-  bellBtn: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: Colors.elevated, borderWidth: 1, borderColor: Colors.border },
-  badge: { position: "absolute", top: -3, right: -3, minWidth: 14, height: 14, borderRadius: 7, paddingHorizontal: 2, backgroundColor: Colors.error, alignItems: "center", justifyContent: "center" },
+  refreshBtn: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border },
+  bellBtn: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border },
+  badge: { position: "absolute", top: -3, right: -3, minWidth: 14, height: 14, borderRadius: 7, paddingHorizontal: 2, backgroundColor: C.error, alignItems: "center", justifyContent: "center" },
   badgeText: { fontSize: 8, fontWeight: "800", color: "#fff" },
 });
 
 const shared = StyleSheet.create({
-  offlineBanner: { backgroundColor: Colors.error, paddingVertical: 6, alignItems: "center" },
+  offlineBanner: { backgroundColor: C.error, paddingVertical: 6, alignItems: "center" },
   offlineBannerText: { color: "#fff", fontSize: 11, fontWeight: "700", letterSpacing: 0.3 },
-  desktopRoot: { flex: 1, flexDirection: "row", backgroundColor: Colors.bg },
+  desktopRoot: { flex: 1, flexDirection: "row", backgroundColor: C.bg },
   desktopContent: { flex: 1, overflow: "hidden" },
 });
 
 const sb = StyleSheet.create({
-  sidebar: { width: 224, backgroundColor: Colors.surface, borderRightWidth: 1, borderRightColor: Colors.border, flexDirection: "column" },
+  sidebar: { width: 224, backgroundColor: C.surface, borderRightWidth: 1, borderRightColor: C.border, flexDirection: "column" },
   sidebarCollapsed: { width: 68 },
-  brand: { flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 18, paddingTop: 26, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  brand: { flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 18, paddingTop: 26, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: C.border },
   brandCollapsed: { paddingHorizontal: 10, gap: 0, justifyContent: "center" },
-  collapseBtn: { width: 22, height: 22, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: Colors.elevated },
-  collapseBtnText: { fontSize: 14, fontWeight: "700", color: Colors.text3, lineHeight: 16 },
-  brandMark: { width: 32, height: 32, borderRadius: 8, backgroundColor: Colors.primary, alignItems: "center", justifyContent: "center" },
+  collapseBtn: { width: 22, height: 22, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: C.elevated },
+  collapseBtnText: { fontSize: 14, fontWeight: "700", color: C.text3, lineHeight: 16 },
+  brandMark: { width: 32, height: 32, borderRadius: 8, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
   brandLetter: { fontSize: 14, fontWeight: "800", color: "#fff" },
-  brandName: { fontSize: 14, fontWeight: "700", color: Colors.text, lineHeight: 18 },
-  brandSub: { fontSize: 10, color: Colors.text3, lineHeight: 14 },
+  brandName: { fontSize: 14, fontWeight: "700", color: C.text, lineHeight: 18 },
+  brandSub: { fontSize: 10, color: C.text3, lineHeight: 14 },
   navList: { paddingHorizontal: 10, paddingTop: 14, paddingBottom: 10 },
   item: { flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 8, paddingVertical: 8, borderRadius: R.md, marginBottom: 1, position: "relative" },
   itemCollapsed: { justifyContent: "center" },
-  itemActive: { backgroundColor: Colors.primaryFaint ?? "rgba(13,148,136,0.08)" },
+  itemActive: { backgroundColor: C.primaryFaint ?? "rgba(13,148,136,0.08)" },
   iconWrap: { width: 28, height: 28, borderRadius: 7, alignItems: "center", justifyContent: "center" },
   iconWrapActive: { backgroundColor: "rgba(13,148,136,0.12)" },
-  label: { flex: 1, fontSize: 13, fontWeight: "600", color: Colors.text2 },
-  labelActive: { color: Colors.primary, fontWeight: "700" },
-  activePip: { width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.primary },
-  footer: { borderTopWidth: 1, borderTopColor: Colors.border, padding: 14, gap: 10 },
+  label: { flex: 1, fontSize: 13, fontWeight: "600", color: C.text2 },
+  labelActive: { color: C.primary, fontWeight: "700" },
+  activePip: { width: 5, height: 5, borderRadius: 3, backgroundColor: C.primary },
+  footer: { borderTopWidth: 1, borderTopColor: C.border, padding: 14, gap: 10 },
   signOutBtn: { flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 10, paddingVertical: 7, borderRadius: R.md, backgroundColor: "rgba(220,38,38,0.05)", borderWidth: 1, borderColor: "rgba(220,38,38,0.12)" },
-  signOutText: { fontSize: 12, fontWeight: "700", color: Colors.error },
+  signOutText: { fontSize: 12, fontWeight: "700", color: C.error },
 });
 
 const tb = StyleSheet.create({
-  bar: { backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border, height: Platform.OS === "ios" ? 82 : 66, paddingHorizontal: 2, paddingTop: 4, paddingBottom: Platform.OS === "ios" ? 20 : 4, shadowColor: "#000", shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 12 },
+  bar: { backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.border, height: Platform.OS === "ios" ? 82 : 66, paddingHorizontal: 2, paddingTop: 4, paddingBottom: Platform.OS === "ios" ? 20 : 4, shadowColor: "#000", shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 12 },
   itemStyle: { flex: 1, minWidth: 0, paddingHorizontal: 0 },
   item: { flex: 1, minWidth: 0, maxWidth: "100%" as any, alignItems: "center", justifyContent: "center", gap: 2 },
   iconWrap: { width: 32, height: 28, borderRadius: 8, alignItems: "center", justifyContent: "center" },
-  iconWrapActive: { backgroundColor: Colors.primary },
-  label: { fontSize: 8, fontWeight: "600", color: Colors.text3, letterSpacing: 0, textTransform: "uppercase" },
-  labelActive: { color: Colors.primary },
+  iconWrapActive: { backgroundColor: C.primary },
+  label: { fontSize: 8, fontWeight: "600", color: C.text3, letterSpacing: 0, textTransform: "uppercase" },
+  labelActive: { color: C.primary },
 });
 
 export default function TabsLayout() {
@@ -716,10 +716,10 @@ export default function TabsLayout() {
             >
               {sidebarCollapsed
                 ? (ChevronRight
-                    ? <ChevronRight size={14} color={Colors.text3} />
+                    ? <ChevronRight size={14} color={C.text3} />
                     : <Text style={sb.collapseBtnText}>›</Text>)
                 : (ChevronLeft
-                    ? <ChevronLeft size={14} color={Colors.text3} />
+                    ? <ChevronLeft size={14} color={C.text3} />
                     : <Text style={sb.collapseBtnText}>‹</Text>)}
             </TouchableOpacity>
           </View>
@@ -743,9 +743,9 @@ export default function TabsLayout() {
           <View style={sb.footer}>
             <TouchableOpacity style={sb.signOutBtn} onPress={handleSignOut} activeOpacity={0.7}>
               {LogOut ? (
-                <LogOut size={13} color={Colors.error} />
+                <LogOut size={13} color={C.error} />
               ) : (
-                <Text style={{ fontSize: 13, color: Colors.error }}>↪</Text>
+                <Text style={{ fontSize: 13, color: C.error }}>↪</Text>
               )}
               {!sidebarCollapsed && <Text style={sb.signOutText}>Sign out</Text>}
             </TouchableOpacity>
@@ -793,8 +793,8 @@ export default function TabsLayout() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: Colors.bg }}>
-      <View style={{ paddingTop: insets.top, backgroundColor: Colors.surface }}>
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <View style={{ paddingTop: insets.top, backgroundColor: C.surface }}>
         {offlineBanner}
         <MobileTopHeader
           isSyncing={isSyncing}

@@ -3,17 +3,26 @@
  */
 import React, { useState, useRef, forwardRef } from "react";
 import {
-  View, Text, TouchableOpacity, TextInput, ScrollView,
-  ActivityIndicator, Modal, Pressable, Platform, KeyboardAvoidingView,
-  StyleSheet, Animated, type ViewStyle, type TextStyle,
-} from "react-native";
+  View,
+  Text,
+  TouchableOpacity,
+  TextInput,
+  ScrollView,
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  Platform,
+  KeyboardAvoidingView,
+  StyleSheet,
+  type ViewStyle,
+type StyleProp,} from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { Colors, Fonts, R, S, initials, fmtCurrency } from "../../utils/theme";
+import { C, R, S, fmtCurrency, initials } from "../../utils/theme";
 
 // ── Screen wrapper ─────────────────────────────────────────────────────────────
 export function Screen({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
   return (
-    <View style={[{ flex: 1, backgroundColor: Colors.bg }, style]}>
+    <View style={[{ flex: 1, backgroundColor: C.bg }, style]}>
       {children}
     </View>
   );
@@ -90,9 +99,9 @@ export function StatGrid({ children }: { children: React.ReactNode }) {
 export function StatCard({
   label, value, sub, color = "teal",
 }: { label: string; value: string; sub?: string; color?: "teal" | "gold" | "green" | "red" }) {
-  const accent = { teal: Colors.accent, gold: Colors.gold, green: Colors.success, red: Colors.error };
+  const accent = { teal: C.accent, gold: C.gold, green: C.success, red: C.error };
   const accentFaint = {
-    teal: Colors.accentFaint, gold: "rgba(217,119,6,0.08)",
+    teal: C.accentFaint, gold: "rgba(217,119,6,0.08)",
     green: "rgba(5,150,105,0.08)", red: "rgba(220,38,38,0.08)"
   };
   return (
@@ -108,7 +117,25 @@ export function StatCard({
 }
 
 // ── Card ──────────────────────────────────────────────────────────────────────
-export function Card({ children, style }: { children?: React.ReactNode; style?: ViewStyle }) {
+export function Card({
+  children, style, onPress, activeOpacity = 0.7,
+}: {
+  children?: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  onPress?: () => void;
+  activeOpacity?: number;
+}) {
+  if (onPress) {
+    return (
+      <TouchableOpacity
+        style={[styles.card, style]}
+        onPress={onPress}
+        activeOpacity={activeOpacity}
+      >
+        {children}
+      </TouchableOpacity>
+    );
+  }
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
@@ -140,7 +167,7 @@ export function Avatar({
   name, size = 40, color = "teal",
 }: { name: string; size?: number; color?: "teal" | "gold" | "red" | "blue" | "green" }) {
   const bg = {
-    teal: Colors.accentFaint, gold: "rgba(217,119,6,0.1)",
+    teal: C.accentFaint, gold: "rgba(217,119,6,0.1)",
     red: "rgba(220,38,38,0.1)", blue: "rgba(37,99,235,0.1)", green: "rgba(5,150,105,0.08)"
   };
   const border = {
@@ -148,7 +175,7 @@ export function Avatar({
     red: "rgba(220,38,38,0.25)", blue: "rgba(37,99,235,0.25)", green: "rgba(5,150,105,0.25)"
   };
   const textColor = {
-    teal: Colors.accent, gold: Colors.gold, red: Colors.error, blue: Colors.info, green: Colors.success
+    teal: C.accent, gold: C.gold, red: C.error, blue: C.info, green: C.success
   };
   return (
     <View style={[
@@ -167,7 +194,7 @@ export function IconBadge({
   children, color = "teal", size = 40,
 }: { children: React.ReactNode; color?: "teal" | "gold" | "red" | "green" | "blue"; size?: number }) {
   const map = {
-    teal: { bg: Colors.accentFaint, border: "rgba(13,148,136,0.2)" },
+    teal: { bg: C.accentFaint, border: "rgba(13,148,136,0.2)" },
     gold: { bg: "rgba(217,119,6,0.1)", border: "rgba(217,119,6,0.2)" },
     red: { bg: "rgba(220,38,38,0.1)", border: "rgba(220,38,38,0.2)" },
     green: { bg: "rgba(5,150,105,0.1)", border: "rgba(5,150,105,0.2)" },
@@ -188,12 +215,12 @@ export function Badge({
   label, color = "teal",
 }: { label: string; color?: "teal" | "gold" | "green" | "red" | "blue" | "muted" }) {
   const map = {
-    teal: { bg: Colors.accentFaint, text: Colors.accent },
-    gold: { bg: "rgba(217,119,6,0.1)", text: Colors.gold },
-    green: { bg: "rgba(5,150,105,0.1)", text: Colors.success },
-    red: { bg: "rgba(220,38,38,0.1)", text: Colors.error },
-    blue: { bg: "rgba(37,99,235,0.1)", text: Colors.info },
-    muted: { bg: Colors.elevated, text: Colors.text3 },
+    teal: { bg: C.accentFaint, text: C.accent },
+    gold: { bg: "rgba(217,119,6,0.1)", text: C.gold },
+    green: { bg: "rgba(5,150,105,0.1)", text: C.success },
+    red: { bg: "rgba(220,38,38,0.1)", text: C.error },
+    blue: { bg: "rgba(37,99,235,0.1)", text: C.info },
+    muted: { bg: C.elevated, text: C.text3 },
   };
   return (
     <View style={[styles.badge, { backgroundColor: map[color].bg }]}>
@@ -207,16 +234,18 @@ export function Button({
   label, onPress, variant = "primary", size = "md", fullWidth, disabled, loading, icon, style,
 }: {
   label: string; onPress: () => void;
-  variant?: "primary" | "secondary" | "ghost" | "danger" | "success";
+  variant?: "primary" | "secondary" | "ghost" | "danger" | "success" | "outline" | "warning";
   size?: "sm" | "md" | "lg"; fullWidth?: boolean; disabled?: boolean;
   loading?: boolean; icon?: React.ReactNode; style?: ViewStyle;
 }) {
   const variantStyles = {
-    primary: { bg: Colors.primary, text: "#fff", border: Colors.primary },
-    secondary: { bg: Colors.surface, text: Colors.primary, border: Colors.border },
-    ghost: { bg: "transparent", text: Colors.accent, border: "transparent" },
-    danger: { bg: "rgba(220,38,38,0.08)", text: Colors.error, border: "rgba(220,38,38,0.25)" },
-    success: { bg: "rgba(5,150,105,0.08)", text: Colors.success, border: "rgba(5,150,105,0.25)" },
+    primary: { bg: C.primary, text: "#fff", border: C.primary },
+    secondary: { bg: C.surface, text: C.primary, border: C.border },
+    ghost: { bg: "transparent", text: C.accent, border: "transparent" },
+    danger: { bg: "rgba(220,38,38,0.08)", text: C.error, border: "rgba(220,38,38,0.25)" },
+    success: { bg: "rgba(5,150,105,0.08)", text: C.success, border: "rgba(5,150,105,0.25)" },
+    outline: { bg: C.surface, text: C.primary, border: C.border },
+    warning: { bg: "rgba(217,119,6,0.08)", text: C.gold, border: "rgba(217,119,6,0.25)" },
   };
   const sizeStyles = {
     sm: { paddingVertical: 8, paddingHorizontal: 16, fontSize: 12, borderRadius: R.sm },
@@ -256,7 +285,7 @@ interface InputProps {
   value: string;
   onChangeText: (v: string) => void;
   placeholder?: string;
-  keyboardType?: "default" | "email-address" | "numeric" | "phone-pad" | "decimal-pad" | "number-pad";
+  keyboardType?: "default" | "email-address" | "numeric" | "phone-pad" | "decimal-pad" | "number-pad" | "numbers-and-punctuation";
   multiline?: boolean;
   numberOfLines?: number;
   secureTextEntry?: boolean;
@@ -295,14 +324,14 @@ export const Input = forwardRef<TextInput, InputProps>(({
         !editable && styles.inputDisabled,
       ]}>
         {prefix && <Text style={styles.inputPrefix}>{prefix}</Text>}
-        {leftIcon && <Text style={{ fontSize: 14, marginRight: 8, color: Colors.text3 }}>{leftIcon}</Text>}
+        {leftIcon && <Text style={{ fontSize: 14, marginRight: 8, color: C.text3 }}>{leftIcon}</Text>}
         <TextInput
           ref={ref}
           testID={testID}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
-          placeholderTextColor={Colors.text3}
+          placeholderTextColor={C.text3}
           keyboardType={keyboardType}
           multiline={multiline}
           numberOfLines={numberOfLines}
@@ -329,7 +358,7 @@ export const Input = forwardRef<TextInput, InputProps>(({
 
 // ── Select ────────────────────────────────────────────────────────────────────
 export function Select({
-  label, value, options, items, onChange, hint,
+  label, value, options, items, onChange, hint, style,
 }: {
   label?: string;
   value: string | number;
@@ -337,19 +366,20 @@ export function Select({
   items?: { label: string; value: string | number }[];
   onChange: (v: any) => void;
   hint?: string;
+  style?: any;
 }) {
   const [open, setOpen] = useState(false);
   // Accept either options or items (items is alias for options)
   const opts = options || items || [];
   const selected = opts.find((o) => o.value === value);
   return (
-    <View style={styles.formGroup}>
+    <View style={[styles.formGroup, style]}>
       {label && <Text style={styles.formLabel}>{label}</Text>}
       <TouchableOpacity style={styles.inputWrap} onPress={() => setOpen(true)} activeOpacity={0.7}>
-        <Text style={[styles.input, { color: selected ? Colors.text : Colors.text3, flex: 1 }]}>
+        <Text style={[styles.input, { color: selected ? C.text : C.text3, flex: 1 }]}>
           {selected?.label ?? "Select…"}
         </Text>
-        <Text style={{ color: Colors.text3, fontSize: 11, marginLeft: 4 }}>▾</Text>
+        <Text style={{ color: C.text3, fontSize: 11, marginLeft: 4 }}>▾</Text>
       </TouchableOpacity>
       {hint && <Text style={styles.inputHint}>{hint}</Text>}
       <BottomModal visible={open} onClose={() => setOpen(false)} title={label ?? "Select"}>
@@ -359,12 +389,12 @@ export function Select({
             onPress={() => { onChange(o.value); setOpen(false); }}
             style={[styles.selectOption, String(o.value) === String(value) && styles.selectOptionActive]}
           >
-            <Text style={[styles.selectOptionText, o.value === value && { color: Colors.accent, fontWeight: "700" }]}>
+            <Text style={[styles.selectOptionText, o.value === value && { color: C.accent, fontWeight: "700" }]}>
               {o.label}
             </Text>
             {o.value === value && (
               <View style={styles.selectCheck}>
-                <Text style={{ color: Colors.accent, fontSize: 12 }}>✓</Text>
+                <Text style={{ color: C.accent, fontSize: 12 }}>✓</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -391,7 +421,7 @@ export function BottomModal({
               <View style={styles.sheetHeader}>
                 <Text style={styles.sheetTitle}>{title}</Text>
                 <TouchableOpacity onPress={onClose} style={styles.sheetClose}>
-                  <Text style={{ color: Colors.text2, fontSize: 16, fontWeight: "700" }}>✕</Text>
+                  <Text style={{ color: C.text2, fontSize: 16, fontWeight: "700" }}>✕</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -431,7 +461,7 @@ export function Section({
 
 // ── Loan Progress Bar ─────────────────────────────────────────────────────────
 export function LoanProgress({ pct }: { pct: number }) {
-  const color = pct >= 80 ? Colors.success : pct >= 50 ? Colors.accent : Colors.warning;
+  const color = pct >= 80 ? C.success : pct >= 50 ? C.accent : C.warning;
   return (
     <View style={styles.progressBg}>
       <View style={[styles.progressFill, { width: `${Math.min(100, pct)}%` as any, backgroundColor: color }]} />
@@ -483,15 +513,15 @@ export function SearchBar({ value, onChange, placeholder = "Search…" }: {
 }) {
   return (
     <View style={styles.searchBar}>
-      <Text style={{ color: Colors.text3, marginRight: 8, fontSize: 14 }}>⌕</Text>
+      <Text style={{ color: C.text3, marginRight: 8, fontSize: 14 }}>⌕</Text>
       <TextInput
         value={value} onChangeText={onChange}
-        placeholder={placeholder} placeholderTextColor={Colors.text3}
+        placeholder={placeholder} placeholderTextColor={C.text3}
         style={styles.searchInput}
       />
       {value.length > 0 && (
         <TouchableOpacity onPress={() => onChange("")}>
-          <Text style={{ color: Colors.text3, fontSize: 14 }}>✕</Text>
+          <Text style={{ color: C.text3, fontSize: 14 }}>✕</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -515,14 +545,14 @@ export function InfoRow({ label, value, accent }: { label: string; value: string
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={[styles.infoValue, accent && { color: Colors.accent, fontWeight: "700" }]}>{value}</Text>
+      <Text style={[styles.infoValue, accent && { color: C.accent, fontWeight: "700" }]}>{value}</Text>
     </View>
   );
 }
 
 // ── Toast / Snackbar ──────────────────────────────────────────────────────────
 
-type ToastType = "success" | "error";
+type ToastType = "success" | "error" | "info";
 
 export function Toast({
   visible,
@@ -550,8 +580,8 @@ export function Toast({
           {
             backgroundColor:
               type === "error"
-                ? Colors.error
-                : Colors.success,
+                ? C.error
+                : C.success,
           },
         ]}
       />
@@ -562,8 +592,8 @@ export function Toast({
           {
             color:
               type === "error"
-                ? Colors.error
-                : Colors.success,
+                ? C.error
+                : C.success,
           },
         ]}
       >
@@ -613,14 +643,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: S.lg,
     paddingTop: Platform.OS === "ios" ? 56 : 44,
     paddingBottom: S.md,
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
   },
   headerBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: C.border,
   },
-  headerTitle: { fontSize: 16, fontWeight: "700", color: Colors.text, letterSpacing: -0.2 },
-  headerSub: { fontSize: 11, color: Colors.text3, marginTop: 1 },
+  headerTitle: { fontSize: 16, fontWeight: "700", color: C.text, letterSpacing: -0.2 },
+  headerSub: { fontSize: 11, color: C.text3, marginTop: 1 },
 
   // Hero card
   heroCard: {
@@ -639,7 +669,7 @@ const styles = StyleSheet.create({
   },
   heroStripe: {
     position: "absolute", bottom: 0, right: 0,
-    width: 120, height: 4, backgroundColor: Colors.accent,
+    width: 120, height: 4, backgroundColor: C.accent,
     borderTopLeftRadius: 2,
   },
   heroLabel: {
@@ -663,34 +693,34 @@ const styles = StyleSheet.create({
   statGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, paddingHorizontal: S.lg, marginBottom: S.xl },
   statCard: {
     flex: 1, minWidth: "45%",
-    backgroundColor: Colors.surface,
-    borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: C.surface,
+    borderWidth: 1, borderColor: C.border,
     borderTopWidth: 3,
     borderRadius: R.lg, padding: S.md,
-    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 2 },
+    shadowColor: C.primary, shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06, shadowRadius: 8, elevation: 2,
   },
   statDot: { width: 28, height: 28, borderRadius: 8, alignItems: "center", justifyContent: "center", marginBottom: 10 },
   statDotInner: { width: 8, height: 8, borderRadius: 4 },
-  statLabel: { fontSize: 10, color: Colors.text3, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 4 },
+  statLabel: { fontSize: 10, color: C.text3, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 4 },
   statValue: { fontSize: 19, fontWeight: "800", letterSpacing: -0.4 },
-  statSub: { fontSize: 10, color: Colors.text3, marginTop: 2 },
+  statSub: { fontSize: 10, color: C.text3, marginTop: 2 },
 
   // Card
   card: {
-    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
     borderRadius: R.lg, overflow: "hidden",
-    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 2 },
+    shadowColor: C.primary, shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
   },
   cardRow: {
     flexDirection: "row", alignItems: "center",
     paddingVertical: 14, paddingHorizontal: S.lg, gap: 12,
-    borderBottomWidth: 1, borderBottomColor: Colors.borderLight,
+    borderBottomWidth: 1, borderBottomColor: C.borderLight,
   },
   cardInfo: { flex: 1, minWidth: 0 },
-  cardName: { fontSize: 13, fontWeight: "600", color: Colors.text },
-  cardSub: { fontSize: 11, color: Colors.text3, marginTop: 2 },
+  cardName: { fontSize: 13, fontWeight: "600", color: C.text },
+  cardSub: { fontSize: 11, color: C.text3, marginTop: 2 },
 
   // Avatar
   avatar: { borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
@@ -710,59 +740,59 @@ const styles = StyleSheet.create({
   // Form
   formGroup: { marginBottom: 16 },
   formLabel: {
-    fontSize: 11, fontWeight: "700", color: Colors.text2,
+    fontSize: 11, fontWeight: "700", color: C.text2,
     textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8,
   },
   inputWrap: {
     flexDirection: "row", alignItems: "center",
-    backgroundColor: Colors.surface,
-    borderWidth: 1.5, borderColor: Colors.border,
+    backgroundColor: C.surface,
+    borderWidth: 1.5, borderColor: C.border,
     borderRadius: R.md, paddingHorizontal: 14, minHeight: 50,
   },
-  inputFocused: { borderColor: Colors.accent, backgroundColor: Colors.surface },
-  inputError: { borderColor: Colors.error },
-  inputDisabled: { backgroundColor: Colors.elevated, opacity: 0.7 },
-  input: { flex: 1, color: Colors.text, fontSize: 14, paddingVertical: 12 },
-  inputPrefix: { color: Colors.text2, fontSize: 13, marginRight: 8, fontWeight: "600" },
-  inputHint: { fontSize: 11, color: Colors.text3, marginTop: 4 },
-  inputErrorText: { fontSize: 11, color: Colors.error, marginTop: 4, fontWeight: "500" },
+  inputFocused: { borderColor: C.accent, backgroundColor: C.surface },
+  inputError: { borderColor: C.error },
+  inputDisabled: { backgroundColor: C.elevated, opacity: 0.7 },
+  input: { flex: 1, color: C.text, fontSize: 14, paddingVertical: 12 },
+  inputPrefix: { color: C.text2, fontSize: 13, marginRight: 8, fontWeight: "600" },
+  inputHint: { fontSize: 11, color: C.text3, marginTop: 4 },
+  inputErrorText: { fontSize: 11, color: C.error, marginTop: 4, fontWeight: "500" },
 
   // Select
   selectOption: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingVertical: 16, paddingHorizontal: S.lg,
-    borderBottomWidth: 1, borderBottomColor: Colors.borderLight,
+    borderBottomWidth: 1, borderBottomColor: C.borderLight,
   },
-  selectOptionActive: { backgroundColor: Colors.accentFaint },
-  selectOptionText: { fontSize: 14, color: Colors.text },
+  selectOptionActive: { backgroundColor: C.accentFaint },
+  selectOptionText: { fontSize: 14, color: C.text },
   selectCheck: {
     width: 22, height: 22, borderRadius: 11,
-    backgroundColor: Colors.accentFaint, alignItems: "center", justifyContent: "center",
+    backgroundColor: C.accentFaint, alignItems: "center", justifyContent: "center",
   },
 
   // Modal
   modalKeyboard: { flex: 1 },
   modalOverlay: { flex: 1, backgroundColor: "rgba(15,31,51,0.5)", justifyContent: "flex-end" },
   bottomSheet: {
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderTopLeftRadius: R.xl, borderTopRightRadius: R.xl,
     maxHeight: "90%", paddingBottom: 32,
-    shadowColor: Colors.primary, shadowOffset: { width: 0, height: -4 },
+    shadowColor: C.primary, shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.1, shadowRadius: 16, elevation: 24,
   },
   sheetHandle: {
-    width: 36, height: 4, backgroundColor: Colors.muted,
+    width: 36, height: 4, backgroundColor: C.muted,
     borderRadius: 2, alignSelf: "center", marginTop: 12, marginBottom: 4,
   },
   sheetHeader: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: S.lg, paddingVertical: S.md,
-    borderBottomWidth: 1, borderBottomColor: Colors.border,
+    borderBottomWidth: 1, borderBottomColor: C.border,
   },
-  sheetTitle: { fontSize: 16, fontWeight: "700", color: Colors.text },
+  sheetTitle: { fontSize: 16, fontWeight: "700", color: C.text },
   sheetClose: {
     width: 28, height: 28, alignItems: "center", justifyContent: "center",
-    backgroundColor: Colors.elevated, borderRadius: R.full,
+    backgroundColor: C.elevated, borderRadius: R.full,
   },
   sheetScrollContent: { paddingBottom: 28 },
 
@@ -773,27 +803,27 @@ const styles = StyleSheet.create({
     justifyContent: "space-between", marginBottom: 12,
   },
   sectionTitle: {
-    fontSize: 13, fontWeight: "700", color: Colors.text, letterSpacing: -0.2,
+    fontSize: 13, fontWeight: "700", color: C.text, letterSpacing: -0.2,
   },
   sectionLinkWrap: { paddingVertical: 4, paddingHorizontal: 8 },
-  sectionLink: { fontSize: 12, color: Colors.accent, fontWeight: "600" },
+  sectionLink: { fontSize: 12, color: C.accent, fontWeight: "600" },
 
   // Progress
-  progressBg: { height: 5, backgroundColor: Colors.elevated, borderRadius: R.full, overflow: "hidden", marginVertical: 6 },
+  progressBg: { height: 5, backgroundColor: C.elevated, borderRadius: R.full, overflow: "hidden", marginVertical: 6 },
   progressFill: { height: "100%", borderRadius: R.full },
 
   // Empty
   empty: { alignItems: "center", paddingVertical: 48, paddingHorizontal: 24 },
   emptyIconWrap: {
     width: 64, height: 64, borderRadius: 20,
-    backgroundColor: Colors.elevated, alignItems: "center", justifyContent: "center", marginBottom: 16,
+    backgroundColor: C.elevated, alignItems: "center", justifyContent: "center", marginBottom: 16,
   },
   emptyIcon: { fontSize: 28 },
-  emptyTitle: { fontSize: 15, fontWeight: "700", color: Colors.text, marginBottom: 6 },
-  emptyText: { fontSize: 13, color: Colors.text3, textAlign: "center", lineHeight: 20 },
+  emptyTitle: { fontSize: 15, fontWeight: "700", color: C.text, marginBottom: 6 },
+  emptyText: { fontSize: 13, color: C.text3, textAlign: "center", lineHeight: 20 },
   emptyBtn: {
     marginTop: 16, paddingVertical: 10, paddingHorizontal: 24,
-    backgroundColor: Colors.primary, borderRadius: R.md,
+    backgroundColor: C.primary, borderRadius: R.md,
   },
   emptyBtnText: { fontSize: 13, fontWeight: "700", color: "#fff" },
 
@@ -802,45 +832,45 @@ const styles = StyleSheet.create({
   tabRow: { flexDirection: "row", gap: 6, paddingBottom: 2 },
   tabBtn: {
     paddingVertical: 7, paddingHorizontal: 16,
-    borderRadius: R.full, borderWidth: 1.5, borderColor: Colors.border,
-    backgroundColor: Colors.surface,
+    borderRadius: R.full, borderWidth: 1.5, borderColor: C.border,
+    backgroundColor: C.surface,
   },
-  tabBtnActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  tabBtnText: { fontSize: 12, fontWeight: "600", color: Colors.text3 },
+  tabBtnActive: { backgroundColor: C.primary, borderColor: C.primary },
+  tabBtnText: { fontSize: 12, fontWeight: "600", color: C.text3 },
   tabBtnTextActive: { color: "#fff" },
 
   // Search
   searchBar: {
     flexDirection: "row", alignItems: "center",
-    backgroundColor: Colors.elevated,
-    borderWidth: 1.5, borderColor: Colors.border,
+    backgroundColor: C.elevated,
+    borderWidth: 1.5, borderColor: C.border,
     borderRadius: R.md, paddingHorizontal: 14, paddingVertical: 10,
     marginBottom: S.md,
   },
-  searchInput: { flex: 1, color: Colors.text, fontSize: 13 },
+  searchInput: { flex: 1, color: C.text, fontSize: 13 },
 
   // Divider
-  divider: { height: 1, backgroundColor: Colors.border, marginVertical: S.lg },
+  divider: { height: 1, backgroundColor: C.border, marginVertical: S.lg },
   dividerRow: { flexDirection: "row", alignItems: "center", gap: 12, marginVertical: S.lg },
-  dividerLine: { flex: 1, height: 1, backgroundColor: Colors.border },
-  dividerLabel: { fontSize: 11, color: Colors.text3, fontWeight: "600" },
+  dividerLine: { flex: 1, height: 1, backgroundColor: C.border },
+  dividerLabel: { fontSize: 11, color: C.text3, fontWeight: "600" },
 
   // Info row
   infoRow: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.borderLight,
+    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.borderLight,
   },
-  infoLabel: { fontSize: 13, color: Colors.text3 },
-  infoValue: { fontSize: 13, fontWeight: "600", color: Colors.text },
+  infoLabel: { fontSize: 13, color: C.text3 },
+  infoValue: { fontSize: 13, fontWeight: "600", color: C.text },
 
   // Toast
   toast: {
     position: "absolute", bottom: 96, alignSelf: "center",
     flexDirection: "row", alignItems: "center", gap: 8,
-    backgroundColor: Colors.surface,
-    borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: C.surface,
+    borderWidth: 1, borderColor: C.border,
     borderRadius: R.full, paddingVertical: 10, paddingHorizontal: 20,
-    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 },
+    shadowColor: C.primary, shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.12, shadowRadius: 12, elevation: 8,
   },
   toastSuccess: { borderColor: "rgba(5,150,105,0.3)" },

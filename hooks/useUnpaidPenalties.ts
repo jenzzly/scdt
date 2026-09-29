@@ -1,7 +1,6 @@
 // hooks/useUnpaidPenalties.ts
 import { useMemo } from "react";
 import {
-  useStore,
   useActiveGroup,
   useGroupMembers,
   useGroupMeetings,

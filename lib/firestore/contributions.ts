@@ -1,8 +1,21 @@
 // lib/firestore/contributions.ts
 import {
-  doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, orderBy, onSnapshot, writeBatch,
-  membersCol, contribsCol, walletCol, groupDoc,
-  getCurrentUserInfo, logError, stripUndefined, fromSnap, round2,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  membersCol,
+  contribsCol,
+  getCurrentUserInfo,
+  logError,
+  stripUndefined,
+  fromSnap,
 } from "./core";
 import type { Contribution, NewRecord } from "./core";
 import { writeAuditLog } from "./audit";

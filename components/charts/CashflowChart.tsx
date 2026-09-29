@@ -8,7 +8,7 @@
 // version is fully responsive — it fills whatever width its parent gives it.
 import React, { useState } from "react";
 import { View, Text, StyleSheet, LayoutChangeEvent } from "react-native";
-import { Colors } from "../../utils/theme";
+import { C } from "../../utils/theme";
 
 interface Props {
   months: string[];
@@ -36,11 +36,11 @@ export function CashflowChart({ months, income, expenses, height = 150 }: Props)
     <View onLayout={onLayout}>
       <View style={styles.legend}>
         <View style={styles.legendItem}>
-          <View style={[styles.legendDot, { backgroundColor: Colors.teal }]} />
+          <View style={[styles.legendDot, { backgroundColor: C.teal }]} />
           <Text style={styles.legendLabel}>Income</Text>
         </View>
         <View style={styles.legendItem}>
-          <View style={[styles.legendDot, { backgroundColor: Colors.gold }]} />
+          <View style={[styles.legendDot, { backgroundColor: C.gold }]} />
           <Text style={styles.legendLabel}>Expenses</Text>
         </View>
       </View>
@@ -52,8 +52,8 @@ export function CashflowChart({ months, income, expenses, height = 150 }: Props)
           return (
             <View key={i} style={styles.barGroup}>
               <View style={styles.barPair}>
-                <View style={[styles.bar, { height: incH, backgroundColor: Colors.teal }]} />
-                <View style={[styles.bar, { height: expH, backgroundColor: Colors.gold, marginLeft: 3 }]} />
+                <View style={[styles.bar, { height: incH, backgroundColor: C.teal }]} />
+                <View style={[styles.bar, { height: expH, backgroundColor: C.gold, marginLeft: 3 }]} />
               </View>
               <Text style={styles.barLabel} numberOfLines={1}>{m}</Text>
             </View>
@@ -68,12 +68,12 @@ const styles = StyleSheet.create({
   legend: { flexDirection: "row", gap: 14, marginBottom: 8 },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 5 },
   legendDot: { width: 8, height: 8, borderRadius: 2 },
-  legendLabel: { fontSize: 11, color: Colors.text3 },
+  legendLabel: { fontSize: 11, color: C.text3 },
   empty: { alignItems: "center", justifyContent: "center" },
-  emptyText: { color: Colors.text3, fontSize: 13 },
+  emptyText: { color: C.text3, fontSize: 13 },
   barsRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between" },
   barGroup: { flex: 1, alignItems: "center", justifyContent: "flex-end" },
   barPair: { flexDirection: "row", alignItems: "flex-end" },
   bar: { width: 12, borderRadius: 3 },
-  barLabel: { fontSize: 9, color: Colors.text3, marginTop: 6 },
+  barLabel: { fontSize: 9, color: C.text3, marginTop: 6 },
 });

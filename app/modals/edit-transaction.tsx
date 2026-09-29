@@ -22,7 +22,7 @@
 //    your exact `Input` component's props from components/ui — swap in
 //    your real <Input label=... /> if it differs from this shape.
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -42,9 +42,9 @@ import {
 } from "../../stores/useStore";
 
 import { useToast, Toast, DatePicker } from "../../components/ui";
-import { C, fmtCurrency, showConfirm, round2 } from "../../utils/theme";
+import { C, fmtCurrency, showConfirm } from "../../utils/theme";
 import type { WalletTransaction } from "../../types";
-import { projectAccruedInterest } from "../../lib/firestore/loans";
+import { projectAccruedInterest, computeFlatAccrued } from "../../utils/accrual";
 
 // Same allow-list as wallet.tsx — keep these two in sync, or better,
 // move this into a shared constants file and import it in both places.
@@ -110,39 +110,58 @@ export default function EditTransactionModal() {
   const [txType, setTxType] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Calculate accrued interest projection when date changes for loan disbursements
+  // Calculate accrued interest to display for a linked loan
+  // disbursement. Two shapes:
+  //   • reducing_balance → projection as of the edited date (shows how
+  //     moving the disbursement date shifts accrued interest).
+  //   • flat             → accrued as of today, computed from the
+  //     schedule. Flat interest doesn't accrue daily, so it doesn't
+  //     change with the edited date — we show the current state as a
+  //     reference for the admin.
   const accruedInterestProjection = useMemo(() => {
-    if (!linkedLoan || linkedLoan.interestMethod !== "reducing_balance") return null;
+    if (!linkedLoan) return null;
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-    
-    try {
-      // Use the loan's current application date as the anchor if lastAccrualDate is not set
-      const anchorDate = (linkedLoan as any).lastAccrualDate || linkedLoan.applicationDate || date;
-      
-      const projection = projectAccruedInterest(
-        {
-          balance: linkedLoan.balance,
-          interestRate: linkedLoan.interestRate,
-          interestMethod: linkedLoan.interestMethod,
-          interestRatePeriod: (linkedLoan as any).interestRatePeriod,
-          accruedInterest: (linkedLoan as any).accruedInterest || 0,
-          lastAccrualDate: anchorDate,
-        },
-        date + "T00:00:00.000Z" // Ensure proper ISO format
-      );
-      // console.log("Accrued interest projection (wallet):", projection, "loan data:", {
-      //   balance: linkedLoan.balance,
-      //   interestRate: linkedLoan.interestRate,
-      //   lastAccrualDate: anchorDate,
-      //   newDate: date,
-      // });
-      return projection;
-    } catch (e) {
-      console.error("Failed to calculate accrued interest projection:", e);
-      return null;
-    }
-  }, [linkedLoan, date]);
 
+    if (linkedLoan.interestMethod === "reducing_balance") {
+      try {
+        const anchorDate =
+          (linkedLoan as any).lastAccrualDate ||
+          linkedLoan.applicationDate ||
+          date;
+
+        const projection = projectAccruedInterest(
+          {
+            balance: linkedLoan.balance,
+            interestRate: linkedLoan.interestRate,
+            interestMethod: linkedLoan.interestMethod,
+            interestRatePeriod: (linkedLoan as any).interestRatePeriod,
+            accruedInterest: (linkedLoan as any).accruedInterest || 0,
+            lastAccrualDate: anchorDate,
+          },
+          date + "T00:00:00.000Z"
+        );
+
+        return { kind: "reducing_balance" as const, ...projection };
+      } catch (e) {
+        console.error(
+          "Failed to calculate accrued interest projection:",
+          e,
+        );
+        return null;
+      }
+    }
+
+    // Flat: accrued as of today.
+    const flat = computeFlatAccrued(linkedLoan);
+    if (!flat || flat.installmentCount === 0) return null;
+
+    return {
+      kind: "flat" as const,
+      total: flat.scheduled,
+      outstanding: flat.outstanding,
+      installmentCount: flat.installmentCount,
+    };
+  }, [linkedLoan, date]);
   useEffect(() => {
     if (!tx) return;
     setDescription(tx.description ?? "");
@@ -329,22 +348,45 @@ export default function EditTransactionModal() {
           placeholder="YYYY-MM-DD"
         />
 
-        {linkedLoan &&
-          linkedLoan.interestMethod === "reducing_balance" &&
-          accruedInterestProjection && (
-            <View style={s.accruedInterestBox}>
-              <Text style={s.accruedInterestLabel}>
-                Projected Accrued Interest
-              </Text>
-              <Text style={s.accruedInterestValue}>
-                {fmtCurrency(accruedInterestProjection.total)}
-              </Text>
-              <Text style={s.accruedInterestSub}>
-                {accruedInterestProjection.days} days · +
-                {fmtCurrency(accruedInterestProjection.accrued)} new
-              </Text>
-            </View>
-          )}
+        {linkedLoan && accruedInterestProjection && (
+          <View style={s.accruedInterestBox}>
+            {accruedInterestProjection.kind === "reducing_balance" ? (
+              <>
+                <Text style={s.accruedInterestLabel}>
+                  Projected Accrued Interest
+                </Text>
+                <Text style={s.accruedInterestValue}>
+                  {fmtCurrency(accruedInterestProjection.total)}
+                </Text>
+                <Text style={s.accruedInterestSub}>
+                  {accruedInterestProjection.days} days · +
+                  {fmtCurrency(accruedInterestProjection.accrued)} new
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={s.accruedInterestLabel}>
+                  Accrued Interest (flat)
+                </Text>
+                <Text style={s.accruedInterestValue}>
+                  {fmtCurrency(accruedInterestProjection.total)}
+                </Text>
+                <Text style={s.accruedInterestSub}>
+                  {accruedInterestProjection.installmentCount} installment
+                  {accruedInterestProjection.installmentCount !== 1
+                    ? "s"
+                    : ""}{" "}
+                  due so far
+                  {accruedInterestProjection.outstanding > 0
+                    ? ` · ${fmtCurrency(
+                        accruedInterestProjection.outstanding,
+                      )} still owed`
+                    : " · all covered"}
+                </Text>
+              </>
+            )}
+          </View>
+        )}
 
         {!isLinked && (
           <>

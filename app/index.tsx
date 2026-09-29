@@ -6,7 +6,7 @@ import { View, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../hooks/useAuth";
 import { useStore } from "../stores/useStore";
-import { Colors } from "../utils/theme";
+import { C } from "../utils/theme";
 
 export default function Index() {
   const router = useRouter();
@@ -25,8 +25,8 @@ export default function Index() {
   }, [user, loading, authUid]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: Colors.bg, alignItems: "center", justifyContent: "center" }}>
-      <ActivityIndicator size="large" color={Colors.primary} />
+    <View style={{ flex: 1, backgroundColor: C.bg, alignItems: "center", justifyContent: "center" }}>
+      <ActivityIndicator size="large" color={C.primary} />
     </View>
   );
 }

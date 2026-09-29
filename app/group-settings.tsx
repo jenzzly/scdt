@@ -8,14 +8,14 @@ import { useRouter } from "expo-router";
 import { useStore, useActiveGroup, useGroupAuditLogs } from "../stores/useStore";
 import { useGroupMembers } from "../stores/selectors";
 import { useAuth } from "../hooks/useAuth";
-import { Input, Select, Button, useToast, Toast, Card, DatePicker, SearchBar, TabRow, BottomModal, Badge, Avatar, InfoRow, CardRow, Empty } from "../components/ui";
-import { Colors, C, T, fmtCurrency, fmtDate, showConfirm, round2, uid } from "../utils/theme";
+import { Input, Select, Button, useToast, Toast, Card, DatePicker, SearchBar, TabRow, BottomModal, Badge, Avatar, Empty } from "../components/ui";
+import { C, fmtCurrency, fmtDate, showConfirm, round2, uid } from "../utils/theme";
 import { exportFullData, importFullData } from "../utils/importExport";
 import * as FS from "../lib/firestore";
 import type { AuditLog, MemberPermissions, Member, GroupRole, MemberRole } from "../types";
 import { DEFAULT_MEMBER_PERMISSIONS } from "../types";
-import { USER_ROLES, ROLE_LABELS } from "../types/roles";
-import { createUserAsAdmin, resetUserPasswordAsAdmin } from "../lib/auth/adminUsers";
+import { ROLE_LABELS } from "../types/roles";
+import { createUserAsAdmin } from "../lib/auth/adminUsers";
 import { generateLoginToken } from "../utils/authTokens";
 import { findMembershipDrift, fixMembershipDrift, type MembershipDrift } from "../lib/firestore/reconcileMemberships";
 
@@ -113,7 +113,6 @@ const PERM_LABELS: Record<keyof MemberPermissions, string> = {
   editMembers: "Edit Members",
   deleteRecords: "Delete Records",
   manageSettings: "Manage Settings",
-  updateMeetings: "Update Meetings",
 };
 const PERM_GROUPS = [
   { label: "Create & Apply", keys: ["addContribution", "addLoan", "addInvestment"] as (keyof MemberPermissions)[] },
@@ -828,10 +827,15 @@ export default function GroupSettingsScreen() {
         await FS.addNotification(
           member.userId || member.id,
           {
+            userId: member.userId || member.id,
             title: "Your Login Token",
-            message: `Your login token is: ${tokenData.token}\n\nThis token will expire in 24 hours. Use it on the login screen to access your account.`,
+            message: `Your login token is: ${tokenData.token}
+
+This token will expire in 24 hours. Use it on the login screen to access your account.`,
             type: "info",
             groupId: activeGroupId,
+            read: false,
+            createdAt: new Date().toISOString(),
           },
           member.email
         );
@@ -1145,7 +1149,7 @@ They won't be able to sign in or participate in group activities, and any new la
         // matching what saveRolePermissions cascades on future edits.
         permissions: isCustom
           ? (customRole?.permissions ?? DEFAULT_MEMBER_PERMISSIONS)
-          : (group?.rolePermissions?.[baseRole] ?? SYSTEM_ROLE_DEFAULT_PERMISSIONS[baseRole as MemberRole] ?? DEFAULT_MEMBER_PERMISSIONS),
+          : (group?.rolePermissions?.[baseRole as MemberRole] ?? SYSTEM_ROLE_DEFAULT_PERMISSIONS[baseRole as MemberRole] ?? DEFAULT_MEMBER_PERMISSIONS),
         userId: editingMember.userId,
       });
       show("Member updated successfully");
@@ -1989,7 +1993,7 @@ They won't be able to sign in or participate in group activities, and any new la
             const active = activeSection === tab.key;
 
             const badgeCount =
-              tab.key === "tokenRequests"
+              (tab.key as string) === "tokenRequests"
                 ? pendingTokenRequests.length
                 : tab.key === "audit"
                 ? allAuditLogs.length

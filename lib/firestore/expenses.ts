@@ -1,8 +1,18 @@
 // lib/firestore/expenses.ts
 import {
-  doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, orderBy, onSnapshot, writeBatch,
-  expensesCol, walletCol, groupDoc,
-  getCurrentUserInfo, logError, stripUndefined, fromSnap, round2,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  orderBy,
+  onSnapshot,
+  expensesCol,
+  getCurrentUserInfo,
+  logError,
+  stripUndefined,
+  fromSnap,
 } from "./core";
 import type { Expense, NewRecord } from "./core";
 import { writeAuditLog } from "./audit";

@@ -1,10 +1,10 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity} from "react-native";
+import { useState } from "react";
+import { StyleSheet, ScrollView, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup } from "../../stores/useStore";
 import { Input, Select, Button, useToast, Toast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
-import { Colors, S, R } from "../../utils/theme";
+import { S } from "../../utils/theme";
 
 const CATEGORIES = [
   { label: "Bank Charges", value: "bank_charges" },
@@ -64,8 +64,5 @@ export default function AddExpenseModal() {
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: S.lg, paddingTop: Platform.OS === "ios" ? 56 : 36, paddingBottom: S.lg, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  title: { fontSize: 17, fontWeight: "700", color: Colors.text },
-  cancel: { color: Colors.accent, fontSize: 15, fontWeight: "600" },
   body: { padding: S.lg },
 });

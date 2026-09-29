@@ -26,7 +26,6 @@ import {
   useGroupMeetings,
   useCurrentMember,
   useCurrentMemberPermissions,
-  useIsAdminView,
   useIsGroupView,
 } from "../../stores/useStore";
 
@@ -312,7 +311,12 @@ function calculateLoanInterestProjection(
     if (fromDateObj && dueDate < fromDateObj) return;
     if (asOfDate && dueDate > asOfDate) return;
 
-    projectedInterest += installment.interest;
+    // Number(...) || 0 — one legacy/malformed schedule item with a
+    // missing `interest` field used to turn the whole sum into NaN,
+    // which the downstream .filter(projectedInterest > 0) then dropped
+    // silently, making projectedLoanInterest read 0 even when dozens
+    // of unpaid installments existed.
+    projectedInterest += Number(installment.interest) || 0;
   });
 
   return round2(projectedInterest);
@@ -322,38 +326,6 @@ function calculateLoanInterestProjection(
 // KPI
 // ─────────────────────────────────────────────────────────────────────────
 
-const KpiCard = ({
-  label,
-  value,
-  color,
-  subtext,
-}: {
-  label: string;
-  value: string;
-  color: string;
-  subtext?: string;
-}) => (
-  <View style={[styles.kpiCard, { borderTopColor: color }]}>
-    <Text style={styles.kpiLabel} numberOfLines={1}>
-      {label}
-    </Text>
-
-    <Text
-      style={[styles.kpiValue, { color }]}
-      numberOfLines={1}
-      adjustsFontSizeToFit
-      minimumFontScale={0.75}
-    >
-      {value}
-    </Text>
-
-    {subtext ? (
-      <Text style={styles.kpiSubtext} numberOfLines={1}>
-        {subtext}
-      </Text>
-    ) : null}
-  </View>
-);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Earnings donut
@@ -1072,7 +1044,7 @@ export default function ReportsScreen() {
   const allMeetings = useGroupMeetings();
   const permissions = useCurrentMemberPermissions();
   const currentMember = useCurrentMember();
-  const canSeeAll = useIsAdminView();
+  const canSeeAll = useIsGroupView();
 
   const isGroupViewHeader = useIsGroupView();
   const isPersonalView = !isGroupViewHeader || !canSeeAll;
@@ -1174,7 +1146,7 @@ export default function ReportsScreen() {
   const wallet = isPersonalView
     ? allWallet.filter(
         (t) =>
-          myIds.has(t.memberId) ||
+          (t.memberId && myIds.has(t.memberId)) ||
           myIds.has((t as any).userId),
       )
     : allWallet;
@@ -1548,6 +1520,57 @@ export default function ReportsScreen() {
     [wallet]
   );
 
+  // ── Late fee buckets ─────────────────────────────────────────────
+  //
+  // The summary previously showed every late_fee wallet tx in one cell,
+  // but loan fees and (contribution + meeting) fees are managed on
+  // different screens and mean different things to a user reading the
+  // top-of-page summary. Two separate buckets:
+  //
+  //   • groupContributionAndMeetingFees — the "Penalties & Late Fees"
+  //     cell: contribution late fees + meeting absence/late penalties.
+  //
+  //   • appliedUnpaidLoanLateFees — the recorded-but-unpaid portion of
+  //     loan late fees, which combines with projectedLoanLateFees
+  //     (defined below) to produce the "Late Fees Owed" cell.
+  //
+  // Loan fees are identified by tx ID prefix — applyLoanLateFee in
+  // walletSlice.ts writes them as `late-fee-loan-*`. Any tx with a
+  // loanId is also treated as a loan fee for legacy safety.
+  const appliedUnpaidLoanLateFees = useMemo(
+    () =>
+      round2(
+        wallet
+          .filter(
+            (t) =>
+              t.type === "late_fee" &&
+              typeof t.id === "string" &&
+              t.id.startsWith("late-fee-loan-") &&
+              !(t as any).feePaid &&
+              !(t as any).deletedAt
+          )
+          .reduce((s, t) => s + Math.abs(t.amount || 0), 0)
+      ),
+    [wallet]
+  );
+
+  const groupContributionAndMeetingFees = useMemo(
+    () =>
+      round2(
+        wallet
+          .filter(
+            (t) =>
+              t.type === "late_fee" &&
+              t.amount > 0 &&
+              !(typeof t.id === "string" &&
+                t.id.startsWith("late-fee-loan-")) &&
+              !t.loanId
+          )
+          .reduce((s, t) => s + t.amount, 0)
+      ),
+    [wallet]
+  );
+
   const groupInvestmentReturnsOnly = useMemo(
     () =>
       round2(
@@ -1693,8 +1716,216 @@ export default function ReportsScreen() {
     loanLateFees.reduce((sum, item) => sum + item.feeAmount, 0)
   );
 
+
+  // ── Total loan late fees owed ────────────────────────────────────
+  //
+  // This MUST match the Loans-screen KPI "Late Fees". That screen
+  // computes:
+  //
+  //     applied   — wallet late_fee txs, filtered to visible loans,
+  //                 not marked paid
+  //     accrued   — findOverdueInstallments with no asOf cap
+  //     total     — applied + accrued
+  //
+  // Deliberately ignores the reports-screen date filter. This is a
+  // current-liability *balance* (what's owed right now), not a flow
+  // within a period. Every other "what do we owe" figure at the top
+  // of the reports page behaves the same way.
+  const groupLoanLateFeesOwed = useMemo(() => {
+    if (!group) return 0;
+
+    const scopedLoans = isPersonalView
+      ? allLoans.filter(
+          (l) =>
+            myIds.has(l.memberId) ||
+            myIds.has((l as any).userId),
+        )
+      : allLoans;
+
+    const visibleLoanIds = new Set(scopedLoans.map((l) => l.id));
+
+    // Accrued-but-not-yet-applied
+    let accruedTotal = 0;
+    try {
+      const overdue =
+        findOverdueInstallments(
+          group,
+          allMembers,
+          scopedLoans,
+          allWallet,
+        ) || [];
+      accruedTotal = overdue.reduce(
+        (sum, o) => sum + (o.feeAmount || 0),
+        0,
+      );
+    } catch (e) {
+      console.error(
+        "[reports] findOverdueInstallments failed:",
+        e,
+      );
+    }
+
+    // Applied-but-unpaid
+    const appliedTotal = allWallet
+      .filter(
+        (t) =>
+          t.type === "late_fee" &&
+          !!t.loanId &&
+          visibleLoanIds.has(t.loanId) &&
+          !(t as any).feePaid &&
+          !(t as any).deletedAt,
+      )
+      .reduce((s, t) => s + Math.abs(t.amount || 0), 0);
+
+    return round2(accruedTotal + appliedTotal);
+  }, [
+    group,
+    allMembers,
+    allLoans,
+    allWallet,
+    myIds,
+    isPersonalView,
+  ]);
+
   const totalProjectedEarnings = round2(
     projectedLoanInterest + projectedLoanLateFees
+  );
+
+  // ── Profit donut — group-wide categories, scaled in personal view ─
+  //
+  // The donut was previously fed from the scoped `wallet` / `loans`,
+  // so in personal view every segment collapsed to what the current
+  // member happened to have in their own wallet. Now each segment is
+  // computed group-wide from `allWallet` / `allLoans` and multiplied
+  // by `donutScale` — 1/N in personal view (equal-share model), 1 in
+  // group view.
+  // ── Group-wide interest (unscoped) ────────────────────────────────
+  //
+  // Reads allWallet / allLoans regardless of view. Used by both the
+  // Interest Earned cell and the profit donut, which scale this figure
+  // by the active-member count in personal view.
+  const groupInterestAllTime = useMemo(
+    () =>
+      round2(
+        allWallet.reduce((sum, t) => {
+          if (t.type === "loan_repayment") {
+            const loan = allLoans.find((l) => l.id === t.loanId);
+            if (!loan?.totalRepayable) return sum;
+            return (
+              sum +
+              round2(t.amount * (loan.totalInterest / loan.totalRepayable))
+            );
+          }
+          if (
+            (t.type === "loan_interest_income" ||
+              t.type === "interest") &&
+            t.amount > 0
+          ) {
+            return sum + t.amount;
+          }
+          return sum;
+        }, 0)
+      ),
+    [allWallet, allLoans]
+  );
+
+  const activeMemberCount = useMemo(
+    () =>
+      Math.max(
+        1,
+        allMembers.filter((m) => m.status === "active").length
+      ),
+    [allMembers]
+  );
+
+  const donutScale = isPersonalView ? 1 / activeMemberCount : 1;
+
+  const donutLoanInterest = round2(groupInterestAllTime * donutScale);
+
+  const donutLateFees = useMemo(
+    () =>
+      round2(
+        allWallet
+          .filter((t) => t.type === "late_fee" && t.amount > 0)
+          .reduce((s, t) => s + t.amount, 0) * donutScale
+      ),
+    [allWallet, donutScale]
+  );
+
+  const donutInvestmentReturns = useMemo(
+    () =>
+      round2(
+        allWallet
+          .filter(
+            (t) => t.type === "investment_return" && t.amount > 0
+          )
+          .reduce((s, t) => s + t.amount, 0) * donutScale
+      ),
+    [allWallet, donutScale]
+  );
+
+  const donutAccruedUnpaid = useMemo(
+    () =>
+      round2(
+        allLoans
+          .filter(
+            (l) =>
+              l.status === "disbursed" &&
+              l.interestMethod === "reducing_balance"
+          )
+          .reduce((sum, loan) => {
+            const acc = computeTodayAccrued(loan);
+            return sum + (acc?.total ?? 0);
+          }, 0) * donutScale
+      ),
+    [allLoans, donutScale]
+  );
+
+  const donutProjectedInterest = useMemo(
+    () =>
+      round2(
+        allLoans
+          .filter((l) => l.status === "disbursed")
+          .reduce(
+            (sum, loan) =>
+              sum +
+              calculateLoanInterestProjection(loan, "", ""),
+            0
+          ) * donutScale
+      ),
+    [allLoans, donutScale]
+  );
+
+  const donutProjectedLateFees = useMemo(
+    () =>
+      round2(
+        (overdueLoans || []).reduce(
+          (s, o) => s + (o.feeAmount || 0),
+          0
+        ) * donutScale
+      ),
+    [overdueLoans, donutScale]
+  );
+
+  const donutOther = useMemo(
+    () => {
+      const known = [
+        "contribution",
+        "loan_interest_income",
+        "interest",
+        "late_fee",
+        "investment_return",
+        "loan_disbursement",
+        "loan_repayment",
+        "loan_principal_recovery",
+      ];
+      return round2(
+        allWallet
+          .filter((t) => !known.includes(t.type))
+          .reduce((s, t) => s + t.amount, 0) * donutScale
+      );
+    },
+    [allWallet, donutScale]
   );
 
   const collectionRatePct = useMemo(() => {
@@ -2538,7 +2769,7 @@ export default function ReportsScreen() {
             <View style={styles.gfpRow}>
               <View style={[styles.gfpStat, styles.gfpStatBorderRight, styles.gfpStatBorderBottom]}>
                 <Text style={styles.gfpStatLabel} numberOfLines={1}>
-                  Accrued (unpaid)
+                  Late Fees Owed
                 </Text>
 
                 <Text
@@ -2547,11 +2778,11 @@ export default function ReportsScreen() {
                   adjustsFontSizeToFit
                   minimumFontScale={0.7}
                 >
-                  {fmtCurrency(groupAccruedInterestUnpaid)}
+                  {fmtCurrency(groupLoanLateFeesOwed)}
                 </Text>
 
                 <Text style={T.small} numberOfLines={1}>
-                  reducing-balance loans
+                  on loans
                 </Text>
               </View>
 
@@ -2587,11 +2818,11 @@ export default function ReportsScreen() {
                   adjustsFontSizeToFit
                   minimumFontScale={0.7}
                 >
-                  {fmtCurrency(groupPenaltiesOnly)}
+                  {fmtCurrency(groupContributionAndMeetingFees)}
                 </Text>
 
                 <Text style={T.small} numberOfLines={1}>
-                  collected
+                  meetings + contributions
                 </Text>
               </View>
 
@@ -2659,19 +2890,20 @@ export default function ReportsScreen() {
           <View style={styles.chartCard}>
             <Text style={styles.chartTitle}>Profits by source</Text>
             <Text style={styles.chartSubtitle}>
-              {isPersonalView ? "My earnings this period" : "Group earnings this period"}
-              {selectedFromDate || selectedToDate ? ` (${selectedFromDate || "start"} to ${selectedToDate || "now"})` : ""}
+              {isPersonalView
+                ? `My share of group profits (1/${activeMemberCount})`
+                : "Group earnings this period"}
             </Text>
 
             <EarningsDonut
               segments={[
-                { label: "Loan interest (actual)", value: groupInterestOnly, color: "#2a78d6" },
-                { label: "Late fees (actual)", value: groupPenaltiesOnly, color: "#eb6834" },
-                { label: "Investment returns", value: groupInvestmentReturnsOnly, color: "#1baf7a" },
-                { label: "Accrued (unpaid)", value: groupAccruedInterestUnpaid, color: "#a855f7" },
-                { label: "Projected interest (schedule)", value: projectedLoanInterest, color: "#6366f1" },
-                { label: "Projected late fees", value: projectedLoanLateFees, color: "#f97316" },
-                { label: "Other", value: groupOtherOnly, color: "#eda100" },
+                { label: "Loan interest (actual)", value: donutLoanInterest, color: "#2a78d6" },
+                { label: "Late fees (actual)", value: donutLateFees, color: "#eb6834" },
+                { label: "Investment returns", value: donutInvestmentReturns, color: "#1baf7a" },
+                { label: "Accrued (unpaid)", value: donutAccruedUnpaid, color: "#a855f7" },
+                { label: "Projected interest (schedule)", value: donutProjectedInterest, color: "#6366f1" },
+                { label: "Projected late fees", value: donutProjectedLateFees, color: "#f97316" },
+                { label: "Other", value: donutOther, color: "#eda100" },
               ]}
             />
           </View>
@@ -4216,6 +4448,7 @@ const styles = StyleSheet.create({
   kpiMiniValue: { fontSize: 18, fontWeight: "800", color: C.text },
 
   noData: { color: C.text3, fontSize: 13, paddingVertical: 30, textAlign: "center" },
+  emptyInline: { color: C.text3, fontSize: 12, paddingVertical: 16, textAlign: "center" },
 
   previewHeader: {
     flexDirection: "row",

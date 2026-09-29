@@ -726,6 +726,9 @@ export default function MeetingsScreen() {
     date: "",
     location: "",
     agenda: "",
+    startTime: "",
+    durationMinutes: 60,
+    hostMemberId: "",
   });
 
   const permissions = useCurrentMemberPermissions();
@@ -873,6 +876,9 @@ export default function MeetingsScreen() {
       date: meeting.date.split("T")[0],
       location: meeting.location || "",
       agenda: meeting.agenda || "",
+      startTime: meeting.startTime || "",
+      durationMinutes: meeting.durationMinutes ?? 60,
+      hostMemberId: meeting.hostMemberId || "",
     });
     setSelectedMeeting(meeting);
     setShowEditModal(true);
@@ -893,6 +899,9 @@ export default function MeetingsScreen() {
         date: new Date(editForm.date).toISOString(),
         location: editForm.location.trim() || undefined,
         agenda: editForm.agenda.trim() || undefined,
+        startTime: editForm.startTime.trim() || undefined,
+        durationMinutes: editForm.durationMinutes,
+        hostMemberId: editForm.hostMemberId || undefined,
       });
       show("Meeting updated");
       setShowEditModal(false);

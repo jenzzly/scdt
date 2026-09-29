@@ -60,8 +60,6 @@ export interface MemberPermissions {
   editMembers: boolean;
   deleteRecords: boolean;
   manageSettings: boolean;
-  /** @deprecated alias kept for backward compatibility */
-  updateMeetings?: boolean;
 }
 
 export const DEFAULT_MEMBER_PERMISSIONS: MemberPermissions = {
@@ -77,7 +75,6 @@ export const DEFAULT_MEMBER_PERMISSIONS: MemberPermissions = {
   editMembers: false,
   deleteRecords: false,
   manageSettings: false,
-  updateMeetings: false,
 };
 
 export interface LoanApprovalStep {

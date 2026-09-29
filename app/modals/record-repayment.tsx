@@ -9,13 +9,11 @@
 // implementation of the priority chain
 //   lastAccrualDate → disbursementDate → applicationDate → fallback
 // so the two screens and the server can't drift.
-import React, { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
   TouchableOpacity,
   ScrollView,
   TextInput,
@@ -30,22 +28,14 @@ import {
 } from "../../stores/useStore";
 import { Button, useToast, Toast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
-import {
-  Colors,
-  S,
-  R,
-  fmtCurrency,
-  fmtDate,
-  round2,
-  showConfirm,
-  fmtFull,
-} from "../../utils/theme";
+import { C, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
 
 import {
   daysBetween,
   toAnnualRate,
   resolveAccrualAnchor,
   computeTodayAccrued,
+  computeFlatAccrued,
 } from "../../utils/accrual";
 
 import { useLoanLateFees } from "../../hooks/useLoanLateFees";
@@ -253,30 +243,106 @@ export default function RecordRepaymentModal() {
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showLateFees, setShowLateFees] = useState(false);
+  const [payMode, setPayMode] = useState<"both" | "interest_only">("both");
 
   if (!loan) {
     return (
       <View
         style={{
           flex: 1,
-          backgroundColor: Colors.bg,
+          backgroundColor: C.bg,
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        <Text style={{ color: Colors.text3 }}>Loan not found</Text>
+        <Text style={{ color: C.text3 }}>Loan not found</Text>
         <TouchableOpacity
           onPress={() => router.back()}
           style={{ marginTop: 16 }}
         >
-          <Text style={{ color: Colors.accent }}>Go back</Text>
+          <Text style={{ color: C.accent }}>Go back</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  const amtNum = parseFloat(amount) || 0;
-  const split = amtNum > 0 && date ? computeSplit(loan, amtNum, date) : null;
+  // Accrued-interest lookups. Declared before amtNumRaw/interestDue
+  // because those read these figures. Each compute* returns null for
+  // the loan type it doesn't apply to, so exactly one is non-null.
+  const todayAccrued = computeTodayAccrued(loan);
+  const flatAccrued = computeFlatAccrued(loan);
+
+  const amtNumRaw = parseFloat(amount) || 0;
+
+  // Total interest owed right now — used only to (a) enable/disable
+  // the toggle and (b) as the server-side cap. This is what you'd pay
+  // to fully catch up.
+  const interestDueNow = isRB
+    ? round2(todayAccrued?.total ?? 0)
+    : round2(flatAccrued?.outstanding ?? 0);
+
+  // The interest portion of the NEXT scheduled installment — a normal
+  // monthly interest payment. This is what the Interest Only toggle
+  // defaults to, so the user doesn't have to type a catch-up amount
+  // by hand every time.
+  //
+  // Falls back to a computed figure for legacy loans without a
+  // schedule:
+  //   • reducing_balance → balance × monthlyRate
+  //   • flat             → totalInterest / repaymentMonths
+  const monthlyInterestDue = useMemo(() => {
+    const schedule = (loan?.schedule ?? []) as Array<{
+      paid?: boolean;
+      interest?: number;
+    }>;
+    const nextUnpaid = schedule.find((s) => !s.paid);
+    if (nextUnpaid && typeof nextUnpaid.interest === "number") {
+      return round2(nextUnpaid.interest);
+    }
+
+    if (!loan) return 0;
+
+    if (isRB) {
+      const annualRate = toAnnualRate(
+        loan.interestRate,
+        loan.interestRatePeriod ?? "monthly",
+      );
+      return round2(loan.balance * (annualRate / 12 / 100));
+    }
+
+    const totalInterest = Number(loan.totalInterest) || 0;
+    const months = Math.max(1, Number(loan.repaymentMonths) || 1);
+    return round2(totalInterest / months);
+  }, [loan, isRB]);
+
+  // In interest-only mode the amount is fixed at the monthly interest
+  // (not the full accrued total).
+  const amtNum =
+    payMode === "interest_only" ? monthlyInterestDue : amtNumRaw;
+
+  const rawSplit = amtNum > 0 && date ? computeSplit(loan, amtNum, date) : null;
+
+  // Interest-only forces 100% interest / 0% principal, regardless of
+  // the loan's natural split ratio. Also guarantees isRepaid stays
+  // false so the close-with-fees guard can never fire on an
+  // interest-only payment.
+  const split =
+    rawSplit && payMode === "interest_only"
+      ? {
+          ...rawSplit,
+          interestPortion: amtNum,
+          principalPortion: 0,
+          newBalance: round2(Math.max(0, loan.balance)),
+          accruedAfter: isRB
+            ? Math.max(0, round2((rawSplit.totalAccruedBefore ?? 0) - amtNum))
+            : 0,
+          isRepaid: false,
+          newAmountRepaid: round2((loan.amountRepaid || 0) + amtNum),
+          newTotalInterestPaid: round2(
+            (loan.totalInterestPaid || 0) + amtNum,
+          ),
+        }
+      : rawSplit;
 
   const pct =
     loan.status === "repaid"
@@ -284,10 +350,6 @@ export default function RecordRepaymentModal() {
       : loan.totalRepayable > 0
         ? Math.min(100, (loan.amountRepaid / loan.totalRepayable) * 100)
         : 0;
-
-  // Today's accrued interest — shared with loans.tsx's loan detail
-  // modal via utils/accrual.ts. Returns null for flat loans.
-  const todayAccrued = computeTodayAccrued(loan);
 
   const doRecord = async () => {
     if (submitting.current) return;
@@ -298,6 +360,7 @@ export default function RecordRepaymentModal() {
         loan.id,
         amtNum,
         new Date(date + "T12:00:00").toISOString(),
+        payMode,
       );
       show(
         split?.isRepaid ? "Loan fully repaid! 🎉" : "Repayment recorded ✅",
@@ -321,6 +384,23 @@ export default function RecordRepaymentModal() {
       show("Enter a payment date", "error");
       return;
     }
+
+    // Block closing the loan while unpaid late fees exist. A closed
+    // (repaid) loan is a terminal state — the loan detail modal stops
+    // offering "Record Payment", so any fee left on the ledger at
+    // close time would never be collected through the normal flow.
+    // The admin must clear the fees from the Loans screen first.
+    if (split?.isRepaid && lateFees.count > 0) {
+      show(
+        `Cannot close this loan — ${lateFees.count} unpaid late fee` +
+          `${lateFees.count !== 1 ? "s" : ""} totaling ` +
+          `${fmtCurrency(lateFees.total)}. Clear the fees first ` +
+          `from the Loans screen.`,
+        "error",
+      );
+      return;
+    }
+
     if (split?.isOverpaid) {
       showConfirm(
         "Overpayment",
@@ -391,7 +471,7 @@ export default function RecordRepaymentModal() {
             <View style={st.outCol}>
               <Text style={st.outLbl}>Principal</Text>
               <Text
-                style={[st.outVal, { color: Colors.error }]}
+                style={[st.outVal, { color: C.error }]}
                 numberOfLines={1}
                 adjustsFontSizeToFit
                 minimumFontScale={0.7}
@@ -403,7 +483,7 @@ export default function RecordRepaymentModal() {
             <View style={st.outCol}>
               <Text style={st.outLbl}>Interest</Text>
               <Text
-                style={[st.outVal, { color: Colors.gold }]}
+                style={[st.outVal, { color: C.gold }]}
                 numberOfLines={1}
                 adjustsFontSizeToFit
                 minimumFontScale={0.7}
@@ -427,7 +507,7 @@ export default function RecordRepaymentModal() {
             <View style={st.outCol}>
               <Text style={st.outLbl}>Repaid</Text>
               <Text
-                style={[st.outVal, { color: Colors.primary }]}
+                style={[st.outVal, { color: C.primary }]}
                 numberOfLines={1}
               >
                 {pct.toFixed(0)}%
@@ -440,6 +520,19 @@ export default function RecordRepaymentModal() {
               Accruing {todayAccrued.days}d @{" "}
               {round2(todayAccrued.dailyRatePct * 1000) / 1000}%/day ·{" "}
               {fmtCurrency(todayAccrued.accrued)} added today
+            </Text>
+          )}
+
+          {!isRB && flatAccrued && flatAccrued.installmentCount > 0 && (
+            <Text style={st.accrualLine} numberOfLines={2}>
+              Interest due so far:{" "}
+              {fmtCurrency(flatAccrued.scheduled)} across{" "}
+              {flatAccrued.installmentCount} installment
+              {flatAccrued.installmentCount !== 1 ? "s" : ""}
+              {" · "}
+              {flatAccrued.outstanding > 0
+                ? `${fmtCurrency(flatAccrued.outstanding)} still owed`
+                : "all covered"}
             </Text>
           )}
         </View>
@@ -511,17 +604,79 @@ export default function RecordRepaymentModal() {
         {/* ── 4. Payment form ───────────────────────────────────────── */}
         <Text style={st.sectionHeading}>Payment</Text>
 
+        <View style={st.payModeRow}>
+          <TouchableOpacity
+            style={[
+              st.payModeBtn,
+              payMode === "both" && st.payModeBtnActive,
+            ]}
+            onPress={() => setPayMode("both")}
+            activeOpacity={0.8}
+          >
+            <Text
+              style={[
+                st.payModeBtnText,
+                payMode === "both" && st.payModeBtnTextActive,
+              ]}
+              numberOfLines={1}
+            >
+              Interest + Principal
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              st.payModeBtn,
+              payMode === "interest_only" && st.payModeBtnActive,
+              interestDueNow <= 0 && st.payModeBtnDisabled,
+            ]}
+            onPress={() =>
+              interestDueNow > 0 && setPayMode("interest_only")
+            }
+            disabled={interestDueNow <= 0}
+            activeOpacity={0.8}
+          >
+            <Text
+              style={[
+                st.payModeBtnText,
+                payMode === "interest_only" && st.payModeBtnTextActive,
+              ]}
+              numberOfLines={1}
+            >
+              Interest Only
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {payMode === "interest_only" && (
+          <Text style={st.payModeHint}>
+            {isRB
+              ? "Pays this month's interest. Principal and schedule stay unchanged."
+              : "Pays this installment's interest. Principal stays unchanged."}
+          </Text>
+        )}
+
         <View style={st.inputGroup}>
           <Text style={st.inputLabel}>Amount ({currency})</Text>
-          <View style={st.amountRow}>
+          <View
+            style={[
+              st.amountRow,
+              payMode === "interest_only" && st.amountRowDisabled,
+            ]}
+          >
             <Text style={st.amountPrefix}>{currency}</Text>
             <TextInput
               style={st.amountInput}
-              value={amount}
+              value={
+                payMode === "interest_only"
+                  ? monthlyInterestDue.toFixed(2)
+                  : amount
+              }
               onChangeText={setAmount}
+              editable={payMode !== "interest_only"}
               keyboardType="numeric"
               placeholder="0"
-              placeholderTextColor={Colors.text3}
+              placeholderTextColor={C.text3}
               returnKeyType="done"
             />
           </View>
@@ -560,13 +715,13 @@ export default function RecordRepaymentModal() {
             <View style={st.previewSection}>
               <View style={st.previewRow}>
                 <Text style={st.previewLbl}>→ Interest</Text>
-                <Text style={[st.previewVal, { color: Colors.gold }]}>
+                <Text style={[st.previewVal, { color: C.gold }]}>
                   {fmtCurrency(split.interestPortion)}
                 </Text>
               </View>
               <View style={st.previewRow}>
                 <Text style={st.previewLbl}>→ Principal</Text>
-                <Text style={[st.previewVal, { color: Colors.accent }]}>
+                <Text style={[st.previewVal, { color: C.accent }]}>
                   {fmtCurrency(split.principalPortion)}
                 </Text>
               </View>
@@ -576,7 +731,7 @@ export default function RecordRepaymentModal() {
                     → Overpayment (credited)
                   </Text>
                   <Text
-                    style={[st.previewVal, { color: Colors.success }]}
+                    style={[st.previewVal, { color: C.success }]}
                   >
                     {fmtCurrency(split.overpaidAmount)}
                   </Text>
@@ -598,8 +753,8 @@ export default function RecordRepaymentModal() {
                       {
                         color:
                           split.newBalance === 0
-                            ? Colors.success
-                            : Colors.error,
+                            ? C.success
+                            : C.error,
                       },
                     ]}
                     numberOfLines={1}
@@ -622,8 +777,8 @@ export default function RecordRepaymentModal() {
                         {
                           color:
                             split.accruedAfter === 0
-                              ? Colors.success
-                              : Colors.gold,
+                              ? C.success
+                              : C.gold,
                         },
                       ]}
                       numberOfLines={1}
@@ -641,7 +796,7 @@ export default function RecordRepaymentModal() {
                   <Text
                     style={[
                       st.previewAfterVal,
-                      { color: Colors.primary },
+                      { color: C.primary },
                     ]}
                     numberOfLines={1}
                   >
@@ -711,7 +866,7 @@ export default function RecordRepaymentModal() {
                     style={[
                       st.histRow,
                       i % 2 === 1 && {
-                        backgroundColor: Colors.elevated,
+                        backgroundColor: C.elevated,
                       },
                     ]}
                   >
@@ -731,7 +886,7 @@ export default function RecordRepaymentModal() {
                         {
                           flex: 1,
                           textAlign: "right",
-                          color: Colors.gold,
+                          color: C.gold,
                         },
                       ]}
                     >
@@ -743,7 +898,7 @@ export default function RecordRepaymentModal() {
                         {
                           flex: 1,
                           textAlign: "right",
-                          color: Colors.accent,
+                          color: C.accent,
                         },
                       ]}
                     >
@@ -770,7 +925,7 @@ export default function RecordRepaymentModal() {
                       {
                         flex: 1.2,
                         fontWeight: "700",
-                        color: Colors.text,
+                        color: C.text,
                       },
                     ]}
                   >
@@ -783,7 +938,7 @@ export default function RecordRepaymentModal() {
                         flex: 1,
                         textAlign: "right",
                         fontWeight: "700",
-                        color: Colors.gold,
+                        color: C.gold,
                       },
                     ]}
                   >
@@ -801,7 +956,7 @@ export default function RecordRepaymentModal() {
                         flex: 1,
                         textAlign: "right",
                         fontWeight: "700",
-                        color: Colors.accent,
+                        color: C.accent,
                       },
                     ]}
                   >
@@ -819,7 +974,7 @@ export default function RecordRepaymentModal() {
                         flex: 1,
                         textAlign: "right",
                         fontWeight: "700",
-                        color: Colors.text,
+                        color: C.text,
                       },
                     ]}
                   >
@@ -834,9 +989,26 @@ export default function RecordRepaymentModal() {
         )}
 
         {/* ── 7. CTA ────────────────────────────────────────────────── */}
+        {split?.isRepaid && lateFees.count > 0 && (
+          <View style={st.closeBlockedBox}>
+            <Text style={st.closeBlockedTitle}>
+              ⚠ Cannot close this loan yet
+            </Text>
+            <Text style={st.closeBlockedText}>
+              {lateFees.count} unpaid late fee
+              {lateFees.count !== 1 ? "s" : ""} totaling{" "}
+              {fmtCurrency(lateFees.total)}. Clear or waive the fees
+              from the Loans screen before this loan can be closed.
+              Smaller payments are still allowed.
+            </Text>
+          </View>
+        )}
+
         <Button
           label={
-            split?.isRepaid
+            payMode === "interest_only"
+              ? "Record Interest Payment"
+              : split?.isRepaid && lateFees.count === 0
               ? "Close Loan — Final Payment"
               : "Record Payment"
           }
@@ -873,37 +1045,37 @@ const st = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: Colors.primaryFaint,
+    backgroundColor: C.primaryFaint,
     alignItems: "center",
     justifyContent: "center",
   },
   avatarText: {
     fontSize: 14,
     fontWeight: "800",
-    color: Colors.primary,
+    color: C.primary,
   },
   memberName: {
     fontSize: 16,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
   },
   memberMeta: {
     fontSize: 11,
-    color: Colors.text3,
+    color: C.text3,
     marginTop: 2,
   },
   purpose: {
     fontSize: 11,
-    color: Colors.text3,
+    color: C.text3,
     marginTop: 1,
     fontStyle: "italic",
   },
 
   // ── Outstanding hero ────────────────────────────────────────────
   outstanding: {
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     borderRadius: R.lg,
     padding: S.lg,
     marginBottom: S.lg,
@@ -911,7 +1083,7 @@ const st = StyleSheet.create({
   outstandingLabel: {
     fontSize: 9,
     fontWeight: "800",
-    color: Colors.text3,
+    color: C.text3,
     letterSpacing: 1,
     textTransform: "uppercase",
     marginBottom: 4,
@@ -919,7 +1091,7 @@ const st = StyleSheet.create({
   outstandingValue: {
     fontSize: 28,
     fontWeight: "800",
-    color: Colors.error,
+    color: C.error,
     letterSpacing: -0.8,
     marginBottom: 14,
   },
@@ -928,18 +1100,18 @@ const st = StyleSheet.create({
     alignItems: "center",
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
+    borderTopColor: C.borderLight,
   },
   outCol: { flex: 1, alignItems: "center", minWidth: 0 },
   outDiv: {
     width: 1,
     alignSelf: "stretch",
-    backgroundColor: Colors.borderLight,
+    backgroundColor: C.borderLight,
     marginHorizontal: 4,
   },
   outLbl: {
     fontSize: 9,
-    color: Colors.text3,
+    color: C.text3,
     fontWeight: "700",
     textTransform: "uppercase",
     letterSpacing: 0.5,
@@ -948,7 +1120,7 @@ const st = StyleSheet.create({
   outVal: { fontSize: 13, fontWeight: "800" },
   accrualLine: {
     fontSize: 10,
-    color: Colors.gold,
+    color: C.gold,
     marginTop: 12,
     textAlign: "center",
     lineHeight: 14,
@@ -956,7 +1128,7 @@ const st = StyleSheet.create({
 
   // ── Late-fee alert ──────────────────────────────────────────────
   alertBox: {
-    backgroundColor: Colors.redBg,
+    backgroundColor: C.redBg,
     borderWidth: 1,
     borderColor: "rgba(239,68,68,0.25)",
     borderRadius: R.lg,
@@ -980,16 +1152,16 @@ const st = StyleSheet.create({
   alertTitle: {
     fontSize: 12,
     fontWeight: "800",
-    color: Colors.error,
+    color: C.error,
   },
   alertSub: {
     fontSize: 11,
-    color: Colors.text2,
+    color: C.text2,
     marginTop: 1,
   },
   alertChevron: {
     fontSize: 10,
-    color: Colors.text3,
+    color: C.text3,
     marginLeft: 6,
   },
   alertBody: {
@@ -1008,18 +1180,18 @@ const st = StyleSheet.create({
   alertRowLabel: {
     fontSize: 12,
     fontWeight: "700",
-    color: Colors.text,
+    color: C.text,
   },
   alertRowSub: {
     fontSize: 10,
-    color: Colors.text3,
+    color: C.text3,
     marginTop: 1,
     lineHeight: 14,
   },
   alertRowAmount: {
     fontSize: 12,
     fontWeight: "800",
-    color: Colors.error,
+    color: C.error,
     flexShrink: 0,
   },
 
@@ -1027,7 +1199,7 @@ const st = StyleSheet.create({
   sectionHeading: {
     fontSize: 10,
     fontWeight: "800",
-    color: Colors.text3,
+    color: C.text3,
     textTransform: "uppercase",
     letterSpacing: 1,
     marginBottom: 10,
@@ -1039,7 +1211,7 @@ const st = StyleSheet.create({
   inputLabel: {
     fontSize: 11,
     fontWeight: "700",
-    color: Colors.text2,
+    color: C.text2,
     textTransform: "uppercase",
     letterSpacing: 0.6,
     marginBottom: 6,
@@ -1048,18 +1220,18 @@ const st = StyleSheet.create({
     flexDirection: "row",
     alignItems: "stretch",
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     borderRadius: 12,
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     overflow: "hidden",
   },
   amountPrefix: {
     paddingHorizontal: 14,
     paddingVertical: 14,
     fontSize: 14,
-    color: Colors.text3,
+    color: C.text3,
     fontWeight: "700",
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     textAlignVertical: "center",
   },
   amountInput: {
@@ -1068,14 +1240,14 @@ const st = StyleSheet.create({
     paddingVertical: 14,
     fontSize: 18,
     fontWeight: "700",
-    color: Colors.text,
+    color: C.text,
   },
 
   // ── Payment preview ─────────────────────────────────────────────
   preview: {
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     borderRadius: R.lg,
     padding: S.lg,
     marginTop: S.lg,
@@ -1099,12 +1271,12 @@ const st = StyleSheet.create({
   previewTitle: {
     fontSize: 13,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
   },
   previewAmount: {
     fontSize: 15,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
   },
   previewSection: { marginBottom: 12 },
   previewRow: {
@@ -1114,19 +1286,19 @@ const st = StyleSheet.create({
   },
   previewLbl: {
     fontSize: 12,
-    color: Colors.text2,
+    color: C.text2,
     fontWeight: "600",
   },
   previewVal: { fontSize: 12, fontWeight: "700" },
   previewAfter: {
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: Colors.border,
+    borderTopColor: C.border,
   },
   previewAfterLabel: {
     fontSize: 9,
     fontWeight: "800",
-    color: Colors.text3,
+    color: C.text3,
     letterSpacing: 0.8,
     textTransform: "uppercase",
     marginBottom: 8,
@@ -1138,7 +1310,7 @@ const st = StyleSheet.create({
   previewAfterCell: { flex: 1, minWidth: 0 },
   previewAfterLbl: {
     fontSize: 9,
-    color: Colors.text3,
+    color: C.text3,
     fontWeight: "700",
     textTransform: "uppercase",
     letterSpacing: 0.4,
@@ -1148,9 +1320,9 @@ const st = StyleSheet.create({
 
   // ── History ─────────────────────────────────────────────────────
   histCard: {
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     borderRadius: R.lg,
     marginBottom: S.lg,
     overflow: "hidden",
@@ -1161,20 +1333,20 @@ const st = StyleSheet.create({
     alignItems: "center",
     padding: S.md,
   },
-  histTitle: { fontSize: 12, fontWeight: "700", color: Colors.text },
-  histChevron: { fontSize: 10, color: Colors.text3 },
+  histTitle: { fontSize: 12, fontWeight: "700", color: C.text },
+  histChevron: { fontSize: 10, color: C.text3 },
   histHeadRow: {
     flexDirection: "row",
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
+    borderTopColor: C.borderLight,
   },
   histHead: {
     fontSize: 9,
     fontWeight: "700",
-    color: Colors.text3,
+    color: C.text3,
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
@@ -1183,18 +1355,81 @@ const st = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
+    borderTopColor: C.borderLight,
   },
-  histCell: { fontSize: 12, color: Colors.text2 },
-  histTotalRow: { backgroundColor: Colors.elevated },
+  histCell: { fontSize: 12, color: C.text2 },
+  histTotalRow: { backgroundColor: C.elevated },
 
   // ── Footnote ────────────────────────────────────────────────────
   footnote: {
     fontSize: 11,
-    color: Colors.text3,
+    color: C.text3,
     lineHeight: 16,
     marginTop: S.md,
     textAlign: "center",
     fontStyle: "italic",
+  },
+
+  // ── Close-blocked warning ───────────────────────────────────────
+  closeBlockedBox: {
+    backgroundColor: "rgba(239,68,68,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.25)",
+    borderRadius: R.md,
+    padding: S.md,
+    marginBottom: S.md,
+    gap: 4,
+  },
+  closeBlockedTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: C.error,
+  },
+  closeBlockedText: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: C.text2,
+  },
+
+  // ── Interest-only toggle ────────────────────────────────────────
+  payModeRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  payModeBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.surface,
+    alignItems: "center",
+  },
+  payModeBtnActive: {
+    backgroundColor: C.primary,
+    borderColor: C.primary,
+  },
+  payModeBtnDisabled: {
+    opacity: 0.4,
+  },
+  payModeBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text2,
+  },
+  payModeBtnTextActive: {
+    color: "#fff",
+  },
+  payModeHint: {
+    fontSize: 11,
+    color: C.text3,
+    marginBottom: 12,
+    lineHeight: 15,
+  },
+  amountRowDisabled: {
+    backgroundColor: C.elevated,
+    opacity: 0.9,
   },
 });

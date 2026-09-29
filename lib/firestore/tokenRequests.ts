@@ -25,8 +25,8 @@ export interface TokenRequest {
   groupId: string;
   email: string;
   status: "pending" | "processed" | "cancelled";
-  requestedAt: Date | null;
-  processedAt: Date | null;
+  requestedAt: Date | string | null;
+  processedAt: Date | string | null;
 }
 
 export type NewTokenRequest = NewRecord<TokenRequest>;

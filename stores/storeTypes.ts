@@ -68,7 +68,7 @@ export interface StoreState {
    */
   clearDataCache: () => void;
 
-  setAuth: (uid: string, name: string, email: string) => void;
+  setAuth: (uid: string | null, name: string | null, email: string | null) => void;
   clearAuth: () => void;
   setGroups: (groups: Group[]) => void;
   setActiveGroup: (id: string) => void;
@@ -195,7 +195,7 @@ export interface StoreState {
    * ledger; the exemption is only about preventing new accrual.
    */
   removeLateFeeExemption: (memberId: ID, exemptionId: ID) => Promise<void>;
-  recordContribution: (data: Omit<Contribution, "id" | "createdAt">, autoApprove?: boolean) => Promise<ID>;
+  recordContribution: (data: Omit<Contribution, "id" | "createdAt" | "status">, autoApprove?: boolean) => Promise<ID>;
   /**
    * Bulk import of contributions from a parsed .xlsx (or .csv) file.
    *
@@ -249,7 +249,12 @@ export interface StoreState {
   // record when the money actually left, instead of always stamping the
   // moment this action runs — see loanSlice.ts / disburseLoanServer.
   disburseLoan: (loanId: ID, disbursementDate?: string) => Promise<void>;
-  recordRepayment: (loanId: ID, amount: number, date?: string) => Promise<void>;
+  recordRepayment: (
+    loanId: ID,
+    amount: number,
+    date?: string,
+    mode?: "both" | "interest_only",
+  ) => Promise<void>;
   closeInvestment: (investmentId: ID, returnAmount: number, actualReturn?: number) => Promise<void>;
   addExpense: (data: Omit<Expense, "id" | "createdAt">) => Promise<ID>;
   deleteWalletTx: (id: ID, reason: string) => Promise<void>;

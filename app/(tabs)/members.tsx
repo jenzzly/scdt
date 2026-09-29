@@ -15,7 +15,7 @@
 //
 // Personal view shows the current user's own breakdown. Group view
 // shows everyone, ranked by the currently selected sort.
-import React, { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ScrollView,
   View,
@@ -38,7 +38,6 @@ import {
   useActiveGroup,
   useCurrentUserRole,
   useCurrentMember,
-  useIsAdminView,
   useCurrentMemberPermissions,
   useIsGroupView,
 } from "../../stores/useStore";
@@ -55,16 +54,12 @@ import {
   Toast,
   InfoRow,
 } from "../../components/ui";
-import { KpiCard } from "../../components/ui/KpiCard";
+;
 import {
-  Colors,
   C,
   T,
-  S,
-  R,
   fmtCurrency,
   fmtDate,
-  showConfirm,
   round2,
 } from "../../utils/theme";
 import {
@@ -652,7 +647,7 @@ export default function MembersScreen() {
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
   const isGroupView = useIsGroupView();
-  const isAdminView = useIsAdminView();
+  const isAdminView = useIsGroupView();
   const { deleteMember } = useStore();
   const permissions = useCurrentMemberPermissions();
   const myIds = useMyMemberIds();

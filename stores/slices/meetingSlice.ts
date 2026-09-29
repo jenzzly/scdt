@@ -65,7 +65,7 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
         
         if (meeting) {
           meeting.attendees.forEach(attendee => {
-            if (attendee.penaltyAmount && attendee.penaltyAmount > 0) {
+            if (attendee.penaltyAmount && (attendee.penaltyAmount ?? 0) > 0) {
               const penaltyTxId = `meeting-penalty-${meetingId}-${attendee.memberId}`;
               get().deleteWalletTxLocal(penaltyTxId);
             }
@@ -150,7 +150,7 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
         if (!meeting) throw new Error("Meeting not found");
         
         const updatedAttendees = meeting.attendees.map(attendee => {
-          if (attendee.memberId === memberId && attendee.penaltyAmount > 0) {
+          if (attendee.memberId === memberId && (attendee.penaltyAmount ?? 0) > 0) {
             return { ...attendee, penaltyPaid: true };
           }
           return attendee;
@@ -172,12 +172,12 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
         if (!activeGroupId) throw new Error("No active group");
         
         const memberMeetings = meetings.filter(m => 
-          m.attendees.some(a => a.memberId === memberId && a.penaltyAmount > 0 && !a.penaltyPaid)
+          m.attendees.some(a => a.memberId === memberId && (a.penaltyAmount ?? 0) > 0 && !a.penaltyPaid)
         );
         
         const updates = memberMeetings.map(async (meeting) => {
           const updatedAttendees = meeting.attendees.map(attendee => {
-            if (attendee.memberId === memberId && attendee.penaltyAmount > 0) {
+            if (attendee.memberId === memberId && (attendee.penaltyAmount ?? 0) > 0) {
               return { ...attendee, penaltyPaid: true };
             }
             return attendee;

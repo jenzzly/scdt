@@ -6,10 +6,23 @@
 // hardcoded, so each white-labeled app seeds sensible client-specific
 // defaults instead of always writing "SCDT Savings Group" / RWF.
 import {
-  doc, getDoc, getDocs, setDoc, updateDoc, query, where, limit, writeBatch,
-  db, auth,
-  membersCol, groupDoc, contribsCol, loansCol, investCol, walletCol, expensesCol, meetingsCol,
-  getMembershipId, stripUndefined,
+  doc,
+  getDoc,
+  setDoc,
+  query,
+  writeBatch,
+  db,
+  auth,
+  membersCol,
+  groupDoc,
+  contribsCol,
+  loansCol,
+  investCol,
+  walletCol,
+  expensesCol,
+  meetingsCol,
+  getMembershipId,
+  stripUndefined,
 } from "./core";
 import type { Group, Member, Loan, Contribution, Investment, WalletTransaction, Expense, Meeting } from "./core";
 import { BRAND } from "../brand";

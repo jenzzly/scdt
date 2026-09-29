@@ -15,7 +15,7 @@
 // fee that was cleared when the exemption was created — clearing fees is
 // a ledger operation, and the exemption is only about future accrual.
 import type { SetFn, GetFn, StoreState } from "../storeTypes";
-import type { ID, LateFeeExemption } from "../../types";
+import { LateFeeExemption } from "../../types";
 import * as FS from "../../lib/firestore";
 import { uid } from "../../utils/theme";
 

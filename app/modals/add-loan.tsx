@@ -1,6 +1,6 @@
 // app/modals/add-loan.tsx
 
-import React, { useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -31,16 +31,7 @@ import {
 
 import { ModalShell } from "../../components/ui/ModalShell";
 
-import {
-  Colors,
-  S,
-  R,
-  fmtCurrency,
-  round2,
-  loanSchedule,
-  showConfirm,
-  addMonthsToYmd,
-} from "../../utils/theme";
+import { C, R, S, addMonthsToYmd, fmtCurrency, loanSchedule, round2, showConfirm } from "../../utils/theme";
 
 import { useUnpaidPenalties } from "../../hooks/useUnpaidPenalties";
 
@@ -626,9 +617,7 @@ export default function AddLoanModal() {
                       styles.penaltyItemAmount
                     }
                   >
-                    {fmtCurrency(
-                      penalty.penaltyAmount
-                    )}
+                    {fmtCurrency(penalty.penaltyAmount ?? 0)}
                   </Text>
                 </View>
 
@@ -1038,7 +1027,7 @@ export default function AddLoanModal() {
                   styles.closePenaltyModalBtn,
                   {
                     backgroundColor:
-                      Colors.accent,
+                      C.accent,
                     marginBottom: 8,
                   },
                 ]}
@@ -1114,7 +1103,7 @@ export default function AddLoanModal() {
             <Text
               style={[
                 styles.infoBannerText,
-                { color: Colors.gold },
+                { color: C.gold },
               ]}
             >
               ✏️ You are editing a previously
@@ -1158,7 +1147,7 @@ export default function AddLoanModal() {
               style={[
                 styles.infoBannerText,
                 {
-                  color: Colors.error,
+                  color: C.error,
                   fontWeight: "700",
                 },
               ]}
@@ -1178,7 +1167,7 @@ export default function AddLoanModal() {
               style={[
                 styles.infoBannerText,
                 {
-                  color: Colors.error,
+                  color: C.error,
                   fontSize: 11,
                 },
               ]}
@@ -1209,7 +1198,7 @@ export default function AddLoanModal() {
                 style={[
                   styles.infoBannerText,
                   {
-                    color: Colors.primary,
+                    color: C.primary,
                     fontSize: 11,
                     fontWeight: "700",
                     marginTop: 4,
@@ -1468,7 +1457,7 @@ export default function AddLoanModal() {
               <Text
                 style={[
                   styles.calcVal,
-                  { color: Colors.gold },
+                  { color: C.gold },
                 ]}
               >
                 {fmtCurrency(
@@ -1488,7 +1477,7 @@ export default function AddLoanModal() {
                 style={[
                   styles.calcVal,
                   {
-                    color: Colors.primary,
+                    color: C.primary,
                     fontWeight: "800",
                     fontSize: 15,
                   },
@@ -1511,7 +1500,7 @@ export default function AddLoanModal() {
                   styles.calcLbl,
                   {
                     fontWeight: "700",
-                    color: Colors.text,
+                    color: C.text,
                   },
                 ]}
               >
@@ -1525,7 +1514,7 @@ export default function AddLoanModal() {
                 style={[
                   styles.calcVal,
                   {
-                    color: Colors.accent,
+                    color: C.accent,
                     fontWeight: "800",
                     fontSize: 16,
                   },
@@ -1634,9 +1623,9 @@ const styles = StyleSheet.create({
         ? 56
         : 36,
     paddingBottom: S.md,
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: C.border,
   },
 
   closeBtn: {
@@ -1644,21 +1633,21 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 16,
     backgroundColor:
-      Colors.elevated,
+      C.elevated,
     alignItems: "center",
     justifyContent: "center",
   },
 
   closeBtnText: {
     fontSize: 14,
-    color: Colors.text2,
+    color: C.text2,
     fontWeight: "600",
   },
 
   headerTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: Colors.text,
+    color: C.text,
   },
 
   body: {
@@ -1668,7 +1657,7 @@ const styles = StyleSheet.create({
 
   infoBanner: {
     backgroundColor:
-      Colors.primaryFaint,
+      C.primaryFaint,
     borderWidth: 1,
     borderColor:
       "rgba(26,60,94,0.15)",
@@ -1679,16 +1668,16 @@ const styles = StyleSheet.create({
 
   infoBannerText: {
     fontSize: 12,
-    color: Colors.primary,
+    color: C.primary,
     lineHeight: 18,
   },
 
   selfMemberRow: {
     backgroundColor:
-      Colors.elevated,
+      C.elevated,
     borderRadius: R.md,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     padding: S.md,
     marginBottom: S.lg,
     flexDirection: "row",
@@ -1697,24 +1686,24 @@ const styles = StyleSheet.create({
 
   selfMemberLbl: {
     fontSize: 12,
-    color: Colors.text3,
+    color: C.text3,
   },
 
   selfMemberVal: {
     fontSize: 13,
     fontWeight: "700",
-    color: Colors.text,
+    color: C.text,
   },
 
   calcCard: {
     backgroundColor:
-      Colors.surface,
+      C.surface,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     borderRadius: R.lg,
     padding: S.lg,
     marginBottom: S.lg,
-    shadowColor: Colors.primary,
+    shadowColor: C.primary,
     shadowOffset: {
       width: 0,
       height: 2,
@@ -1727,7 +1716,7 @@ const styles = StyleSheet.create({
   calcTitle: {
     fontSize: 11,
     fontWeight: "700",
-    color: Colors.text2,
+    color: C.text2,
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 12,
@@ -1739,7 +1728,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor:
-      Colors.borderLight,
+      C.borderLight,
   },
 
   calcRowLast: {
@@ -1749,13 +1738,13 @@ const styles = StyleSheet.create({
 
   calcLbl: {
     fontSize: 13,
-    color: Colors.text3,
+    color: C.text3,
   },
 
   calcVal: {
     fontSize: 13,
     fontWeight: "600",
-    color: Colors.text,
+    color: C.text,
   },
 
   interestNote: {
@@ -1763,12 +1752,12 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor:
-      Colors.borderLight,
+      C.borderLight,
   },
 
   interestNoteText: {
     fontSize: 11,
-    color: Colors.text3,
+    color: C.text3,
     fontStyle: "italic",
   },
 
@@ -1787,7 +1776,7 @@ const styles = StyleSheet.create({
 
   penaltyModalContent: {
     backgroundColor:
-      Colors.surface,
+      C.surface,
     borderRadius: R.xl,
     width: "90%",
     maxHeight: "80%",
@@ -1797,14 +1786,14 @@ const styles = StyleSheet.create({
   penaltyModalTitle: {
     fontSize: 18,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
     textAlign: "center",
     marginBottom: 4,
   },
 
   penaltyModalSubtitle: {
     fontSize: 13,
-    color: Colors.text3,
+    color: C.text3,
     textAlign: "center",
     marginBottom: S.md,
   },
@@ -1815,9 +1804,9 @@ const styles = StyleSheet.create({
   // numbers.
   approxBanner: {
     backgroundColor:
-      Colors.elevated,
+      C.elevated,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     borderRadius: R.md,
     padding: S.md,
     marginBottom: S.md,
@@ -1825,7 +1814,7 @@ const styles = StyleSheet.create({
   approxBannerText: {
     fontSize: 11,
     lineHeight: 16,
-    color: Colors.text2,
+    color: C.text2,
   },
 
   penaltyList: {
@@ -1835,13 +1824,13 @@ const styles = StyleSheet.create({
 
   penaltyItem: {
     backgroundColor:
-      Colors.elevated,
+      C.elevated,
     borderRadius: R.md,
     padding: S.md,
     marginBottom: S.sm,
     borderWidth: 1,
     borderColor:
-      Colors.borderLight,
+      C.borderLight,
   },
 
   penaltyItemHeader: {
@@ -1854,35 +1843,35 @@ const styles = StyleSheet.create({
   penaltyItemTitle: {
     fontSize: 13,
     fontWeight: "700",
-    color: Colors.text,
+    color: C.text,
   },
 
   penaltyItemAmount: {
     fontSize: 13,
     fontWeight: "800",
-    color: Colors.error,
+    color: C.error,
   },
 
   penaltyItemDate: {
     fontSize: 11,
-    color: Colors.text3,
+    color: C.text3,
     marginBottom: 2,
   },
 
   penaltyItemStatus: {
     fontSize: 11,
-    color: Colors.text3,
+    color: C.text3,
     textTransform: "capitalize",
   },
 
   penaltyItemDescription: {
     fontSize: 11,
-    color: Colors.text3,
+    color: C.text3,
   },
 
   penaltyItemType: {
     fontSize: 10,
-    color: Colors.text3,
+    color: C.text3,
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginTop: 2,
@@ -1895,14 +1884,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: R.sm,
     backgroundColor:
-      Colors.primaryFaint ??
-      Colors.elevated,
+      C.primaryFaint ??
+      C.elevated,
   },
 
   penaltyClearOneBtnText: {
     fontSize: 11,
     fontWeight: "700",
-    color: Colors.primary,
+    color: C.primary,
   },
 
   penaltyModalFooter: {
@@ -1912,18 +1901,18 @@ const styles = StyleSheet.create({
     marginTop: S.md,
     paddingTop: S.md,
     borderTopWidth: 1,
-    borderTopColor: Colors.border,
+    borderTopColor: C.border,
   },
 
   totalPenaltyText: {
     fontSize: 14,
     fontWeight: "800",
-    color: Colors.error,
+    color: C.error,
   },
 
   closePenaltyModalBtn: {
     backgroundColor:
-      Colors.primary,
+      C.primary,
     paddingHorizontal: S.lg,
     paddingVertical: S.sm,
     borderRadius: R.md,

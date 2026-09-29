@@ -1,5 +1,5 @@
 // app/(auth)/register.tsx
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, KeyboardAvoidingView, Platform,
@@ -9,7 +9,7 @@ import { useRouter } from "expo-router";
 import { useAuth } from "../../hooks/useAuth";
 import { useStore } from "../../stores/useStore";
 import { Input, Button, useToast, Toast } from "../../components/ui";
-import { Colors, S, R, fmtCurrency } from "../../utils/theme";
+import { C, S, fmtCurrency } from "../../utils/theme";
 import { BRAND } from "../../lib/brand";
 import * as FS from "../../lib/firestore";
 
@@ -112,15 +112,15 @@ export default function RegisterScreen() {
   // focus out of whichever field the user is typing in after every keystroke.
   const formCardStyle = isWide ? {
     width: "100%" as any, maxWidth: 480, alignSelf: "center" as any,
-    backgroundColor: Colors.surface, borderRadius: 20,
-    borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: C.surface, borderRadius: 20,
+    borderWidth: 1, borderColor: C.border,
     padding: 32,
   } : undefined;
 
   return (
     <KeyboardAvoidingView 
       behavior={Platform.OS === "ios" ? "padding" : "height"} 
-      style={{ flex: 1, backgroundColor: Colors.bg }}
+      style={{ flex: 1, backgroundColor: C.bg }}
     >
       <ScrollView 
         contentContainerStyle={[
@@ -248,7 +248,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   backButtonText: {
-    color: Colors.text3,
+    color: C.text3,
     fontSize: 14,
     fontWeight: "600",
   },
@@ -263,10 +263,10 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: Colors.primary,
+    backgroundColor: C.primary,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: Colors.primary,
+    shadowColor: C.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 12,
@@ -280,19 +280,19 @@ const styles = StyleSheet.create({
   brandTitle: {
     fontSize: 24,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
     letterSpacing: -0.5,
     marginBottom: 4,
   },
   brandSubtitle: {
     fontSize: 14,
-    color: Colors.text3,
+    color: C.text3,
   },
   formSection: {
     marginBottom: 24,
   },
   showHideText: {
-    color: Colors.accent,
+    color: C.accent,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -307,11 +307,11 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
   },
   footerText: {
-    color: Colors.text3,
+    color: C.text3,
     fontSize: 13,
   },
   loginLink: {
-    color: Colors.accent,
+    color: C.accent,
     fontSize: 13,
     fontWeight: "700",
   },

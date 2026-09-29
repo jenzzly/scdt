@@ -1,14 +1,14 @@
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { View, Text, StyleSheet, Animated } from "react-native";
 import { useStore } from "../../stores/useStore";
-import { Colors } from "../../utils/theme";
+import { C } from "../../utils/theme";
 
 const STATUS_CONFIG = {
-  synced:  { color: Colors.success,  label: "Synced",   dot: Colors.success },
-  pending: { color: Colors.warning,  label: "Pending",  dot: Colors.warning },
-  syncing: { color: Colors.teal,     label: "Syncing…", dot: Colors.teal },
-  failed:  { color: Colors.error,    label: "Sync failed", dot: Colors.error },
-  offline: { color: Colors.text3,    label: "Offline",  dot: Colors.text3 },
+  synced:  { color: C.success,  label: "Synced",   dot: C.success },
+  pending: { color: C.warning,  label: "Pending",  dot: C.warning },
+  syncing: { color: C.teal,     label: "Syncing…", dot: C.teal },
+  failed:  { color: C.error,    label: "Sync failed", dot: C.error },
+  offline: { color: C.text3,    label: "Offline",  dot: C.text3 },
 };
 
 export function SyncStatusPill() {
@@ -40,7 +40,7 @@ export function SyncStatusPill() {
 const styles = StyleSheet.create({
   pill: {
     flexDirection: "row", alignItems: "center", gap: 5,
-    backgroundColor: Colors.elevated, borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
     borderRadius: 99, paddingVertical: 4, paddingHorizontal: 10,
   },
   dot: { width: 6, height: 6, borderRadius: 3 },

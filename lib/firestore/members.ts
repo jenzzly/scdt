@@ -1,11 +1,25 @@
 // lib/firestore/members.ts
 import {
-  doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, orderBy, limit, onSnapshot, writeBatch,
-  db, auth,
-  membersCol, contribsCol, loansCol, investCol, walletCol, membershipsCol,
-  getCurrentUserInfo, logError, stripUndefined, fromSnap, round2, getMembershipId,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  db,
+  membersCol,
+  membershipsCol,
+  getCurrentUserInfo,
+  stripUndefined,
+  fromSnap,
+  getMembershipId,
 } from "./core";
-import type { Member, NewRecord, MemberRole } from "./core";
+import type { Member, NewRecord } from "./core";
+import type { MemberRole } from "../../types";
 import { writeAuditLog } from "./audit";
 import { getGroup, updateGroup } from "./groups";
 import { ensureGroupExists } from "./groupInit";

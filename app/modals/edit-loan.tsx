@@ -11,7 +11,7 @@
 // updateLoanAndSync in loanSlice.ts is what actually applies the patch —
 // this modal just decides which field to seed and what label to show.
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -30,13 +30,7 @@ import {
 import { Input, Button, useToast, Toast, DatePicker } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
-import {
-  Colors,
-  S,
-  fmtCurrency,
-  fmtDate,
-  showConfirm,
-} from "../../utils/theme";
+import { C, S, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
 
 import type { Loan } from "../../types";
 
@@ -366,9 +360,9 @@ export default function EditLoanModal() {
                         <Text
                           style={{
                             fontSize: 11,
-                            color: Colors.primary,
+                            color: C.primary,
                             fontWeight: "600",
-                            backgroundColor: Colors.primaryFaint,
+                            backgroundColor: C.primaryFaint,
                             paddingHorizontal: 8,
                             paddingVertical: 4,
                             borderRadius: 6,
@@ -438,21 +432,21 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 17,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
     textAlign: "center",
   },
   subtitle: {
     fontSize: 13,
     lineHeight: 19,
-    color: Colors.text3,
+    color: C.text3,
     textAlign: "center",
     marginBottom: 8,
   },
   noticeBox: {
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     padding: S.md,
     marginBottom: S.lg,
   },
@@ -463,69 +457,69 @@ const styles = StyleSheet.create({
   noticeTitle: {
     fontSize: 12,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
     marginBottom: 4,
   },
-  lockedNoticeTitle: { color: Colors.error },
-  noticeText: { fontSize: 12, lineHeight: 18, color: Colors.text2 },
+  lockedNoticeTitle: { color: C.error },
+  noticeText: { fontSize: 12, lineHeight: 18, color: C.text2 },
   errorText: {
     fontSize: 11,
-    color: Colors.error,
+    color: C.error,
     marginTop: -10,
     marginBottom: S.md,
   },
   readonlyBox: {
     padding: S.md,
     borderRadius: 10,
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     marginBottom: S.md,
   },
   readonlyLabel: {
     fontSize: 10,
     fontWeight: "800",
-    color: Colors.text3,
+    color: C.text3,
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 4,
   },
-  readonlyValue: { fontSize: 13, color: Colors.text2, fontWeight: "600" },
+  readonlyValue: { fontSize: 13, color: C.text2, fontWeight: "600" },
   summaryBox: {
     marginTop: S.sm,
     padding: S.md,
     borderRadius: 10,
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
   },
   summaryLabel: {
     fontSize: 10,
     fontWeight: "800",
-    color: Colors.text3,
+    color: C.text3,
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 5,
   },
-  summaryValue: { fontSize: 12, lineHeight: 18, color: Colors.text2 },
+  summaryValue: { fontSize: 12, lineHeight: 18, color: C.text2 },
   spacer: { height: S.lg },
   bottomSpacer: { height: 12 },
 
   rescheduleSection: {
     marginTop: S.lg * 1.5,
     borderTopWidth: 1,
-    borderTopColor: Colors.border,
+    borderTopColor: C.border,
     paddingTop: S.lg,
   },
   sectionTitle: {
     fontSize: 13,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
     marginBottom: 4,
   },
   sectionSubtitle: {
     fontSize: 11,
-    color: Colors.text3,
+    color: C.text3,
     marginBottom: 12,
     lineHeight: 16,
   },
@@ -535,26 +529,26 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: C.border,
     gap: 10,
   },
   installmentLabel: {
     fontSize: 12,
     fontWeight: "700",
-    color: Colors.text,
+    color: C.text,
   },
-  installmentMeta: { fontSize: 11, color: Colors.text3, marginTop: 2 },
+  installmentMeta: { fontSize: 11, color: C.text3, marginTop: 2 },
   rescheduleBtn: {
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 8,
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
   },
   rescheduleBtnText: {
     fontSize: 12,
     fontWeight: "700",
-    color: Colors.primary,
+    color: C.primary,
   },
 });

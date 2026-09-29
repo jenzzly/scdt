@@ -1,5 +1,5 @@
 import { Share, Platform } from "react-native";
-import * as FileSystem from "expo-file-system";
+;
 import * as DocumentPicker from "expo-document-picker";
 
 // Access the native module for compatibility

@@ -12,7 +12,7 @@
 //     branch. For "pending_committee" / "pending" investments there's
 //     nothing to sync yet, which updateInvestmentAndSync already handles.
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { View, Text, ScrollView, StyleSheet } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
@@ -28,7 +28,7 @@ import {
 } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
-import { Colors, S, fmtCurrency } from "../../utils/theme";
+import { C, S, fmtCurrency } from "../../utils/theme";
 
 import type { Investment } from "../../types";
 
@@ -237,21 +237,21 @@ export default function EditInvestmentModal() {
 const styles = StyleSheet.create({
   body: { padding: S.lg, paddingBottom: 60 },
   center: { padding: S.lg, gap: 12 },
-  title: { fontSize: 17, fontWeight: "800", color: Colors.text, textAlign: "center" },
-  subtitle: { fontSize: 13, lineHeight: 19, color: Colors.text3, textAlign: "center", marginBottom: 8 },
+  title: { fontSize: 17, fontWeight: "800", color: C.text, textAlign: "center" },
+  subtitle: { fontSize: 13, lineHeight: 19, color: C.text3, textAlign: "center", marginBottom: 8 },
   noticeBox: {
-    backgroundColor: Colors.elevated, borderRadius: 10, borderWidth: 1,
-    borderColor: Colors.border, padding: S.md, marginBottom: S.lg,
+    backgroundColor: C.elevated, borderRadius: 10, borderWidth: 1,
+    borderColor: C.border, padding: S.md, marginBottom: S.lg,
   },
-  noticeTitle: { fontSize: 12, fontWeight: "800", color: Colors.text, marginBottom: 4 },
-  noticeText: { fontSize: 12, lineHeight: 18, color: Colors.text2 },
-  errorText: { fontSize: 11, color: Colors.error, marginTop: -10, marginBottom: S.md },
+  noticeTitle: { fontSize: 12, fontWeight: "800", color: C.text, marginBottom: 4 },
+  noticeText: { fontSize: 12, lineHeight: 18, color: C.text2 },
+  errorText: { fontSize: 11, color: C.error, marginTop: -10, marginBottom: S.md },
   summaryBox: {
     marginTop: S.sm, padding: S.md, borderRadius: 10,
-    backgroundColor: Colors.elevated, borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
   },
-  summaryLabel: { fontSize: 10, fontWeight: "800", color: Colors.text3, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 5 },
-  summaryValue: { fontSize: 12, lineHeight: 18, color: Colors.text2 },
+  summaryLabel: { fontSize: 10, fontWeight: "800", color: C.text3, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 5 },
+  summaryValue: { fontSize: 12, lineHeight: 18, color: C.text2 },
   spacer: { height: S.lg },
   bottomSpacer: { height: 12 },
 });

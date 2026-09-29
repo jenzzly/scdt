@@ -38,7 +38,7 @@
 //   recordContribution() call below to match — I couldn't verify this
 //   against contributionSlice.ts.
 
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { View, Text, ScrollView, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 
@@ -62,7 +62,7 @@ import {
 } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
-import { Colors, S } from "../../utils/theme";
+import { C, S } from "../../utils/theme";
 
 import type { ContributionType } from "../../types";
 
@@ -267,25 +267,25 @@ export default function AddContributionModal() {
 const styles = StyleSheet.create({
   body: { padding: S.lg, paddingBottom: 60 },
   center: { padding: S.lg, gap: 12 },
-  title: { fontSize: 17, fontWeight: "800", color: Colors.text, textAlign: "center" },
+  title: { fontSize: 17, fontWeight: "800", color: C.text, textAlign: "center" },
   subtitle: {
     fontSize: 13,
     lineHeight: 19,
-    color: Colors.text3,
+    color: C.text3,
     textAlign: "center",
     marginBottom: 8,
   },
   noticeBox: {
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     padding: S.md,
     marginTop: S.sm,
   },
-  noticeTitle: { fontSize: 12, fontWeight: "800", color: Colors.text, marginBottom: 4 },
-  noticeText: { fontSize: 12, lineHeight: 18, color: Colors.text2 },
-  errorText: { fontSize: 11, color: Colors.error, marginTop: -10, marginBottom: S.md },
+  noticeTitle: { fontSize: 12, fontWeight: "800", color: C.text, marginBottom: 4 },
+  noticeText: { fontSize: 12, lineHeight: 18, color: C.text2 },
+  errorText: { fontSize: 11, color: C.error, marginTop: -10, marginBottom: S.md },
   spacer: { height: S.lg },
   bottomSpacer: { height: 12 },
 });

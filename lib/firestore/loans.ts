@@ -28,6 +28,14 @@ import type {
 
 import { writeAuditLog } from "./audit";
 
+import {
+  daysBetween,
+  projectAccruedInterest,
+  resolveAccrualAnchor,
+  toAnnualRate,
+  computeFlatAccrued,
+} from "../../utils/accrual";
+
 // Used by disburseLoanServer to rebuild the repayment schedule around
 // the actual disbursement date. The schedule was originally generated
 // at submission time with firstPaymentDate = applicationDate, which
@@ -75,55 +83,6 @@ function normalizeDate(value?: unknown): string | undefined {
   return undefined;
 }
 
-function toAnnualRate(
-  ratePercent: number,
-  period?: "monthly" | "annual",
-): number {
-  const rate = Number(ratePercent);
-  if (!Number.isFinite(rate) || rate <= 0) return 0;
-  if (period === "monthly") return rate * 12;
-  return rate;
-}
-
-function daysBetween(fromIso: string, toIso: string): number {
-  const fromDate = normalizeDate(fromIso);
-  const toDate = normalizeDate(toIso);
-  if (!fromDate || !toDate) return 0;
-
-  const from = new Date(`${fromDate}T00:00:00.000Z`).getTime();
-  const to = new Date(`${toDate}T00:00:00.000Z`).getTime();
-  if (!Number.isFinite(from) || !Number.isFinite(to)) return 0;
-
-  return Math.max(0, Math.floor((to - from) / 86400000));
-}
-
-// Resolve the date from which interest has been accruing.
-//
-// ORDER MATTERS: an explicit lastAccrualDate is authoritative (it's
-// updated every time interest is capitalized during a repayment). The
-// next-best anchor is the DISBURSEMENT date — the day the borrower
-// actually received the money and the clock started running. The
-// application date is only a last-resort fallback for data that predates
-// the disbursement flow entirely; it must never win over
-// disbursementDate, or interest silently accrues during the approval
-// window when no money had moved yet.
-function getAccrualStartDate(
-  loan: {
-    lastAccrualDate?: string;
-    applicationDate?: string;
-    disbursementDate?: string;
-  },
-  fallbackDate: string,
-): string {
-  return (
-    normalizeDate(loan.lastAccrualDate) ??
-    normalizeDate(loan.disbursementDate) ??
-    normalizeDate(loan.applicationDate) ??
-    normalizeDate(fallbackDate) ??
-    fallbackDate.slice(0, 10)
-  );
-}
-
 function safeNumber(value: unknown, fallback = 0): number {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -160,6 +119,10 @@ export function splitRepayment(
   > & {
     applicationDate?: string;
     disbursementDate?: string;
+    // Flat-loan split needs these. Reducing-balance ignores them.
+    totalRepayable?: number;
+    totalInterest?: number;
+    amountRepaid?: number;
   },
   paymentAmount: number,
   paymentDate: string,
@@ -173,20 +136,59 @@ export function splitRepayment(
   );
 
   if (loan.interestMethod !== "reducing_balance") {
-    const principalPaid = round2(Math.min(payment, balance));
-    const remainingBalance = round2(Math.max(0, balance - principalPaid));
+    // Flat loan: split the payment proportionally between interest and
+    // principal using the loan's overall interest-to-repayable ratio.
+    // This matches the Record Payment modal's preview (computeSplit in
+    // app/modals/record-repayment.tsx) so the wallet ledger reflects
+    // the split the user was shown.
+    //
+    // Previous version returned `interest: 0` unconditionally, which
+    // silently dropped the interest portion of every flat-loan
+    // payment — only a loan_principal_recovery tx was written, never
+    // a matching loan_interest_income tx.
+    const totalRepayable = Math.max(
+      0,
+      safeNumber(loan.totalRepayable),
+    );
+    const totalInterest = Math.max(
+      0,
+      safeNumber(loan.totalInterest),
+    );
+    const amountRepaidSoFar = Math.max(
+      0,
+      safeNumber(loan.amountRepaid),
+    );
+
+    const remainingDue = round2(
+      Math.max(0, totalRepayable - amountRepaidSoFar),
+    );
+    const effectiveAmt = round2(Math.min(payment, remainingDue));
+
+    const ratio =
+      totalRepayable > 0 ? totalInterest / totalRepayable : 0;
+
+    const interestPortion = round2(effectiveAmt * ratio);
+    const principalPaid = round2(effectiveAmt - interestPortion);
+    const remainingBalance = round2(
+      Math.max(0, balance - principalPaid),
+    );
+
     return {
-      interest: 0,
+      interest: interestPortion,
       principal: principalPaid,
       remainingBalance,
       accruedInterest: previousAccrued,
       lastAccrualDate: toDate,
       days: 0,
       newlyAccruedInterest: 0,
+      // Flat loans don't accrue daily — the interest-only override uses
+      // computeFlatAccrued() instead of this field, so it's always 0
+      // here. Present for type uniformity with the RB branch.
+      totalAccruedBefore: 0,
     };
   }
 
-  const fromDate = getAccrualStartDate(loan, toDate);
+  const fromDate = resolveAccrualAnchor(loan, toDate);
   const days = daysBetween(fromDate, toDate);
 
   const annualRate = toAnnualRate(
@@ -214,54 +216,11 @@ export function splitRepayment(
     lastAccrualDate: toDate,
     days,
     newlyAccruedInterest: newInterest,
+    // Total interest that was due BEFORE this payment was applied.
+    // Read by the interest-only override in recordRepaymentServer to
+    // cap the payment and to compute remaining accrued interest.
+    totalAccruedBefore: totalInterestDue,
   };
-}
-
-// ============================================================
-// Project accrued interest (pure)
-// ============================================================
-
-export function projectAccruedInterest(
-  loan: {
-    balance: number;
-    interestRate: number;
-    interestMethod?: string;
-    interestRatePeriod?: "monthly" | "annual";
-    accruedInterest?: number;
-    lastAccrualDate?: string;
-    applicationDate?: string;
-    disbursementDate?: string;
-  },
-  asOfDate: string = new Date().toISOString(),
-): { days: number; accrued: number; total: number } {
-  const existingAccrued = round2(
-    Math.max(0, safeNumber(loan.accruedInterest)),
-  );
-
-  if (loan.interestMethod !== "reducing_balance") {
-    return { days: 0, accrued: 0, total: existingAccrued };
-  }
-
-  const asOf = normalizeDate(asOfDate);
-  if (!asOf) return { days: 0, accrued: 0, total: existingAccrued };
-
-  const fromDate = getAccrualStartDate(loan, asOf);
-  const days = daysBetween(fromDate, asOf);
-
-  const annualRate = toAnnualRate(
-    safeNumber(loan.interestRate),
-    loan.interestRatePeriod,
-  );
-  if (annualRate <= 0 || days <= 0) {
-    return { days, accrued: 0, total: existingAccrued };
-  }
-
-  const dailyRate = annualRate / 100 / 365;
-  const balance = round2(Math.max(0, safeNumber(loan.balance)));
-  const projectedInterest = round2(balance * dailyRate * days);
-  const total = round2(existingAccrued + projectedInterest);
-
-  return { days, accrued: projectedInterest, total };
 }
 
 // ============================================================
@@ -586,6 +545,7 @@ export async function recordRepaymentServer(
   loanId: string,
   amount: number,
   date?: string,
+  mode: "both" | "interest_only" = "both",
 ) {
   const userInfo = await getCurrentUserInfo();
   if (!userInfo?.userId) throw new Error("You must be logged in.");
@@ -609,7 +569,7 @@ export async function recordRepaymentServer(
     normalizeDate(date) ?? new Date().toISOString().slice(0, 10);
   const transactionDate = normalizeDateTime(date);
 
-  const result = splitRepayment(
+  let result = splitRepayment(
     {
       balance: safeNumber(loan.balance),
       interestRate: safeNumber(loan.interestRate),
@@ -623,10 +583,60 @@ export async function recordRepaymentServer(
         paymentDate,
       applicationDate: normalizeDate(loan.applicationDate),
       disbursementDate: normalizeDate((loan as any).disbursementDate),
+      totalRepayable: safeNumber(loan.totalRepayable),
+      totalInterest: safeNumber(loan.totalInterest),
+      amountRepaid: safeNumber(loan.amountRepaid),
     },
     paymentAmount,
     paymentDate,
   );
+
+  // ── TEMP LOG ──────────────────────────────────────────────────────
+  // Compare against the modal's [computeSplit] log to see where the
+  // client and server disagree.
+  console.log("[recordRepaymentServer] split inputs:", {
+    interestMethod: loan.interestMethod,
+    interestRate: loan.interestRate,
+    interestRatePeriod: loan.interestRatePeriod,
+    balance: loan.balance,
+    accruedInterest: loan.accruedInterest,
+    lastAccrualDate: loan.lastAccrualDate,
+    totalRepayable: loan.totalRepayable,
+    totalInterest: loan.totalInterest,
+    amountRepaid: loan.amountRepaid,
+    paymentAmount,
+    paymentDate,
+  });
+  console.log("[recordRepaymentServer] split result:", result);
+  // ── END TEMP LOG ──────────────────────────────────────────────────
+
+  // Interest-only mode: force the entire payment onto interest,
+  // leave principal untouched, and cap the payment at whatever
+  // interest is actually due right now.
+  if (mode === "interest_only") {
+    const interestDue =
+      loan.interestMethod === "reducing_balance"
+        ? result.totalAccruedBefore
+        : (computeFlatAccrued(loan)?.outstanding ?? 0);
+
+    if (paymentAmount > interestDue + 0.01) {
+      throw new Error(
+        `Interest-only payment (${paymentAmount}) exceeds interest ` +
+        `due (${round2(interestDue)}).`,
+      );
+    }
+
+    result = {
+      ...result,
+      interest: round2(paymentAmount),
+      principal: 0,
+      remainingBalance: round2(Math.max(0, safeNumber(loan.balance))),
+      accruedInterest:
+        loan.interestMethod === "reducing_balance"
+          ? round2(Math.max(0, result.totalAccruedBefore - paymentAmount))
+          : 0,
+    };
+  }
 
   let interestTx: WalletTransaction | undefined;
   let principalTx: WalletTransaction | undefined;
@@ -643,7 +653,10 @@ export async function recordRepaymentServer(
       date: transactionDate,
       loanId,
       memberId: loan.memberId,
-      description: "Loan interest repayment",
+      description:
+        mode === "interest_only"
+          ? "Loan interest repayment (interest only)"
+          : "Loan interest repayment",
       sourceType: "loan",
       sourceId: loanId,
       createdAt: transactionDate,
@@ -695,6 +708,10 @@ export async function recordRepaymentServer(
   const existingSchedule = loan.schedule ?? [];
   let cumulativeScheduleTotal = 0;
   const updatedSchedule = existingSchedule.map((item) => {
+    // Interest-only payments don't reduce principal, so no installment
+    // should be marked paid on their account — leave the schedule as-is.
+    if (mode === "interest_only") return item;
+
     cumulativeScheduleTotal = round2(
       cumulativeScheduleTotal + (item.total || 0),
     );

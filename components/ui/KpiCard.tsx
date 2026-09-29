@@ -1,5 +1,5 @@
 // components/ui/KpiCard.tsx
-import React from "react";
+;
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { C } from "../../utils/theme";
 

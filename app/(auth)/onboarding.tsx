@@ -1,6 +1,6 @@
 // app/(auth)/onboarding.tsx - Simplified version without complex animations
 
-import React, { useState, useRef } from "react";
+import { useState, useRef } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import {
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Colors, S, R } from "../../utils/theme";
+import { C, R, S } from "../../utils/theme";
 
 const SLIDES = [
   {
@@ -22,7 +22,7 @@ const SLIDES = [
     icon: "💰",
     title: "Track Your Savings",
     description: "Record monthly contributions, view your personal savings balance, and stay on top of the group's total funds in real time.",
-    color: Colors.accent,
+    color: C.accent,
     gradient: ["#0D9488", "#0F766E", "#0A5C52"] as const,
     features: [
       "Real-time balance updates",
@@ -61,7 +61,7 @@ const SLIDES = [
     icon: "📊",
     title: "Reports & Insights",
     description: "View savings charts, member statements, and investment tracking to keep the entire group financially accountable.",
-    color: Colors.primary,
+    color: C.primary,
     gradient: ["#1A3C5E", "#0D2840", "#081A2A"] as const,
     features: [
       "Export CSV/PDF",
@@ -265,7 +265,7 @@ export default function OnboardingScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.bg,
+    backgroundColor: C.bg,
   },
   background: {
     position: "absolute",

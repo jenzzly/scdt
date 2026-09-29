@@ -71,15 +71,40 @@ export function useLoanLateFees(loanId?: string): LoanLateFees {
 
     // ── 1. Applied late fees already in the ledger ────────────────────
     //
-    // Excludes feePaid = true (already cleared) and deletedAt (soft-
-    // deleted). Meeting penalties are keyed `meeting-penalty-...` — not
-    // per-loan, so they never appear here.
+    // Excludes:
+    //   • feePaid = true        — already cleared
+    //   • deletedAt             — soft-deleted
+    //   • dates within an active member late-fee exemption — a waived
+    //     period silences fees regardless of whether the individual tx
+    //     was later marked paid
+    //
+    // Meeting penalties are keyed `meeting-penalty-...` — not per-loan,
+    // so they never appear here.
+    const loan = loans.find((l: any) => l.id === loanId);
+    const member = loan
+      ? members.find((m: any) => m.id === loan.memberId)
+      : null;
+    const exemptions = ((member as any)?.lateFeeExemptions ?? []) as Array<{
+      scope: string;
+      periodStart: string;
+      periodEnd: string;
+    }>;
+    const dateInExemption = (dateStr: string | undefined): boolean => {
+      if (!dateStr) return false;
+      const day = String(dateStr).slice(0, 10);
+      return exemptions.some((ex) => {
+        if (ex.scope !== "loan" && ex.scope !== "both") return false;
+        return day >= ex.periodStart && day <= ex.periodEnd;
+      });
+    };
+
     const appliedTxs = wallet.filter(
       (t) =>
         t.loanId === loanId &&
         t.type === "late_fee" &&
         !(t as any).feePaid &&
-        !(t as any).deletedAt,
+        !(t as any).deletedAt &&
+        !dateInExemption(t.date),
     );
 
     const appliedRows: LoanLateFeeRow[] = appliedTxs.map((t) => ({
@@ -96,6 +121,7 @@ export function useLoanLateFees(loanId?: string): LoanLateFees {
       try {
         const all =
           findOverdueInstallments(group, members, loans, wallet) || [];
+
         accruedRows = all
           .filter((o) => o.loanId === loanId)
           .map((o) => {

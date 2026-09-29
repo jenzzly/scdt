@@ -10,6 +10,7 @@ import {
   addDaysToYmd,
   daysBetweenYmd,
 } from "../../utils/theme";
+import { projectAccruedInterest } from "../../utils/accrual";
 import { recalcGroupTotals } from "../recalcGroupTotals";
 import {
   findLoanDisbursementWalletTx,
@@ -483,7 +484,7 @@ export const createLoanSlice = (
           loan.applicationDate ||
           data.date;
 
-        const projection = FS.projectAccruedInterest(
+        const projection = projectAccruedInterest(
           {
             balance: loan.balance,
             interestRate: loan.interestRate,
@@ -773,7 +774,7 @@ export const createLoanSlice = (
     }
   },
 
-  recordRepayment: async (loanId, amount, date) => {
+  recordRepayment: async (loanId, amount, date, mode) => {
     const { activeGroupId, authUid, members } = get();
     if (!activeGroupId) return;
     try {
@@ -783,6 +784,7 @@ export const createLoanSlice = (
         loanId,
         amount,
         date,
+        mode,
       );
       get().updateLoanLocal(loanId, result.loan);
       if (result.interestTx) get().addWalletTxLocal(result.interestTx);

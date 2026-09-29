@@ -8,13 +8,12 @@
 // value lands in one of upiNumber / locationAddress / contactPhone /
 // representativeId / representativeName / representativeRole, just
 // with a type-appropriate label.
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup } from "../../stores/useStore";
@@ -27,13 +26,7 @@ import {
   DatePicker,
 } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
-import {
-  Colors,
-  S,
-  R,
-  fmtCurrency,
-  round2,
-} from "../../utils/theme";
+import { C, R, S, round2 } from "../../utils/theme";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Type registry
@@ -442,7 +435,7 @@ export default function AddInvestmentModal() {
             <Text
               style={{
                 fontSize: 13,
-                color: roi >= 0 ? Colors.success : Colors.error,
+                color: roi >= 0 ? C.success : C.error,
                 fontWeight: "700",
               }}
             >
@@ -491,7 +484,7 @@ const styles = StyleSheet.create({
   sectionLbl: {
     fontSize: 11,
     fontWeight: "700",
-    color: Colors.text2,
+    color: C.text2,
     textTransform: "uppercase",
     letterSpacing: 0.8,
     marginTop: 16,
@@ -504,7 +497,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 12,
-    backgroundColor: Colors.accentFaint,
+    backgroundColor: C.accentFaint,
     borderWidth: 1,
     borderColor: "rgba(16,185,129,0.25)",
     borderRadius: R.md,
@@ -516,19 +509,19 @@ const styles = StyleSheet.create({
   typeBannerTitle: {
     fontSize: 12,
     fontWeight: "800",
-    color: Colors.success,
+    color: C.success,
     marginBottom: 3,
   },
   typeBannerHint: {
     fontSize: 11,
-    color: Colors.text2,
+    color: C.text2,
     lineHeight: 16,
   },
 
   roiBadge: {
-    backgroundColor: Colors.accentFaint,
+    backgroundColor: C.accentFaint,
     borderWidth: 1,
-    borderColor: Colors.accentFaint,
+    borderColor: C.accentFaint,
     borderRadius: R.md,
     padding: S.md,
     marginTop: 4,

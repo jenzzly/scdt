@@ -1,6 +1,6 @@
 // app/modals/edit-contribution.tsx
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -26,7 +26,7 @@ import {
 } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
-import { Colors, S, fmtCurrency } from "../../utils/theme";
+import { C, S, fmtCurrency } from "../../utils/theme";
 
 import type { Contribution } from "../../types";
 
@@ -529,23 +529,23 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 17,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
     textAlign: "center",
   },
 
   subtitle: {
     fontSize: 13,
     lineHeight: 19,
-    color: Colors.text3,
+    color: C.text3,
     textAlign: "center",
     marginBottom: 8,
   },
 
   noticeBox: {
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     padding: S.md,
     marginBottom: S.lg,
   },
@@ -553,21 +553,21 @@ const styles = StyleSheet.create({
   noticeTitle: {
     fontSize: 12,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
     marginBottom: 4,
   },
 
   noticeText: {
     fontSize: 12,
     lineHeight: 18,
-    color: Colors.text2,
+    color: C.text2,
   },
 
   rejectedBox: {
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: Colors.error,
+    borderColor: C.error,
     padding: S.md,
     marginBottom: S.lg,
   },
@@ -575,26 +575,26 @@ const styles = StyleSheet.create({
   rejectedTitle: {
     fontSize: 12,
     fontWeight: "800",
-    color: Colors.error,
+    color: C.error,
     marginBottom: 4,
   },
 
   rejectedText: {
     fontSize: 12,
     lineHeight: 18,
-    color: Colors.text2,
+    color: C.text2,
   },
 
   rejectionReason: {
     fontSize: 11,
     lineHeight: 17,
-    color: Colors.text3,
+    color: C.text3,
     marginTop: 8,
   },
 
   errorText: {
     fontSize: 11,
-    color: Colors.error,
+    color: C.error,
     marginTop: -10,
     marginBottom: S.md,
   },
@@ -603,15 +603,15 @@ const styles = StyleSheet.create({
     marginTop: S.sm,
     padding: S.md,
     borderRadius: 10,
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
   },
 
   summaryLabel: {
     fontSize: 10,
     fontWeight: "800",
-    color: Colors.text3,
+    color: C.text3,
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 5,
@@ -620,7 +620,7 @@ const styles = StyleSheet.create({
   summaryValue: {
     fontSize: 12,
     lineHeight: 18,
-    color: Colors.text2,
+    color: C.text2,
   },
 
   spacer: {

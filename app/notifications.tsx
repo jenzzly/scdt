@@ -1,11 +1,11 @@
-import React from "react";
+;
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, Platform, useWindowDimensions, Alert} from "react-native";
 import { useRouter } from "expo-router";
 import { useStore } from "../stores/useStore";
 import { Card, CardRow, Empty } from "../components/ui";
-import { Colors, S, R, fmtDate } from "../utils/theme";
+import { C, S, fmtDate } from "../utils/theme";
 
 const TYPE_ICON: Record<string, string> = {
   contribution_due: "📅",
@@ -138,7 +138,7 @@ export default function NotificationsScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: Colors.bg }}>
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Text style={styles.back}>✕</Text>
@@ -249,17 +249,17 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === "ios" ? 56 : 36,
     paddingBottom: S.lg,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: C.border,
   },
-  back: { fontSize: 18, color: Colors.text2, width: 32, textAlign: "center" },
-  title: { fontSize: 17, fontWeight: "700", color: Colors.text },
+  back: { fontSize: 18, color: C.text2, width: 32, textAlign: "center" },
+  title: { fontSize: 17, fontWeight: "700", color: C.text },
   clearAllText: {
     fontSize: 14,
     fontWeight: "600",
-    color: Colors.text2,
+    color: C.text2,
   },
   groupLabel: {
-    fontSize: 11, fontWeight: "700", color: Colors.text3,
+    fontSize: 11, fontWeight: "700", color: C.text3,
     textTransform: "uppercase", letterSpacing: 0.8,
     marginBottom: 8,
   },
@@ -267,25 +267,25 @@ const styles = StyleSheet.create({
   unreadDot: {
     position: "absolute", top: 2, right: 2,
     width: 8, height: 8, borderRadius: 4,
-    backgroundColor: Colors.teal,
-    borderWidth: 1.5, borderColor: Colors.bg,
+    backgroundColor: C.teal,
+    borderWidth: 1.5, borderColor: C.bg,
   },
   notificationRight: {
     alignItems: "flex-end",
     gap: 4,
   },
-  time: { fontSize: 11, color: Colors.text3 },
+  time: { fontSize: 11, color: C.text3 },
   clearBtn: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     alignItems: "center",
     justifyContent: "center",
   },
   clearBtnText: {
     fontSize: 12,
-    color: Colors.text3,
+    color: C.text3,
     fontWeight: "600",
   },
 });

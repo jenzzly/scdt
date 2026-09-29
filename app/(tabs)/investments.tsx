@@ -5,9 +5,16 @@ import { useRouter } from "expo-router";
 import { useStore, useCurrentUserRole, useCurrentMember, useIsGroupView } from "../../stores/useStore";
 import { useGroupInvestments, useCurrentMemberPermissions } from "../../stores/selectors";
 import {
-  TabRow, SearchBar, Card, Empty, useToast, Toast, Button, BottomModal, Input,
+  TabRow,
+  SearchBar,
+  Empty,
+  useToast,
+  Toast,
+  Button,
+  BottomModal,
+  Input,
 } from "../../components/ui";
-import { S, R, Colors, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
+import { R, C, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
 import type { Investment } from "../../types";
 import { KpiCard } from "../../components/ui/KpiCard";
 

@@ -1,8 +1,12 @@
 // app/(tabs)/wallet.tsx
 import React, { useMemo, useState } from "react";
 import {
-  View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Platform, useWindowDimensions,
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  useWindowDimensions,
 } from "react-native";
 import { useRouter } from "expo-router";
 import {
@@ -11,7 +15,7 @@ import {
   useIsGroupView,
 } from "../../stores/useStore";
 import { TabRow, SearchBar, useToast, Toast } from "../../components/ui";
-import { Colors, S, R, C, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
+import { C, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
 import type { WalletTransaction } from "../../types";
 import { useStore } from "../../stores/useStore";
 import { useCurrentMemberPermissions, useMyMemberIds} from "../../stores/selectors";

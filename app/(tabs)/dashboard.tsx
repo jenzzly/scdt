@@ -15,6 +15,7 @@ import { C, T, fmtCurrency, fmtFull, fmtDate, round2 } from "../../utils/theme";
 import type { Contribution, WalletTransaction } from "../../types";
 import { BRAND } from "../../lib/brand";
 import { useRecalcTotals } from "../../hooks/useRecalcTotals";
+import { KpiCard } from "../../components/ui/KpiCard";
 
 // ─── Tiny components ──────────────────────────────────────────────
 const Divider = () => (
@@ -39,35 +40,6 @@ const Chip = ({ label, bg, color }: { label: string; bg: string; color: string }
     <Text style={[st.chipText, { color }]}>{label}</Text>
   </View>
 );
-
-interface KpiCardProps {
-  label: string;
-  value: string;
-  icon: string;
-  subtext?: string;
-  accentColor?: string;
-  onPress?: () => void;
-}
-
-function KpiCard({ label, value, icon, subtext, accentColor = C.primary, onPress }: KpiCardProps) {
-  return (
-    <TouchableOpacity
-      style={st.kpiCard}
-      onPress={onPress}
-      disabled={!onPress}
-      activeOpacity={onPress ? 0.75 : 1}
-    >
-      <View style={st.kpiHeader}>
-        <Text style={st.kpiLabel} numberOfLines={1}>{label}</Text>
-        <View style={[st.kpiIconWrap, { backgroundColor: C.elevated }]}>
-          <Text style={{ fontSize: 14 }}>{icon}</Text>
-        </View>
-      </View>
-      <Text style={[st.kpiValue, { color: accentColor }]} numberOfLines={1}>{value}</Text>
-      {subtext ? <Text style={st.kpiSubtext} numberOfLines={1}>{subtext}</Text> : null}
-    </TouchableOpacity>
-  );
-}
 
 // ─── Year-grouped activity chart ─────────────────────────────────
 type ActivityYear = {
@@ -1016,51 +988,6 @@ const st = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
-  },
-  kpiCard: {
-    flexBasis: "47%" as any,
-    flexGrow: 1,
-    minWidth: 0,
-    backgroundColor: C.surface,
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-    justifyContent: "space-between",
-  },
-  kpiHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  kpiLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: C.text3,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    flex: 1,
-    minWidth: 0,
-    marginRight: 6,
-  },
-  kpiIconWrap: {
-    width: 26,
-    height: 26,
-    borderRadius: 6,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  kpiValue: {
-    fontSize: 18,
-    fontWeight: "800",
-    letterSpacing: -0.3,
-  },
-  kpiSubtext: {
-    fontSize: 11,
-    color: C.text3,
-    fontWeight: "500",
-    marginTop: 3,
   },
 
   // quick actions

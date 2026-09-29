@@ -1,5 +1,5 @@
 // components/ui/ViewSwitch.tsx
-import React from "react";
+;
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { useStore, useHasViewToggle, useDataViewMode } from "../../stores/useStore";
 import { C } from "../../utils/theme";

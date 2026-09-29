@@ -15,10 +15,9 @@
 //   applied       — true if the fee is already on the ledger
 //   feeTxId       — the wallet tx to clear when applied is true
 
-import React, { useEffect, useState } from "react";
-import { View, Text, ScrollView, TouchableOpacity } from "react-native";
-import { BottomModal } from "./BottomModal";
-import { Input } from "./Input";
+import { useEffect, useState } from "react";
+import { View, Text, TouchableOpacity } from "react-native";
+import { BottomModal, Input } from "./index";
 import { DatePicker } from "./DatePicker";
 import { C } from "../../utils/theme";
 import type { LateFeeExemption, Member } from "../../types";
@@ -101,10 +100,7 @@ export function LateFeeWaiverModal({
       onClose={onClose}
       title="Waive Late Fees"
     >
-      <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 30 }}
-        keyboardShouldPersistTaps="handled"
-      >
+      <View style={{ padding: 16, paddingBottom: 30 }}>
         <Text style={styles.waiverIntro}>
           Record a per-member waiver for a period. No late fees on{" "}
           {scopeNoun} fees will accrue for {member.fullName} between the
@@ -228,7 +224,7 @@ export function LateFeeWaiverModal({
             </Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
+      </View>
     </BottomModal>
   );
 }

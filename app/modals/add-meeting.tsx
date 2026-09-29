@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   View,
   Text,
@@ -21,7 +21,7 @@ import {
   DatePicker,
 } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
-import { Colors, S, C } from "../../utils/theme";
+import { S, C } from "../../utils/theme";
 
 export default function AddMeetingModal() {
   const router = useRouter();
@@ -66,7 +66,6 @@ export default function AddMeetingModal() {
         startTime: timeEmpty ? undefined : startTime.trim(),
         durationMinutes,
         hostMemberId: hostMemberId || undefined,
-        durationMinutes,
         location: location.trim() || undefined,
         agenda: agenda.trim() || undefined,
         attendees: [],
@@ -217,18 +216,6 @@ export default function AddMeetingModal() {
 }
 
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: S.lg,
-    paddingTop: Platform.OS === "ios" ? 56 : 36,
-    paddingBottom: S.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  title: { fontSize: 17, fontWeight: "700", color: Colors.text },
-  cancel: { color: Colors.accent, fontSize: 15, fontWeight: "600" },
   body: { padding: S.lg, paddingBottom: 40 },
 
   startTimePreview: {

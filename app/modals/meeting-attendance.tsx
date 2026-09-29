@@ -38,14 +38,7 @@ import {
   useActiveGroup,
   useGroupMeetings,
 } from "../../stores/useStore";
-import {
-  Colors,
-  S,
-  R,
-  fmtCurrency,
-  round2,
-  showConfirm,
-} from "../../utils/theme";
+import { C, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
 import { useToast, Toast } from "../../components/ui";
 
 // ─── Model ──────────────────────────────────────────────────────────────
@@ -410,7 +403,7 @@ export default function MeetingAttendanceModal() {
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color={Colors.primary} />
+        <ActivityIndicator size="large" color={C.primary} />
         <Text style={styles.centerText}>Loading…</Text>
       </View>
     );
@@ -495,7 +488,7 @@ export default function MeetingAttendanceModal() {
         {/* ── Live tally ─────────────────────────────────────────── */}
         <View style={styles.tallyRow}>
           <View style={styles.tallyCell}>
-            <Text style={[styles.tallyValue, { color: Colors.success }]}>
+            <Text style={[styles.tallyValue, { color: C.success }]}>
               {counts.present}
             </Text>
             <Text style={styles.tallyLabel}>Present</Text>
@@ -505,7 +498,7 @@ export default function MeetingAttendanceModal() {
             <Text
               style={[
                 styles.tallyValue,
-                { color: counts.late > 0 ? Colors.gold : Colors.text3 },
+                { color: counts.late > 0 ? C.gold : C.text3 },
               ]}
             >
               {counts.late}
@@ -517,7 +510,7 @@ export default function MeetingAttendanceModal() {
             <Text
               style={[
                 styles.tallyValue,
-                { color: counts.absent > 0 ? Colors.error : Colors.text3 },
+                { color: counts.absent > 0 ? C.error : C.text3 },
               ]}
             >
               {counts.absent}
@@ -529,7 +522,7 @@ export default function MeetingAttendanceModal() {
               <View style={styles.tallyDivider} />
               <View style={styles.tallyCell}>
                 <Text
-                  style={[styles.tallyValue, { color: Colors.error }]}
+                  style={[styles.tallyValue, { color: C.error }]}
                   numberOfLines={1}
                   adjustsFontSizeToFit
                   minimumFontScale={0.7}
@@ -557,7 +550,7 @@ export default function MeetingAttendanceModal() {
             onPress={markRemainingAbsent}
             activeOpacity={0.8}
           >
-            <Text style={[styles.bulkBtnText, { color: Colors.error }]}>
+            <Text style={[styles.bulkBtnText, { color: C.error }]}>
               ✗ Mark rest absent
             </Text>
           </TouchableOpacity>
@@ -572,7 +565,7 @@ export default function MeetingAttendanceModal() {
               value={search}
               onChangeText={setSearch}
               placeholder="Search member…"
-              placeholderTextColor={Colors.text3}
+              placeholderTextColor={C.text3}
               autoCapitalize="none"
               autoCorrect={false}
             />
@@ -683,20 +676,20 @@ function MemberCard({
 
   const stateMeta = {
     present: {
-      color: Colors.success,
-      bg: Colors.greenBg,
+      color: C.success,
+      bg: C.greenBg,
       icon: "✓",
       label: "Present",
     },
     late: {
-      color: Colors.gold,
-      bg: Colors.goldBg,
+      color: C.gold,
+      bg: C.goldBg,
       icon: "⏱",
       label: "Late",
     },
     absent: {
-      color: Colors.error,
-      bg: Colors.redBg,
+      color: C.error,
+      bg: C.redBg,
       icon: "✗",
       label: "Absent",
     },
@@ -748,12 +741,12 @@ function MemberCard({
           (key) => {
             const meta = {
               present: {
-                color: Colors.success,
+                color: C.success,
                 icon: "✓",
                 label: "Present",
               },
-              late: { color: Colors.gold, icon: "⏱", label: "Late" },
-              absent: { color: Colors.error, icon: "✗", label: "Absent" },
+              late: { color: C.gold, icon: "⏱", label: "Late" },
+              absent: { color: C.error, icon: "✗", label: "Absent" },
             }[key];
             const active = row.state === key;
             return (
@@ -825,24 +818,24 @@ function MemberCard({
 // ─── Styles ─────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.bg },
+  container: { flex: 1, backgroundColor: C.bg },
 
   center: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: Colors.bg,
+    backgroundColor: C.bg,
     gap: 12,
     padding: 24,
   },
-  centerText: { fontSize: 14, color: Colors.text3 },
+  centerText: { fontSize: 14, color: C.text3 },
   errorTitle: {
     fontSize: 16,
-    color: Colors.error,
+    color: C.error,
     fontWeight: "700",
   },
   errorBtn: {
-    backgroundColor: Colors.primary,
+    backgroundColor: C.primary,
     paddingHorizontal: S.lg,
     paddingVertical: S.sm,
     borderRadius: R.md,
@@ -857,9 +850,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: S.lg,
     paddingTop: Platform.OS === "ios" ? 56 : 20,
     paddingBottom: S.md,
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: C.border,
   },
   headerLeft: { minWidth: 70 },
   headerRight: {
@@ -867,27 +860,27 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
   },
   headerCancel: {
-    color: Colors.text3,
+    color: C.text3,
     fontSize: 15,
     fontWeight: "600",
   },
   headerTitle: {
     fontSize: 17,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
     flex: 1,
     textAlign: "center",
   },
   headerReset: {
     paddingVertical: 6,
     paddingHorizontal: 12,
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     borderRadius: R.sm,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
   },
   headerResetText: {
-    color: Colors.text3,
+    color: C.text3,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -903,32 +896,32 @@ const styles = StyleSheet.create({
 
   // ── Summary card ────────────────────────────────────────────────
   summaryCard: {
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderRadius: R.lg,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     padding: S.lg,
     marginBottom: S.md,
   },
   summaryTitle: {
     fontSize: 17,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
     marginBottom: 4,
   },
   summaryMeta: {
     fontSize: 12,
-    color: Colors.text3,
+    color: C.text3,
   },
 
   // ── Tally ───────────────────────────────────────────────────────
   tallyRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderRadius: R.lg,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     paddingVertical: 12,
     marginBottom: S.md,
   },
@@ -941,7 +934,7 @@ const styles = StyleSheet.create({
   tallyDivider: {
     width: 1,
     alignSelf: "stretch",
-    backgroundColor: Colors.borderLight,
+    backgroundColor: C.borderLight,
     marginVertical: 4,
   },
   tallyValue: {
@@ -952,7 +945,7 @@ const styles = StyleSheet.create({
   tallyLabel: {
     fontSize: 9,
     fontWeight: "700",
-    color: Colors.text3,
+    color: C.text3,
     textTransform: "uppercase",
     letterSpacing: 0.4,
     marginTop: 2,
@@ -968,10 +961,10 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     paddingHorizontal: 10,
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderRadius: R.md,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     alignItems: "center",
   },
   bulkBtnDanger: {
@@ -981,17 +974,17 @@ const styles = StyleSheet.create({
   bulkBtnText: {
     fontSize: 12,
     fontWeight: "700",
-    color: Colors.text2,
+    color: C.text2,
   },
 
   // ── Search ──────────────────────────────────────────────────────
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderRadius: R.md,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     paddingHorizontal: 12,
     height: 44,
     marginBottom: S.md,
@@ -1000,12 +993,12 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 14,
-    color: Colors.text,
+    color: C.text,
     paddingVertical: 0,
   },
   searchClear: {
     fontSize: 14,
-    color: Colors.text3,
+    color: C.text3,
     fontWeight: "700",
     paddingHorizontal: 6,
   },
@@ -1018,12 +1011,12 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderRadius: R.lg,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     borderLeftWidth: 4,
-    borderLeftColor: Colors.border,
+    borderLeftColor: C.border,
     padding: 14,
     gap: 12,
   },
@@ -1050,11 +1043,11 @@ const styles = StyleSheet.create({
   cardName: {
     fontSize: 15,
     fontWeight: "700",
-    color: Colors.text,
+    color: C.text,
   },
   cardRole: {
     fontSize: 11,
-    color: Colors.text3,
+    color: C.text3,
     textTransform: "capitalize",
     marginTop: 1,
   },
@@ -1069,7 +1062,7 @@ const styles = StyleSheet.create({
   penaltyText: {
     fontSize: 11,
     fontWeight: "800",
-    color: Colors.error,
+    color: C.error,
   },
 
   // ── Status buttons ──────────────────────────────────────────────
@@ -1083,15 +1076,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     borderRadius: R.md,
     borderWidth: 1.5,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
+    borderColor: C.border,
+    backgroundColor: C.surface,
     alignItems: "center",
     justifyContent: "center",
   },
   statusBtnText: {
     fontSize: 12,
     fontWeight: "800",
-    color: Colors.text2,
+    color: C.text2,
   },
 
   // ── Late minutes stepper ────────────────────────────────────────
@@ -1101,11 +1094,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
+    borderTopColor: C.borderLight,
   },
   lateLabel: {
     fontSize: 12,
-    color: Colors.text3,
+    color: C.text3,
     fontWeight: "600",
   },
   stepper: {
@@ -1117,33 +1110,33 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
   },
   stepperBtnPrimary: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
+    backgroundColor: C.primary,
+    borderColor: C.primary,
   },
   stepperBtnText: {
     fontSize: 17,
     fontWeight: "800",
-    color: Colors.text2,
+    color: C.text2,
     lineHeight: 20,
   },
   stepperInput: {
     width: 54,
     height: 34,
     textAlign: "center",
-    backgroundColor: Colors.elevated,
+    backgroundColor: C.elevated,
     borderRadius: R.sm,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     fontSize: 14,
     fontWeight: "700",
-    color: Colors.text,
+    color: C.text,
   },
 
   // ── Empty ───────────────────────────────────────────────────────
@@ -1151,20 +1144,20 @@ const styles = StyleSheet.create({
     paddingVertical: 48,
     alignItems: "center",
   },
-  emptyText: { fontSize: 14, color: Colors.text3 },
+  emptyText: { fontSize: 14, color: C.text3 },
 
   // ── Footer ──────────────────────────────────────────────────────
   footer: {
     paddingHorizontal: S.lg,
     paddingTop: S.md,
     paddingBottom: Platform.OS === "ios" ? 28 : S.md,
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderTopWidth: 1,
-    borderTopColor: Colors.border,
+    borderTopColor: C.border,
     gap: 8,
   },
   dirtyBar: {
-    backgroundColor: Colors.goldBg,
+    backgroundColor: C.goldBg,
     borderRadius: R.sm,
     paddingVertical: 6,
     paddingHorizontal: 12,
@@ -1174,17 +1167,17 @@ const styles = StyleSheet.create({
   },
   savedHint: {
     fontSize: 11,
-    color: Colors.text3,
+    color: C.text3,
     textAlign: "center",
   },
   dirtyBarText: {
     fontSize: 11,
     fontWeight: "800",
-    color: Colors.gold,
+    color: C.gold,
     letterSpacing: 0.3,
   },
   saveBtn: {
-    backgroundColor: Colors.primary,
+    backgroundColor: C.primary,
     borderRadius: R.lg,
     paddingVertical: 15,
     alignItems: "center",
@@ -1192,7 +1185,7 @@ const styles = StyleSheet.create({
     minHeight: 52,
   },
   saveBtnDisabled: {
-    backgroundColor: Colors.mutedBg,
+    backgroundColor: C.mutedBg,
   },
   saveBtnText: {
     color: "#fff",

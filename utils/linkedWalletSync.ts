@@ -17,7 +17,7 @@
 // tx's date silently re-anchored interest to the wrong day.
 
 import type { WalletTransaction, Loan, Contribution, Investment } from "../types";
-import { projectAccruedInterest } from "../lib/firestore/loans";
+import { projectAccruedInterest } from "./accrual";
 
 export interface LinkedSyncPatch {
   description?: string;

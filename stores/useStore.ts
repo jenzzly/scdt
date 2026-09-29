@@ -450,9 +450,6 @@ export const useIsGroupView = () => {
   return isAuthorized && (dataViewMode === "group" || dataViewMode === "admin");
 };
 
-/** @deprecated alias for useIsGroupView */
-export const useIsAdminView = () => useIsGroupView();
-
 /**
  * Roles that review other members' loan/investment/meeting approvals
  * (committee, loan_officer, accountant).

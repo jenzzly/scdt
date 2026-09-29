@@ -2,15 +2,15 @@ import React, { useState } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useGroupMembers } from "../../stores/useStore";
-import { Card, CardRow, Badge, Empty, Button, BottomModal, useToast } from "../ui";
-import { Colors, S, R, fmtCurrency, fmtDate } from "../../utils/theme";
+import { Badge, Empty, Button, BottomModal, useToast, Toast } from "../ui";
+import { C, R, S, fmtCurrency, fmtDate } from "../../utils/theme";
 import type { Meeting } from "../../types";
 
 export default function MeetingsScreen() {
   const router = useRouter();
   const { meetings, updateMeetingLocal, recordAttendance, activeGroupId } = useStore();
   const members = useGroupMembers();
-  const { show, Toast } = useToast();
+  const { show, visible, msg, type } = useToast();
 
   const groupMeetings = meetings.filter((m) => m.groupId === activeGroupId);
   const [selected, setSelected] = useState<Meeting | null>(null);
@@ -26,7 +26,7 @@ export default function MeetingsScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: Colors.bg }}>
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
       <View style={styles.header}>
         <Text style={styles.title}>Meetings</Text>
         <Button label="+ Schedule" onPress={() => router.push("/modals/add-meeting")} variant="primary" size="sm" />
@@ -69,7 +69,7 @@ export default function MeetingsScreen() {
           onAttendance={(memberId, attended, late) => recordAttendance(selected.id, memberId, attended, late)}
         />
       )}
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type} />
     </View>
   );
 }
@@ -90,7 +90,7 @@ function MeetingCard({ meeting, onPress, onComplete }: { meeting: Meeting; onPre
       )}
       {isUpcoming && onComplete && (
         <TouchableOpacity style={styles.completeBtn} onPress={onComplete}>
-          <Text style={{ color: Colors.success, fontSize: 12, fontWeight: "700" }}>Mark as Completed</Text>
+          <Text style={{ color: C.success, fontSize: 12, fontWeight: "700" }}>Mark as Completed</Text>
         </TouchableOpacity>
       )}
     </TouchableOpacity>
@@ -119,7 +119,7 @@ function MeetingDetailModal({ meeting, members, onClose, onAttendance }: {
         {meeting.agenda && (
           <View style={[styles.detailRow, { flexDirection: "column", gap: 4 }]}>
             <Text style={styles.detailLbl}>Agenda</Text>
-            <Text style={[styles.detailVal, { color: Colors.text2 }]}>{meeting.agenda}</Text>
+            <Text style={[styles.detailVal, { color: C.text2 }]}>{meeting.agenda}</Text>
           </View>
         )}
 
@@ -129,9 +129,9 @@ function MeetingDetailModal({ meeting, members, onClose, onAttendance }: {
           return (
             <View key={m.id} style={styles.attendeeRow}>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 14, color: Colors.text }}>{m.fullName}</Text>
+                <Text style={{ fontSize: 14, color: C.text }}>{m.fullName}</Text>
                 {att?.penaltyAmount ? (
-                  <Text style={{ fontSize: 12, color: Colors.error, marginTop: 2 }}>
+                  <Text style={{ fontSize: 12, color: C.error, marginTop: 2 }}>
                     Fine: {fmtCurrency(att.penaltyAmount)}
                   </Text>
                 ) : null}
@@ -141,13 +141,13 @@ function MeetingDetailModal({ meeting, members, onClose, onAttendance }: {
                   style={[styles.attBtn, att?.attended && styles.attBtnActive]}
                   onPress={() => onAttendance(m.id, true)}
                 >
-                  <Text style={{ fontSize: 11, fontWeight: "700", color: att?.attended ? Colors.success : Colors.text3 }}>✓ Present</Text>
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: att?.attended ? C.success : C.text3 }}>✓ Present</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.attBtn, att && !att.attended && styles.attBtnAbsent]}
                   onPress={() => onAttendance(m.id, false)}
                 >
-                  <Text style={{ fontSize: 11, fontWeight: "700", color: att && !att.attended ? Colors.error : Colors.text3 }}>✗ Absent</Text>
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: att && !att.attended ? C.error : C.text3 }}>✗ Absent</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -160,19 +160,19 @@ function MeetingDetailModal({ meeting, members, onClose, onAttendance }: {
 
 const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: S.lg, paddingTop: 56, paddingBottom: S.md },
-  title: { fontSize: 22, fontWeight: "800", color: Colors.text, letterSpacing: -0.5 },
-  sectionLbl: { fontSize: 11, fontWeight: "700", color: Colors.text2, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 },
-  meetingCard: { backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, borderRadius: R.lg, padding: S.lg, marginBottom: 10 },
-  meetingTitle: { fontSize: 15, fontWeight: "700", color: Colors.text, flex: 1 },
-  meetingDate: { fontSize: 13, color: Colors.text3, marginBottom: 2 },
-  meetingLoc: { fontSize: 13, color: Colors.text3, marginBottom: 2 },
-  meetingAttendees: { fontSize: 13, color: Colors.text2, marginTop: 4 },
+  title: { fontSize: 22, fontWeight: "800", color: C.text, letterSpacing: -0.5 },
+  sectionLbl: { fontSize: 11, fontWeight: "700", color: C.text2, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 },
+  meetingCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: R.lg, padding: S.lg, marginBottom: 10 },
+  meetingTitle: { fontSize: 15, fontWeight: "700", color: C.text, flex: 1 },
+  meetingDate: { fontSize: 13, color: C.text3, marginBottom: 2 },
+  meetingLoc: { fontSize: 13, color: C.text3, marginBottom: 2 },
+  meetingAttendees: { fontSize: 13, color: C.text2, marginTop: 4 },
   completeBtn: { marginTop: 10, backgroundColor: "rgba(34,197,94,0.1)", borderWidth: 1, borderColor: "rgba(34,197,94,0.3)", borderRadius: R.md, paddingVertical: 8, alignItems: "center" },
-  detailRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  detailLbl: { fontSize: 13, color: Colors.text3 },
-  detailVal: { fontSize: 13, fontWeight: "600", color: Colors.text },
-  attendeeRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  attBtn: { paddingVertical: 5, paddingHorizontal: 10, borderRadius: R.sm, backgroundColor: Colors.elevated, borderWidth: 1, borderColor: Colors.border },
+  detailRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.border },
+  detailLbl: { fontSize: 13, color: C.text3 },
+  detailVal: { fontSize: 13, fontWeight: "600", color: C.text },
+  attendeeRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border },
+  attBtn: { paddingVertical: 5, paddingHorizontal: 10, borderRadius: R.sm, backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border },
   attBtnActive: { backgroundColor: "rgba(34,197,94,0.1)", borderColor: "rgba(34,197,94,0.3)" },
   attBtnAbsent: { backgroundColor: "rgba(239,68,68,0.1)", borderColor: "rgba(239,68,68,0.3)" },
 });

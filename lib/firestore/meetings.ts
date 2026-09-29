@@ -1,10 +1,20 @@
 // lib/firestore/meetings.ts
 import {
-  doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, orderBy, onSnapshot, writeBatch,
-  meetingsCol, membersCol, groupDoc,
-  getCurrentUserInfo, logError, stripUndefined, fromSnap, round2,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  orderBy,
+  onSnapshot,
+  meetingsCol,
+  getCurrentUserInfo,
+  logError,
+  stripUndefined,
+  fromSnap,
 } from "./core";
-import type { Meeting, MeetingAttendee, NewRecord } from "./core";
+import { Meeting, NewRecord } from "./core";
 import { writeAuditLog } from "./audit";
 import { recordDeletion } from "./deletions";
 

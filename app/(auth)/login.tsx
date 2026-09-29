@@ -1,5 +1,5 @@
 // app/(auth)/login.tsx
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, KeyboardAvoidingView, Platform,
@@ -10,7 +10,7 @@ import { useRouter } from "expo-router";
 import { useAuth } from "../../hooks/useAuth";
 import { useStore } from "../../stores/useStore";
 import { Input, Button, Toast, useToast } from "../../components/ui";
-import { Colors, S, fmtCurrency } from "../../utils/theme";
+import { C, S, fmtCurrency } from "../../utils/theme";
 import { BRAND } from "../../lib/brand";
 import { FIXED_GROUP_ID } from "../../stores/fixedGroup";
 import * as FS from "../../lib/firestore";
@@ -258,7 +258,7 @@ export default function LoginScreen() {
         {resetLoading ? (
           <ActivityIndicator
             size="small"
-            color={Colors.accent}
+            color={C.accent}
           />
         ) : resetSent ? (
           <Text style={f.resetSent}>
@@ -435,7 +435,7 @@ export default function LoginScreen() {
           </View>
         </ScrollView>
 
-        <Toast />
+        <Toast visible={visible} msg={msg} type={type} />
       </KeyboardAvoidingView>
     );
   }
@@ -484,7 +484,7 @@ export default function LoginScreen() {
         {registerLinkJsx}
       </ScrollView>
 
-      <Toast />
+      <Toast visible={visible} msg={msg} type={type} />
     </KeyboardAvoidingView>
   );
 }
@@ -494,7 +494,7 @@ export default function LoginScreen() {
 const f = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: Colors.bg,
+    backgroundColor: C.bg,
   },
 
   // Mobile
@@ -518,10 +518,10 @@ const f = StyleSheet.create({
   tabletCard: {
     width: "100%" as any,
     maxWidth: 480,
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     padding: 36,
 
     ...(Platform.OS === "web"
@@ -551,12 +551,12 @@ const f = StyleSheet.create({
   // Desktop two-col
   desktopLeft: {
     flex: 1,
-    backgroundColor: Colors.card,
+    backgroundColor: C.card,
     alignItems: "center",
     justifyContent: "center",
     padding: 60,
     borderRightWidth: 1,
-    borderRightColor: Colors.border,
+    borderRightColor: C.border,
   },
 
   desktopLeftInner: {
@@ -567,7 +567,7 @@ const f = StyleSheet.create({
   desktopBrand: {
     fontSize: 28,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.cardText,
     letterSpacing: -0.5,
     marginTop: 16,
     marginBottom: 8,
@@ -576,7 +576,7 @@ const f = StyleSheet.create({
   desktopTagline: {
     fontSize: 20,
     fontWeight: "500",
-    color: Colors.text2,
+    color: "rgba(255,255,255,0.7)",
     lineHeight: 30,
     marginBottom: 32,
   },
@@ -595,12 +595,12 @@ const f = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: Colors.primary,
+    backgroundColor: "#4ade80",
   },
 
   desktopFeatureText: {
     fontSize: 14,
-    color: Colors.text2,
+    color: "rgba(255,255,255,0.75)",
     fontWeight: "500",
   },
 
@@ -621,16 +621,16 @@ const f = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: Colors.primaryFaint,
+    backgroundColor: C.primaryFaint,
     borderWidth: 1.5,
-    borderColor: Colors.primary + "44",
+    borderColor: C.primary + "44",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
 
     ...(Platform.OS !== "web"
       ? {
-          shadowColor: Colors.primary,
+          shadowColor: C.primary,
           shadowOffset: {
             width: 0,
             height: 4,
@@ -650,14 +650,14 @@ const f = StyleSheet.create({
   cardTitle: {
     fontSize: 24,
     fontWeight: "800",
-    color: Colors.text,
+    color: C.text,
     letterSpacing: -0.4,
     marginBottom: 4,
   },
 
   cardSub: {
     fontSize: 14,
-    color: Colors.text3,
+    color: C.text3,
   },
 
   // Back button
@@ -667,7 +667,7 @@ const f = StyleSheet.create({
   },
 
   backText: {
-    color: Colors.text3,
+    color: C.text3,
     fontSize: 14,
     fontWeight: "600",
   },
@@ -678,7 +678,7 @@ const f = StyleSheet.create({
   },
 
   showHide: {
-    color: Colors.accent,
+    color: C.accent,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -692,13 +692,13 @@ const f = StyleSheet.create({
   },
 
   forgot: {
-    color: Colors.accent,
+    color: C.accent,
     fontSize: 13,
     fontWeight: "600",
   },
 
   resetSent: {
-    color: Colors.success,
+    color: C.success,
     fontSize: 13,
     fontWeight: "600",
   },
@@ -713,12 +713,12 @@ const f = StyleSheet.create({
   },
 
   registerText: {
-    color: Colors.text3,
+    color: C.text3,
     fontSize: 13,
   },
 
   registerLink: {
-    color: Colors.accent,
+    color: C.accent,
     fontSize: 13,
     fontWeight: "700",
   },

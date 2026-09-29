@@ -1,3 +1,4 @@
+
 import { Platform, StyleSheet } from "react-native";
 import { BRAND } from "../lib/brand";
 import type { LoanInterestMethod } from "../types";
@@ -21,69 +22,6 @@ import type { LoanInterestMethod } from "../types";
 // whatever a client sets in brand.json instead of needing a separate edit.
 // ─────────────────────────────────────────────────────────────────────────
 
-export const Colors = {
-  // Light theme
-  bg: "#F5F7FA",
-  bgWhite: "#FFFFFF",
-  surface: "#FFFFFF",
-  elevated: "#F0F2F5",
-  border: "#E4E8EF",
-  borderLight: "#EEF1F6",
-  muted: "#CBD2DC",
-
-  // Brand — sourced from BRAND.colors
-  primary: BRAND.colors.secondary || "#0F766E",
-  primaryLight: BRAND.colors.secondary || "#0F766E",
-  primaryFaint: "#E6F4F2",
-  accent: BRAND.colors.primary || "#10B981",
-  accentLight: BRAND.colors.primary || "#10B981",
-  accentFaint: "#CCFBF1",
-  brandBlue: BRAND.colors.accent || "#3B82F6",
-  brandAmber: BRAND.colors.highlight || "#EAB308",
-  brandNavy: BRAND.colors.navy || "#0B1C3D",
-
-  /** @deprecated kept for screens not yet migrated to `C` */
-  teal: BRAND.colors.secondary || "#0F766E",
-  tealLight: BRAND.colors.primary || "#10B981",
-  tealDim: BRAND.colors.navy || "#0B1C3D",
-  tealFaint: "#CCFBF1",
-  gold: "#D97706",
-  goldDim: "#B45309",
-
-  // Text
-  text: "#0F1F33",
-  text2: "#4A607A",
-  text3: "#8FA3BA",
-
-  // Semantic — standard accessible UX colors
-  success: "#059669",
-  warning: "#D97706",
-  error: "#DC2626",
-  info: BRAND.colors.accent || "#3B82F6",
-
-  chartColors: [
-    BRAND.colors.secondary || "#0F766E",
-    BRAND.colors.primary || "#10B981",
-    BRAND.colors.accent || "#3B82F6",
-    BRAND.colors.highlight || "#EAB308",
-    "#0B1C3D",
-    "#EA580C"
-  ],
-
-  // Semantic bg/text pairs
-  greenBg:  "#ECFDF5",
-  greenText:"#065F46",
-  redBg:    "#FEF2F2",
-  redText:  "#991B1B",
-  goldBg:   "#FFFBEB",
-  goldText: "#B45309",
-  infoBg:   "#DBEAFE",
-  infoText: "#1D4ED8",
-  mutedBg:  "#F1F5F9",
-
-  // Card color (dark navy)
-  card: BRAND.colors.navy || "#8297c2",
-};
 
 export const Fonts = {
   regular: Platform.select({ ios: "PlusJakartaSans_400Regular", android: "PlusJakartaSans_400Regular", default: "System" }),
@@ -133,6 +71,24 @@ export const C = {
   tealDim:     "#09491e", 
   borderLight: "#EEF1F6",
   teal:        BRAND.colors.secondary || "#0F766E",
+  bgWhite: "#FFFFFF",
+  muted: "#CBD2DC",
+  primaryLight: BRAND.colors.secondary || "#0F766E",
+  primaryFaint: "#E6F4F2",
+  accentLight: BRAND.colors.primary || "#10B981",
+  accentFaint: "#CCFBF1",
+  brandNavy: BRAND.colors.navy || "#0B1C3D",
+  tealLight: BRAND.colors.primary || "#10B981",
+  tealFaint: "#CCFBF1",
+  goldDim: "#B45309",
+  chartColors: [
+    BRAND.colors.secondary || "#0F766E",
+    BRAND.colors.primary || "#10B981",
+    BRAND.colors.accent || "#3B82F6",
+    BRAND.colors.highlight || "#EAB308",
+    "#0B1C3D",
+    "#EA580C",
+  ],
 };
 
 export const T = StyleSheet.create({
@@ -140,6 +96,7 @@ export const T = StyleSheet.create({
   amount: { fontSize: 28, fontWeight: "800", color: C.text,  letterSpacing: -1 },
   h2:     { fontSize: 15, fontWeight: "700", color: C.text,  letterSpacing: -0.2 },
   body:   { fontSize: 13, fontWeight: "500", color: C.text2 },
+  bold:   { fontSize: 13, fontWeight: "700", color: C.text },
   small:  { fontSize: 11, fontWeight: "500", color: C.text3 },
   mono:   { fontVariant: ["tabular-nums"] as any },
 });

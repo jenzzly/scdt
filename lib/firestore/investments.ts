@@ -1,8 +1,18 @@
 // lib/firestore/investments.ts
 import {
-  doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, orderBy, onSnapshot, writeBatch,
-  investCol, walletCol, groupDoc,
-  getCurrentUserInfo, logError, stripUndefined, fromSnap, round2,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  orderBy,
+  onSnapshot,
+  investCol,
+  getCurrentUserInfo,
+  logError,
+  stripUndefined,
+  fromSnap,
 } from "./core";
 import type { Investment, NewRecord } from "./core";
 import { writeAuditLog } from "./audit";

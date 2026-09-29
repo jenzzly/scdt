@@ -8,9 +8,27 @@
 // related wallet transaction are removed atomically — either everything
 // succeeds, or nothing changes. No partial-delete state is possible.
 import {
-  doc, getDoc, getDocs, deleteDoc, setDoc, updateDoc, query, where, orderBy, onSnapshot, writeBatch,
-  deletionsCol, contribsCol, walletCol, loansCol, investCol, meetingsCol, expensesCol, membersCol,
-  getCurrentUserInfo, logError, fromSnap, round2,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  writeBatch,
+  deletionsCol,
+  contribsCol,
+  walletCol,
+  loansCol,
+  investCol,
+  meetingsCol,
+  expensesCol,
+  membersCol,
+  getCurrentUserInfo,
+  logError,
+  fromSnap,
+  round2,
 } from "./core";
 import type { DeletionRecord, Contribution, WalletTransaction, Loan, Investment, Meeting, Expense } from "./core";
 import { writeAuditLog } from "./audit";

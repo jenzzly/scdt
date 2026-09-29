@@ -9,7 +9,7 @@ import {
   Pressable,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { Colors, R, S, fmtDate } from "../../utils/theme";
+import { C, R, fmtDate } from "../../utils/theme";
 
 interface DatePickerProps {
   label?: string;
@@ -111,8 +111,8 @@ export function DatePicker({
           outline: "none",
           background: "transparent",
           color: value
-            ? Colors.text
-            : Colors.text3,
+            ? C.text
+            : C.text3,
           fontSize: 14,
           fontFamily: "inherit",
           cursor: "pointer",
@@ -186,8 +186,8 @@ export function DatePicker({
             {
               flex: 1,
               color: value
-                ? Colors.text
-                : Colors.text3,
+                ? C.text
+                : C.text3,
             },
           ]}
         >
@@ -256,7 +256,7 @@ export function DatePicker({
                     onChange={handleChange}
                     minimumDate={minimumDate}
                     maximumDate={maximumDate}
-                    textColor={Colors.text}
+                    textColor={C.text}
                     themeVariant="light"
                     style={styles.iosSpinner}
                   />
@@ -289,7 +289,7 @@ const styles = StyleSheet.create({
   formLabel: {
     fontSize: 11,
     fontWeight: "700",
-    color: Colors.text2,
+    color: C.text2,
     textTransform: "uppercase",
     letterSpacing: 0.6,
     marginBottom: 8,
@@ -298,9 +298,9 @@ const styles = StyleSheet.create({
   inputWrap: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderWidth: 1.5,
-    borderColor: Colors.border,
+    borderColor: C.border,
     borderRadius: R.md,
     paddingHorizontal: 14,
     minHeight: 50,
@@ -308,7 +308,7 @@ const styles = StyleSheet.create({
   },
 
   inputError: {
-    borderColor: Colors.error,
+    borderColor: C.error,
   },
 
   calendarIcon: {
@@ -319,24 +319,24 @@ const styles = StyleSheet.create({
   input: {
     fontSize: 14,
     paddingVertical: 12,
-    color: Colors.text,
+    color: C.text,
   },
 
   arrow: {
-    color: Colors.text3,
+    color: C.text3,
     fontSize: 11,
     marginLeft: 4,
   },
 
   inputHint: {
     fontSize: 11,
-    color: Colors.text3,
+    color: C.text3,
     marginTop: 4,
   },
 
   inputErrorText: {
     fontSize: 11,
-    color: Colors.error,
+    color: C.error,
     marginTop: 4,
     fontWeight: "500",
   },
@@ -349,7 +349,7 @@ const styles = StyleSheet.create({
   },
 
   pickerSheet: {
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderTopLeftRadius: R.xl,
     borderTopRightRadius: R.xl,
     paddingBottom: 32,
@@ -361,13 +361,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: C.border,
   },
 
   pickerDone: {
     fontSize: 16,
     fontWeight: "700",
-    color: Colors.accent,
+    color: C.accent,
   },
 
   iosSpinnerWrap: {

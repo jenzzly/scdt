@@ -6,7 +6,7 @@
 // to the store internals and could just as easily live next to the
 // screens that use them.
 import { useMemo } from "react";
-import type { MemberRole } from "../types";
+;
 
 // These hooks are now re-exported from useStore.ts to avoid circular dependency
 // They are implemented in the slice files to maintain the same functionality
@@ -24,7 +24,6 @@ export {
   useCurrentMember,
   useDataViewMode,
   useIsGroupView,
-  useIsAdminView,
   useIsApproverView,
   useHasViewToggle,
   APPROVER_ROLES,

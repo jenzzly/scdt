@@ -6,6 +6,7 @@ import { createUserWithSecondaryAuth, sendPasswordResetWithSecondaryAuth } from 
 import { addMember } from "../firestore/members";
 import { writeAuditLog } from "../firestore/audit";
 import { isValidRole, type UserRole } from "../../types/roles";
+import type { MemberRole } from "../../types";
 
 export interface CreateUserData {
   fullName: string;
@@ -38,7 +39,7 @@ export async function createUserAsAdmin(
       fullName: data.fullName,
       email: data.email,
       phone: data.phone || "",
-      role: data.role,
+      role: data.role as MemberRole,
       status: "active",
       groupId: data.groupId,
       dateJoined: new Date().toISOString(),

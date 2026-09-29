@@ -27,29 +27,25 @@ import {
 import {
   SearchBar,
   Badge,
-  Empty,
-  BottomModal,
   useToast,
   Toast,
   DatePicker,
   TabRow,
-  Input,
 } from "../../components/ui";
 
-import { Colors, C, T, S, R, fmtCurrency, fmtDate } from "../../utils/theme";
+import { C, fmtCurrency, fmtDate } from "../../utils/theme";
 
-import { exportXlsx, importXlsx, exportPdf } from "../../utils/export";
+import { exportXlsx, importXlsx } from "../../utils/export";
 import { findOverdueContributions } from "../../utils/lateFees";
 import { getCurrentGoalPeriod } from "../../lib/firestore/contributionGoals";
 
 import type {
   Contribution,
   ContributionGoalPeriod,
-  LateFeeExemption,
-  Member,
 } from "../../types";
 
 import { KpiCard } from "../../components/ui/KpiCard";
+import { LateFeeWaiverModal } from "../../components/ui/LateFeeWaiverModal";
 import {
   canApproveContributions as canApproveContributionsPerm,
   canManageWallet,
@@ -502,7 +498,6 @@ export default function ContributionsScreen() {
   };
 
   const handleConfirmWaiver = async (
-    scope: "contribution" | "loan" | "both",
     periodStart: string,
     periodEnd: string,
     reason: string
@@ -513,7 +508,12 @@ export default function ContributionsScreen() {
     try {
       await useStore.getState().addLateFeeExemption(
         waiverTarget.memberId,
-        { scope, periodStart, periodEnd, reason: reason || undefined },
+        {
+          scope: "contribution",
+          periodStart,
+          periodEnd,
+          reason: reason || undefined,
+        },
         // Only pass the fee tx id when the fee is already on the ledger.
         // Accrued-but-not-yet-applied fees have no wallet tx to clear.
         waiverTarget.applied ? waiverTarget.feeTxId : undefined
@@ -911,7 +911,6 @@ export default function ContributionsScreen() {
           ) : statusFilter === "late_fee" ? (
             <LateFeeList
               items={filteredLateFees}
-        isWide={isWide}
               isGroupView={isGroupView}
               isWide={isWide}
               group={group}
@@ -974,6 +973,7 @@ export default function ContributionsScreen() {
         }
         group={group}
         saving={waiverSaving}
+        context="contribution"
         onConfirm={handleConfirmWaiver}
         onRemoveExemption={handleRemoveExemption}
       />
@@ -1145,7 +1145,7 @@ function GoalCard({
           <Text
             style={[
               st.goalPercentage,
-              goalProgress.isCompleted && { color: Colors.green },
+              goalProgress.isCompleted && { color: C.success },
             ]}
             numberOfLines={1}
           >
@@ -1162,7 +1162,7 @@ function GoalCard({
       <ProgressBar
         percentage={goalProgress.percentage}
         color={
-          goalProgress.isCompleted ? Colors.green : Colors.primary
+          goalProgress.isCompleted ? C.success : C.primary
         }
       />
 
@@ -1200,7 +1200,7 @@ function GoalCard({
                   st.goalPercentage,
                   { fontSize: 16 },
                   goalProgress.groupPercentage >= 100 && {
-                    color: Colors.green,
+                    color: C.success,
                   },
                 ]}
                 numberOfLines={1}
@@ -1214,8 +1214,8 @@ function GoalCard({
             percentage={goalProgress.groupPercentage}
             color={
               goalProgress.groupPercentage >= 100
-                ? Colors.green
-                : Colors.accent
+                ? C.success
+                : C.accent
             }
           />
         </>
@@ -1301,7 +1301,7 @@ function GoalStat({
       <Text
         style={[
           st.goalStatValue,
-          dimWhenComplete && { color: Colors.bgWhite },
+          dimWhenComplete && { color: C.bgWhite },
         ]}
         numberOfLines={1}
         adjustsFontSizeToFit
@@ -1936,279 +1936,6 @@ function LateFeeList({
 }
 
 // -----------------------------------------------------------------------------
-// Late Fee Waiver Modal
-//
-// Records a per-member exemption that suppresses late fees for a period.
-// Two effects on confirm:
-//
-//   1. A LateFeeExemption is appended to the member's record.
-//      findOverdueContributions / findOverdueInstallments skip any
-//      period that falls inside an exemption, so no new fees accrue
-//      for that window going forward.
-//
-//   2. If the fee the admin clicked on is ALREADY on the ledger, that
-//      specific fee's wallet tx is marked `feePaid: true` so it stops
-//      appearing in the list. Accrued-but-not-yet-applied fees have no
-//      wallet tx, so the exemption alone is enough for those.
-//
-// Existing exemptions for the same member are listed inside the modal
-// with a "Revoke" link so the admin can undo a waiver they added
-// earlier. Revoking does NOT resurrect cleared fees.
-// -----------------------------------------------------------------------------
-
-function LateFeeWaiverModal({
-  visible,
-  onClose,
-  target,
-  member,
-  group,
-  saving,
-  onConfirm,
-  onRemoveExemption,
-}: {
-  visible: boolean;
-  onClose: () => void;
-  target: any;
-  member: Member | null;
-  group: any;
-  saving: boolean;
-  onConfirm: (
-    scope: "contribution" | "loan" | "both",
-    periodStart: string,
-    periodEnd: string,
-    reason: string
-  ) => void;
-  onRemoveExemption: (exemptionId: string) => void;
-}) {
-  const [scope, setScope] = useState<"contribution" | "loan" | "both">(
-    "contribution"
-  );
-  const [periodStart, setPeriodStart] = useState("");
-  const [periodEnd, setPeriodEnd] = useState("");
-  const [reason, setReason] = useState("");
-
-  // Default the period to the calendar month containing the clicked
-  // fee's periodStart.
-  React.useEffect(() => {
-    if (!visible || !target) return;
-
-    const rawPeriodStart =
-      typeof target.periodStart === "string"
-        ? target.periodStart.slice(0, 10)
-        : new Date().toISOString().slice(0, 10);
-
-    setScope("contribution");
-    setReason("");
-
-    const start = new Date(rawPeriodStart + "T00:00:00");
-    if (!isNaN(start.getTime())) {
-      const firstOfMonth = new Date(
-        start.getFullYear(),
-        start.getMonth(),
-        1
-      );
-      const lastOfMonth = new Date(
-        start.getFullYear(),
-        start.getMonth() + 1,
-        0
-      );
-      const iso = (d: Date) =>
-        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
-          2,
-          "0"
-        )}-${String(d.getDate()).padStart(2, "0")}`;
-      setPeriodStart(iso(firstOfMonth));
-      setPeriodEnd(iso(lastOfMonth));
-    } else {
-      setPeriodStart(rawPeriodStart);
-      setPeriodEnd(rawPeriodStart);
-    }
-  }, [visible, target?.feeTxId, target?.periodStart]);
-
-  if (!member) return null;
-
-  const existingExemptions: LateFeeExemption[] =
-    (member.lateFeeExemptions ?? []) as LateFeeExemption[];
-
-  return (
-    <BottomModal
-      visible={visible}
-      onClose={onClose}
-      title="Waive Late Fees"
-    >
-      <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 30 }}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Text style={st.waiverIntro}>
-          Record a per-member waiver for a period. No late fees of the
-          selected scope will accrue for {member.fullName} between the
-          dates below — including fees on loan installments that fall
-          inside the window if you widen the scope.
-        </Text>
-
-        <View style={st.waiverTargetCard}>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={st.waiverTargetLabel}>Member</Text>
-            <Text style={st.waiverTargetName} numberOfLines={1}>
-              {member.fullName}
-            </Text>
-            {target?.periodLabel && (
-              <Text style={st.waiverTargetSub} numberOfLines={1}>
-                Fee period: {target.periodLabel}
-              </Text>
-            )}
-          </View>
-        </View>
-
-        {/* Scope picker hidden on this screen — contributions
-            only waive contribution fees. Loan waivers live on
-            the loans screen. */}
-
-        <View style={[st.waiverScopeRow, { display: "none" }]}>
-          {[
-            { label: "This Contribution", value: "contribution" as const },
-            { label: "Loans", value: "loan" as const },
-            { label: "Both", value: "both" as const },
-          ].map((opt) => {
-            const active = scope === opt.value;
-            return (
-              <TouchableOpacity
-                key={opt.value}
-                style={[
-                  st.waiverScopeBtn,
-                  active && st.waiverScopeBtnActive,
-                ]}
-                onPress={() => setScope(opt.value)}
-                activeOpacity={0.8}
-              >
-                <Text
-                  style={[
-                    st.waiverScopeBtnText,
-                    active && st.waiverScopeBtnTextActive,
-                  ]}
-                >
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        <Text style={[st.waiverSectionTitle, { marginTop: 20 }]}>
-          Period
-        </Text>
-        <Text style={st.waiverSectionHelp}>
-          Defaults to the calendar month of the fee you clicked.
-        </Text>
-
-        <DatePicker
-          label="From Date"
-          value={periodStart}
-          onChange={setPeriodStart}
-          placeholder="YYYY-MM-DD"
-        />
-        <DatePicker
-          label="To Date"
-          value={periodEnd}
-          onChange={setPeriodEnd}
-          placeholder="YYYY-MM-DD"
-        />
-
-        <Text style={[st.waiverSectionTitle, { marginTop: 12 }]}>
-          Reason
-        </Text>
-        <Input
-          value={reason}
-          onChangeText={setReason}
-          placeholder="Optional note (shown on the exemption list)"
-          multiline
-        />
-
-        {existingExemptions.length > 0 && (
-          <View style={{ marginTop: 20 }}>
-            <Text style={st.waiverSectionTitle}>
-              Existing Waivers ({existingExemptions.length})
-            </Text>
-            <Text style={st.waiverSectionHelp}>
-              Revoke a waiver to allow fees to accrue for its period
-              again. Fees already cleared when the waiver was created
-              are not restored.
-            </Text>
-
-            {existingExemptions.map((ex) => (
-              <View key={ex.id} style={st.waiverExistingRow}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text
-                    style={st.waiverExistingTitle}
-                    numberOfLines={1}
-                  >
-                    {ex.scope === "both"
-                      ? "Contributions + Loans"
-                      : ex.scope === "contribution"
-                      ? "Contributions"
-                      : "Loans"}
-                  </Text>
-                  <Text
-                    style={st.waiverExistingPeriod}
-                    numberOfLines={1}
-                  >
-                    {ex.periodStart} → {ex.periodEnd}
-                  </Text>
-                  {ex.reason && (
-                    <Text
-                      style={st.waiverExistingReason}
-                      numberOfLines={2}
-                    >
-                      {ex.reason}
-                    </Text>
-                  )}
-                </View>
-
-                <TouchableOpacity
-                  style={st.waiverRevokeBtn}
-                  onPress={() => onRemoveExemption(ex.id)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={st.waiverRevokeBtnText}>Revoke</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-        )}
-
-        <View style={st.waiverButtonRow}>
-          <TouchableOpacity
-            style={st.waiverCancelBtn}
-            onPress={onClose}
-            disabled={saving}
-            activeOpacity={0.8}
-          >
-            <Text style={st.waiverCancelBtnText}>Cancel</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              st.waiverSaveBtn,
-              saving && { opacity: 0.6 },
-            ]}
-            onPress={() =>
-              onConfirm(scope, periodStart, periodEnd, reason)
-            }
-            disabled={saving}
-            activeOpacity={0.8}
-          >
-            <Text style={st.waiverSaveBtnText}>
-              {saving ? "Saving…" : "Save Waiver"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </BottomModal>
-  );
-}
-
-// -----------------------------------------------------------------------------
 // Desktop table
 // -----------------------------------------------------------------------------
 
@@ -2582,7 +2309,7 @@ const st = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: C.border,
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
   },
 
   iconBtnText: { fontSize: 12, fontWeight: "700", color: C.text2 },
@@ -2855,7 +2582,7 @@ const st = StyleSheet.create({
   tableApproveBtn: {
     backgroundColor: C.greenBg,
     borderWidth: 1,
-    borderColor: C.green,
+    borderColor: C.success,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,

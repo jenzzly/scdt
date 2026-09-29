@@ -7,7 +7,6 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  Platform,
   StatusBar,
   useWindowDimensions,
   TextInput,
@@ -32,10 +31,6 @@ import {
 import {
   TabRow,
   SearchBar,
-  Card,
-  Badge,
-  Empty,
-  LoanProgress,
   useToast,
   Toast,
   Button,
@@ -43,9 +38,7 @@ import {
   Input,
 } from "../../components/ui";
 import {
-  S,
   R,
-  Colors,
   C,
   T,
   fmtCurrency,
@@ -54,7 +47,7 @@ import {
   showConfirm,
 } from "../../utils/theme";
 import { exportPdf, generatePaymentScheduleHtml } from "../../utils/export";
-import type { Loan, WalletTransaction, Member } from "../../types";
+import { Loan, Member } from "../../types";
 import { KpiCard } from "../../components/ui/KpiCard";
 
 import { computeTodayAccrued } from "../../utils/accrual";
@@ -249,30 +242,98 @@ function LoanDetailModal({
     }
   };
 
+  // Group the loan's wallet txs into "payment events".
+  //
+  // Both legs of a single payment (interest + principal) share the
+  // same createdAt timestamp because they're written in one Firestore
+  // batch. Bucketing by createdAt-to-second pairs them exactly, and
+  // keeps interest-only payments (which have no principal leg) solo.
+  //
+  // Falls back to the payment date for legacy records that predate
+  // createdAt being set.
   const paymentTxs = React.useMemo(() => {
     if (!loan) return [];
-    const intTxs = walletTxs
-      .filter(
-        (t) =>
-          t.loanId === loan.id &&
-          ["loan_interest_income", "loan_repayment"].includes(t.type),
-      )
+
+    const mine = walletTxs.filter((t) => t.loanId === loan.id);
+    const groups = new Map<
+      string,
+      {
+        date: string;
+        createdAt: string;
+        interest: number;
+        principal: number;
+        legacyTotal: number;
+      }
+    >();
+
+    for (const t of mine) {
+      if (
+        ![
+          "loan_interest_income",
+          "loan_principal_recovery",
+          "loan_repayment",
+        ].includes(t.type)
+      ) {
+        continue;
+      }
+
+      const created = String((t as any).createdAt ?? "");
+      const key = created
+        ? created.slice(0, 19)
+        : `date:${t.date}`;
+
+      const g = groups.get(key) ?? {
+        date: t.date,
+        createdAt: created || t.date,
+        interest: 0,
+        principal: 0,
+        legacyTotal: 0,
+      };
+
+      if (t.type === "loan_interest_income") g.interest += t.amount;
+      else if (t.type === "loan_principal_recovery")
+        g.principal += t.amount;
+      else if (t.type === "loan_repayment")
+        g.legacyTotal += t.amount;
+
+      groups.set(key, g);
+    }
+
+    const legacyRatio =
+      loan.totalRepayable > 0
+        ? loan.totalInterest / loan.totalRepayable
+        : 0;
+
+    return Array.from(groups.values())
+      .map((g) => {
+        if (
+          g.legacyTotal > 0 &&
+          g.interest === 0 &&
+          g.principal === 0
+        ) {
+          const li = round2(g.legacyTotal * legacyRatio);
+          const lp = round2(g.legacyTotal - li);
+          return {
+            date: g.date,
+            createdAt: g.createdAt,
+            interest: li,
+            principal: lp,
+            isLegacyCombined: true,
+          };
+        }
+        return {
+          date: g.date,
+          createdAt: g.createdAt,
+          interest: g.interest,
+          principal: g.principal,
+          isLegacyCombined: false,
+        };
+      })
       .sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+        (a, b) =>
+          new Date(b.createdAt).getTime() -
+          new Date(a.createdAt).getTime(),
       );
-    const prinTxs = walletTxs
-      .filter(
-        (t) =>
-          t.loanId === loan.id && t.type === "loan_principal_recovery",
-      )
-      .sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-      );
-    return intTxs.map((itx, i) => ({
-      date: itx.date,
-      interest: itx.amount,
-      principal: prinTxs[i]?.amount ?? 0,
-    }));
   }, [loan, walletTxs]);
 
   const lateFees = useLoanLateFees(loan?.id);
@@ -1632,6 +1693,93 @@ const detailSt = StyleSheet.create({
   },
 });
 
+// ─── Per-installment status for the Schedule modal ────────────────
+//
+// The server marks `paid: true` on an installment only when cumulative
+// amountRepaid covers its total. Interest-only payments don't advance
+// that counter, so `paid` alone would mislabel installments that have
+// had their interest cleared. This helper derives a richer status from
+// the loan's amountRepaid / totalInterestPaid and the schedule.
+//
+// Returns one of:
+//   { kind: "paid",   paidDate? }
+//   { kind: "partial", coveragePct, interestCovered, principalCovered, isOverdue }
+//   { kind: "overdue" }
+//   { kind: "due" }
+//   { kind: "unknown" }
+function computeInstallmentStatus(loan: any, index: number) {
+  const schedule = loan?.schedule;
+  if (!Array.isArray(schedule) || !schedule[index]) {
+    return { kind: "unknown" as const };
+  }
+  const inst = schedule[index];
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dueMs = new Date(inst.dueDate).getTime();
+  const isOverdue = !inst.paid && Number.isFinite(dueMs) && dueMs < today.getTime();
+
+  if (inst.paid) {
+    return {
+      kind: "paid" as const,
+      paidDate: inst.paidDate as string | undefined,
+    };
+  }
+
+  const totalInterestPaid = Math.max(0, Number(loan.totalInterestPaid) || 0);
+  const amountRepaid = Math.max(0, Number(loan.amountRepaid) || 0);
+  const totalPrincipalPaid = Math.max(
+    0,
+    amountRepaid - totalInterestPaid,
+  );
+
+  let cumInterest = 0;
+  let cumPrincipal = 0;
+  for (let k = 0; k <= index; k++) {
+    cumInterest += Number(schedule[k]?.interest) || 0;
+    cumPrincipal += Number(schedule[k]?.principal) || 0;
+  }
+  const prevInterest = cumInterest - (Number(inst.interest) || 0);
+  const prevPrincipal = cumPrincipal - (Number(inst.principal) || 0);
+
+  const interestCovered = Math.max(
+    0,
+    Math.min(
+      Number(inst.interest) || 0,
+      totalInterestPaid - prevInterest,
+    ),
+  );
+  const principalCovered = Math.max(
+    0,
+    Math.min(
+      Number(inst.principal) || 0,
+      totalPrincipalPaid - prevPrincipal,
+    ),
+  );
+
+  const totalCovered = interestCovered + principalCovered;
+  const instTotal = Number(inst.total) || 0;
+  const coveragePct =
+    instTotal > 0 ? Math.round((totalCovered / instTotal) * 100) : 0;
+
+  if (coveragePct >= 100) {
+    return {
+      kind: "paid" as const,
+      paidDate: inst.paidDate as string | undefined,
+    };
+  }
+  if (coveragePct > 0) {
+    return {
+      kind: "partial" as const,
+      coveragePct,
+      interestCovered,
+      principalCovered,
+      isOverdue,
+    };
+  }
+  return { kind: isOverdue ? ("overdue" as const) : ("due" as const) };
+}
+
 export default function LoansScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -1892,7 +2040,7 @@ export default function LoansScreen() {
     if (!disburseLoanTarget) return;
 
     if (!disburseDateText.trim()) {
-      show("First payment date is required", "error");
+      show("Money Received date is required", "error");
       return;
     }
 
@@ -1902,7 +2050,7 @@ export default function LoansScreen() {
     }
 
     if (!Number.isFinite(disburseApplicationDate.getTime())) {
-      show("Please select a valid first payment date", "error");
+      show("Please select a valid money received date", "error");
       return;
     }
 
@@ -2369,65 +2517,181 @@ export default function LoansScreen() {
               >
                 {selectedLoan.schedule &&
                 selectedLoan.schedule.length > 0 ? (
-                  selectedLoan.schedule.map((item) => (
-                    <View key={item.index} style={styles.scheduleItem}>
-                      <View style={styles.scheduleHeader}>
-                        <Text style={styles.scheduleMonth}>
-                          Month {item.index + 1}
-                        </Text>
-                        <Text
-                          style={styles.scheduleDate}
-                          numberOfLines={1}
-                        >
-                          {fmtDate(item.dueDate)}
-                        </Text>
+                  selectedLoan.schedule.map((item) => {
+                    const status = computeInstallmentStatus(
+                      selectedLoan,
+                      item.index,
+                    );
+                    const isOverdue =
+                      status.kind === "overdue" ||
+                      (status.kind === "partial" && (status as any).isOverdue);
+
+                    const badgeColor =
+                      status.kind === "paid"
+                        ? C.success
+                        : status.kind === "partial"
+                        ? C.gold
+                        : status.kind === "overdue"
+                        ? C.error
+                        : status.kind === "due"
+                        ? C.primary
+                        : C.text3;
+                    const badgeBg =
+                      status.kind === "paid"
+                        ? C.greenBg
+                        : status.kind === "partial"
+                        ? C.goldBg
+                        : status.kind === "overdue"
+                        ? C.redBg
+                        : status.kind === "due"
+                        ? C.pill
+                        : C.mutedBg;
+                    const badgeLabel =
+                      status.kind === "paid"
+                        ? "PAID"
+                        : status.kind === "partial"
+                        ? `PARTIAL ${(status as any).coveragePct}%`
+                        : status.kind === "overdue"
+                        ? "OVERDUE"
+                        : status.kind === "due"
+                        ? "DUE"
+                        : "—";
+
+                    return (
+                      <View
+                        key={item.index}
+                        style={[
+                          styles.scheduleItem,
+                          isOverdue && styles.scheduleItemOverdue,
+                        ]}
+                      >
+                        <View style={styles.scheduleHeader}>
+                          <View
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 8,
+                              flex: 1,
+                              minWidth: 0,
+                            }}
+                          >
+                            <Text style={styles.scheduleMonth}>
+                              Month {item.index + 1}
+                            </Text>
+                            <View
+                              style={[
+                                styles.scheduleBadge,
+                                { backgroundColor: badgeBg },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.scheduleBadgeText,
+                                  { color: badgeColor },
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {badgeLabel}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text
+                            style={styles.scheduleDate}
+                            numberOfLines={1}
+                          >
+                            {fmtDate(item.dueDate)}
+                          </Text>
+                        </View>
+
+                        {status.kind === "paid" &&
+                          (status as any).paidDate && (
+                            <Text style={styles.schedulePaidDate}>
+                              Paid {fmtDate((status as any).paidDate)}
+                            </Text>
+                          )}
+
+                        <View style={styles.scheduleRow}>
+                          <View style={styles.scheduleCell}>
+                            <Text style={styles.scheduleCellLabel}>
+                              Principal
+                            </Text>
+                            <Text
+                              style={styles.scheduleCellValue}
+                              numberOfLines={1}
+                              adjustsFontSizeToFit
+                              minimumFontScale={0.75}
+                            >
+                              {fmtCurrency(item.principal)}
+                            </Text>
+                          </View>
+                          <View style={styles.scheduleCell}>
+                            <Text style={styles.scheduleCellLabel}>
+                              Interest
+                            </Text>
+                            <Text
+                              style={styles.scheduleCellValue}
+                              numberOfLines={1}
+                              adjustsFontSizeToFit
+                              minimumFontScale={0.75}
+                            >
+                              {fmtCurrency(item.interest)}
+                            </Text>
+                          </View>
+                          <View style={styles.scheduleCell}>
+                            <Text style={styles.scheduleCellLabel}>
+                              Total
+                            </Text>
+                            <Text
+                              style={[
+                                styles.scheduleCellValue,
+                                { color: C.primary, fontWeight: "800" },
+                              ]}
+                              numberOfLines={1}
+                              adjustsFontSizeToFit
+                              minimumFontScale={0.75}
+                            >
+                              {fmtCurrency(item.total)}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {status.kind === "partial" && (
+                          <>
+                            <View style={styles.coverageTrack}>
+                              <View
+                                style={[
+                                  styles.coverageFill,
+                                  {
+                                    width: `${Math.min(
+                                      100,
+                                      (status as any).coveragePct,
+                                    )}%` as any,
+                                  },
+                                ]}
+                              />
+                            </View>
+                            <Text style={styles.coverageCaption}>
+                              {(status as any).interestCovered > 0
+                                ? `${fmtCurrency(
+                                    (status as any).interestCovered,
+                                  )} interest`
+                                : ""}
+                              {(status as any).interestCovered > 0 &&
+                              (status as any).principalCovered > 0
+                                ? " · "
+                                : ""}
+                              {(status as any).principalCovered > 0
+                                ? `${fmtCurrency(
+                                    (status as any).principalCovered,
+                                  )} principal`
+                                : ""}
+                              {" covered"}
+                            </Text>
+                          </>
+                        )}
                       </View>
-                      <View style={styles.scheduleRow}>
-                        <View style={styles.scheduleCell}>
-                          <Text style={styles.scheduleCellLabel}>
-                            Principal
-                          </Text>
-                          <Text
-                            style={styles.scheduleCellValue}
-                            numberOfLines={1}
-                            adjustsFontSizeToFit
-                            minimumFontScale={0.75}
-                          >
-                            {fmtCurrency(item.principal)}
-                          </Text>
-                        </View>
-                        <View style={styles.scheduleCell}>
-                          <Text style={styles.scheduleCellLabel}>
-                            Interest
-                          </Text>
-                          <Text
-                            style={styles.scheduleCellValue}
-                            numberOfLines={1}
-                            adjustsFontSizeToFit
-                            minimumFontScale={0.75}
-                          >
-                            {fmtCurrency(item.interest)}
-                          </Text>
-                        </View>
-                        <View style={styles.scheduleCell}>
-                          <Text style={styles.scheduleCellLabel}>
-                            Total
-                          </Text>
-                          <Text
-                            style={[
-                              styles.scheduleCellValue,
-                              { color: C.primary, fontWeight: "800" },
-                            ]}
-                            numberOfLines={1}
-                            adjustsFontSizeToFit
-                            minimumFontScale={0.75}
-                          >
-                            {fmtCurrency(item.total)}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                  ))
+                    );
+                  })
                 ) : (
                   <Text style={styles.scheduleEmpty}>
                     No schedule available yet
@@ -2542,7 +2806,7 @@ export default function LoansScreen() {
               the hood, which browsers initialise to today when the
               controlled value is empty). TextInput is a plain text box
               and honours value="" exactly, so the field opens clean. */}
-          <Text style={styles.disburseDateLabel}>First Payment Date *</Text>
+          <Text style={styles.disburseDateLabel}>Money Received Date *</Text>
 
           <TextInput
             style={styles.disburseDateInput}
@@ -3594,6 +3858,45 @@ const styles = StyleSheet.create({
     color: C.text3,
     textAlign: "center",
     paddingVertical: 20,
+  },
+  scheduleItemOverdue: {
+    borderLeftColor: C.error,
+  },
+  scheduleBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    flexShrink: 0,
+  },
+  scheduleBadgeText: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  schedulePaidDate: {
+    fontSize: 10,
+    color: C.success,
+    fontWeight: "600",
+    marginTop: -4,
+    marginBottom: 6,
+  },
+  coverageTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.border,
+    overflow: "hidden",
+    marginTop: 8,
+  },
+  coverageFill: {
+    height: "100%" as any,
+    borderRadius: 2,
+    backgroundColor: C.gold,
+  },
+  coverageCaption: {
+    fontSize: 10,
+    color: C.text3,
+    marginTop: 4,
+    fontWeight: "600",
   },
 
   chip: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5 },
