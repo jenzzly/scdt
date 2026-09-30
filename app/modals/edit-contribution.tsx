@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
-  ScrollView,
   StyleSheet,
   Platform,
   Alert,
@@ -26,6 +25,7 @@ import {
 } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
+import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 import { type Palette, S, fmtCurrency } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 
@@ -369,11 +369,11 @@ export default function EditContributionModal() {
    */
 
   return (
-    <ModalShell
+    <ModalShell noScroll
       title="Edit Contribution"
       onClose={() => router.back()}
     >
-      <ScrollView
+      <KeyboardAwareScrollView
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
@@ -508,7 +508,7 @@ export default function EditContributionModal() {
         )}
 
         <View style={styles.bottomSpacer} />
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       <Toast
         visible={visible}

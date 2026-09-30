@@ -15,7 +15,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
   TextInput,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -28,6 +27,7 @@ import {
 } from "../../stores/useStore";
 import { Button, useToast, Toast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
+import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 import { type Palette, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 
@@ -421,8 +421,8 @@ export default function RecordRepaymentModal() {
   };
 
   return (
-    <ModalShell title="Record Payment" onClose={() => router.back()}>
-      <ScrollView
+    <ModalShell noScroll title="Record Payment" onClose={() => router.back()}>
+      <KeyboardAwareScrollView
         contentContainerStyle={st.body}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -1028,7 +1028,7 @@ export default function RecordRepaymentModal() {
             Payments cover interest first; the remainder reduces principal.
           </Text>
         )}
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       <Toast visible={visible} msg={msg} type={type} />
     </ModalShell>

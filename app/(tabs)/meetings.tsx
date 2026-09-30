@@ -40,6 +40,7 @@ import {
 } from "../../components/ui";
 import { KpiCard } from "../../components/ui/KpiCard";
 import { C as LightPalette, D as DarkPalette, fmtCurrency, showConfirm, type Palette } from "../../utils/theme";
+import { Layout } from "../../utils/theme";
 import { useTheme, useThemeMode, useT } from "../../hooks/useTheme";
 import {
   getMeetingStatus,
@@ -1119,7 +1120,7 @@ export default function MeetingsScreen() {
 
       <ScrollView
         contentContainerStyle={
-          isWide ? st.container : { padding: 16, paddingBottom: 100 }
+          isWide ? st.container : { padding: Layout.gutter, paddingBottom: 100, ...Layout.column }
         }
         showsVerticalScrollIndicator={false}
       >
@@ -1577,8 +1578,9 @@ const makeSt = (C: Palette) => StyleSheet.create({
 
 
   container: {
-    paddingHorizontal: 24,
+    paddingHorizontal: Layout.gutter,
     paddingVertical: 16,
+    ...Layout.column,
   },
 
   // ── KPI grid ──

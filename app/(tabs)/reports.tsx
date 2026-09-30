@@ -50,6 +50,8 @@ import {
   round2,
   type Palette,
 } from "../../utils/theme";
+import { Layout } from "../../utils/theme";
+import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 import { useTheme, useThemeMode, useT } from "../../hooks/useTheme";
 
 import {
@@ -941,9 +943,8 @@ function FilterModal({
 
   return (
     <BottomModal visible={visible} onClose={onClose} title="Advanced Filters">
-      <ScrollView
+      <KeyboardAwareScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 30 }}
-        keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.modalIntro}>
           Every filter below narrows the same list further — a record has
@@ -1078,7 +1079,7 @@ function FilterModal({
             </Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </BottomModal>
   );
 }
@@ -4123,11 +4124,11 @@ const Divider = () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 const makeStyles = (C: Palette) => StyleSheet.create({
-  page: { padding: 20 },
+  page: { paddingHorizontal: Layout.gutter, paddingVertical: 20 },
 
   contentContainer: { width: "100%" },
 
-  contentContainerWide: { maxWidth: 1100, alignSelf: "center" },
+  contentContainerWide: { maxWidth: Layout.maxWidth, alignSelf: "center" },
 
   kpiGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 20, marginBottom: 16 },
 

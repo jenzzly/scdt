@@ -11,7 +11,7 @@ import {
   useCurrentUserRole, useCurrentMember, useIsGroupView,
 } from "../../stores/useStore";
 import { useCurrentMemberPermissions } from "../../stores/selectors";
-import { type Palette, fmtCurrency, fmtFull, fmtDate, round2 } from "../../utils/theme";
+import { type Palette, fmtCurrency, fmtFull, fmtDate, round2, Layout } from "../../utils/theme";
 import { useTheme, useT } from "../../hooks/useTheme";
 import type { Contribution, WalletTransaction } from "../../types";
 import { BRAND } from "../../lib/brand";
@@ -572,7 +572,7 @@ export default function DashboardScreen() {
         contentContainerStyle={{
           paddingTop: 16,
           paddingBottom: 100,
-          maxWidth: isWide ? 960 : undefined,
+          maxWidth: isWide ? Layout.insetMaxWidth : undefined,
           alignSelf: isWide ? "center" : undefined,
           width: "100%",
         }}

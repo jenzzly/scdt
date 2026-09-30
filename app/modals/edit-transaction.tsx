@@ -26,7 +26,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
-  ScrollView,
   TouchableOpacity,
   StyleSheet,
   TextInput,
@@ -46,6 +45,7 @@ import { type Palette, fmtCurrency, showConfirm } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 import type { WalletTransaction } from "../../types";
 import { projectAccruedInterest, computeFlatAccrued } from "../../utils/accrual";
+import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 
 // Same allow-list as wallet.tsx — keep these two in sync, or better,
 // move this into a shared constants file and import it in both places.
@@ -281,7 +281,7 @@ export default function EditTransactionModal() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView
+      <KeyboardAwareScrollView
         contentContainerStyle={s.body}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -433,7 +433,7 @@ export default function EditTransactionModal() {
         </TouchableOpacity>
 
         <View style={{ height: 20 }} />
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       <Toast visible={visible} msg={msg} type={type} />
     </View>

@@ -31,6 +31,32 @@ export const Fonts = {
 };
 
 export const R = { sm: 8, md: 12, lg: 16, xl: 24, full: 9999 };
+
+// ─── Page layout ─────────────────────────────────────────────────────
+// ONE content column for every tab screen, so switching pages never
+// changes the side proportions. Content is centered, capped at
+// `maxWidth`, and kept `gutter` px from the screen edge on narrow screens.
+//
+//   column       — for screens whose children sit flush (Members, Meetings,
+//                  More, Reports). Put it on the ScrollView's
+//                  contentContainerStyle together with paddingHorizontal: gutter.
+//   insetColumn  — for screens whose blocks carry their own `gutter` margin
+//                  (Dashboard, Contributions, Investments, Wallet, Loans).
+//                  It is `maxWidth + 2 * gutter` wide so the visible content
+//                  is exactly `maxWidth`, identical to `column`.
+const PAGE_GUTTER = 16;
+const PAGE_MAX_WIDTH = 1100;
+export const Layout = {
+  gutter: PAGE_GUTTER,
+  maxWidth: PAGE_MAX_WIDTH,
+  insetMaxWidth: PAGE_MAX_WIDTH + PAGE_GUTTER * 2,
+  column: { width: "100%", maxWidth: PAGE_MAX_WIDTH, alignSelf: "center" } as const,
+  insetColumn: {
+    width: "100%",
+    maxWidth: PAGE_MAX_WIDTH + PAGE_GUTTER * 2,
+    alignSelf: "center",
+  } as const,
+};
 export const S = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };
 
 // ─── Design tokens (current system) ──────────────────────────────────

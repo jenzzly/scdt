@@ -13,8 +13,7 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
-} from "react-native";
+  } from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup } from "../../stores/useStore";
 import {
@@ -26,6 +25,7 @@ import {
   DatePicker,
 } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
+import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 import { type Palette, R, S, round2 } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 
@@ -281,8 +281,8 @@ export default function AddInvestmentModal() {
   };
 
   return (
-    <ModalShell title="Add Investment" onClose={() => router.back()}>
-      <ScrollView
+    <ModalShell noScroll title="Add Investment" onClose={() => router.back()}>
+      <KeyboardAwareScrollView
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
@@ -475,7 +475,7 @@ export default function AddInvestmentModal() {
         />
 
         <View style={styles.bottomSpacer} />
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       <Toast visible={visible} msg={msg} type={type} />
     </ModalShell>

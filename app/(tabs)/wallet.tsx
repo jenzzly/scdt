@@ -12,13 +12,13 @@ import { useRouter } from "expo-router";
 import {
   useActiveGroup, useGroupWallet, useGroupMembers,
   useCurrentUserRole, useCurrentMember,
-  useIsGroupView,
+  useIsGroupView, useStore,
 } from "../../stores/useStore";
 import { TabRow, SearchBar, useToast, Toast } from "../../components/ui";
 import { type Palette, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
+import { Layout } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 import type { WalletTransaction } from "../../types";
-import { useStore } from "../../stores/useStore";
 import { useCurrentMemberPermissions, useMyMemberIds} from "../../stores/selectors";
 import { KpiCard } from "../../components/ui/KpiCard";
 
@@ -258,7 +258,7 @@ export default function WalletScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       {/* Top action bar */}
-      <View style={[wt.topBar, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+      <View style={[wt.topBar, isWide && Layout.insetColumn]}>
         <View>
           <Text style={wt.pageSummaryLabel}>
             {canSeeAll ? "Group Vault & Ledger" : "Personal Transactions"}
@@ -278,12 +278,12 @@ export default function WalletScreen() {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={[{ paddingBottom: 100 }, isWide && { paddingHorizontal: 24 }]}
+      <ScrollView contentContainerStyle={[{ paddingBottom: 100 }, isWide && Layout.insetColumn]}
         showsVerticalScrollIndicator={false}>
 
         {/* ── Balance card ── */}
         {/* ── KPI Cards ── */}
-        <View style={[wt.block, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+        <View style={[wt.block]}>
           <View style={wt.kpiGrid}>
             <KpiCard
               label="Balance"
@@ -321,7 +321,7 @@ export default function WalletScreen() {
         </View>
 
         {/* ── Controls: search + tabs + sort ── */}
-        <View style={[wt.controls, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+        <View style={[wt.controls]}>
           <View style={wt.controlsTop}>
             <View style={{ flex: 1 }}>
               <SearchBar value={search} onChange={handleSearch} placeholder="Search transactions…" />
@@ -345,7 +345,7 @@ export default function WalletScreen() {
         </View>
 
         {/* ── Transaction list / table ── */}
-        <View style={[{ marginTop: 8 }, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+        <View style={[{ marginTop: 8 }]}>
           {paginated.length === 0 ? (
             <View style={wt.empty}>
               <Text style={wt.emptyIcon}>💱</Text>
@@ -547,7 +547,7 @@ const makeWt = (C: Palette) => StyleSheet.create({
   // Desktop table
   table: {
     backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border,
-    overflow: "hidden",
+    marginHorizontal: Layout.gutter, overflow: "hidden",
   },
   tableRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12, paddingHorizontal: 12 },
   tableHeadRow: { backgroundColor: C.elevated, borderBottomWidth: 1, borderBottomColor: C.border },

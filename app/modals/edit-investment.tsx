@@ -13,7 +13,7 @@
 //     nothing to sync yet, which updateInvestmentAndSync already handles.
 
 import { useEffect, useMemo, useState } from "react";
-import { View, Text, ScrollView, StyleSheet } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { useStore, useCurrentUserRole } from "../../stores/useStore";
@@ -28,6 +28,7 @@ import {
 } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
+import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 import { type Palette, S, fmtCurrency } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 
@@ -151,8 +152,8 @@ export default function EditInvestmentModal() {
   };
 
   return (
-    <ModalShell title="Edit Investment" onClose={() => router.back()}>
-      <ScrollView
+    <ModalShell noScroll title="Edit Investment" onClose={() => router.back()}>
+      <KeyboardAwareScrollView
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
@@ -231,7 +232,7 @@ export default function EditInvestmentModal() {
         />
 
         <View style={styles.bottomSpacer} />
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       <Toast visible={visible} msg={msg} type={type} />
     </ModalShell>

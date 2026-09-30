@@ -6,11 +6,12 @@
 import React, { useMemo } from "react";
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
-  KeyboardAvoidingView, ScrollView, useWindowDimensions, StatusBar,
+  useWindowDimensions, StatusBar,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C as LightPalette, D as DarkPalette, S, type Palette } from "../../utils/theme";
 import { useTheme, useThemeMode } from "../../hooks/useTheme";
+import { KeyboardAwareScrollView } from "./KeyboardAwareScrollView";
 
 interface ModalShellProps {
   title: string;
@@ -20,7 +21,11 @@ interface ModalShellProps {
   maxWidth?: number;
   /** Right-side header action */
   headerRight?: React.ReactNode;
-  /** Disable scroll (use when content manages its own scroll) */
+  /**
+   * Disable the built-in scroll. Use when the screen renders its own
+   * <KeyboardAwareScrollView> (the body then fills the card with no extra
+   * padding, so the screen's own `styles.body` padding is the only one).
+   */
   noScroll?: boolean;
 }
 
@@ -63,33 +68,22 @@ export function ModalShell({
 
       {/* Body */}
       {noScroll ? (
-        <View style={st.body}>{children}</View>
+        <View style={st.fill}>{children}</View>
       ) : (
-        <ScrollView
+        <KeyboardAwareScrollView
           contentContainerStyle={st.body}
-          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
           {children}
-        </ScrollView>
+        </KeyboardAwareScrollView>
       )}
     </View>
   );
 
-  const inner = (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      style={{ flex: 1 }}
-    >
-      {isWide ? (
-        <View style={st.backdrop}>
-          {card}
-        </View>
-      ) : (
-        card
-      )}
-    </KeyboardAvoidingView>
-  );
+  // No KeyboardAvoidingView here on purpose: KeyboardAwareScrollView already
+  // pads + scrolls for the keyboard, and stacking both double-compensates
+  // (input jumps too high, or a blank gap appears above the keyboard).
+  const inner = isWide ? <View style={st.backdrop}>{card}</View> : card;
 
   return (
     <View style={st.root}>
@@ -145,6 +139,9 @@ const makeSt = (C: Palette) => StyleSheet.create({
     color: C.text3,
     fontWeight: "600",
     minWidth: 40,
+  },
+  fill: {
+    flex: 1,
   },
   body: {
     padding: S.lg,

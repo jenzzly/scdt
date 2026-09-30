@@ -15,7 +15,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
-  ScrollView,
   StyleSheet,
   TouchableOpacity,
 } from "react-native";
@@ -30,6 +29,7 @@ import {
 import { Input, Button, useToast, Toast, DatePicker } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
+import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 import { type Palette, S, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 
@@ -230,8 +230,8 @@ export default function EditLoanModal() {
   };
 
   return (
-    <ModalShell title="Edit Loan" onClose={() => router.back()}>
-      <ScrollView
+    <ModalShell noScroll title="Edit Loan" onClose={() => router.back()}>
+      <KeyboardAwareScrollView
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
@@ -423,7 +423,7 @@ export default function EditLoanModal() {
         )}
 
         <View style={styles.bottomSpacer} />
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       <Toast visible={visible} msg={msg} type={type} />
     </ModalShell>

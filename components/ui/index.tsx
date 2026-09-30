@@ -12,13 +12,14 @@ import {
   Modal,
   Pressable,
   Platform,
-  KeyboardAvoidingView,
   StyleSheet,
   type ViewStyle,
 type StyleProp,} from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { C as LightPalette, D as DarkPalette, R, S, fmtCurrency, initials, type Palette } from "../../utils/theme";
 import { useTheme, useThemeMode } from "../../hooks/useTheme";
+import { KeyboardAwareScrollView } from "./KeyboardAwareScrollView";
+import { markActivity } from "../../hooks/useInactivityLogout";
 
 function useUIStyles() {
   const C = useTheme();
@@ -440,10 +441,9 @@ export function BottomModal({
   const { C, styles } = useUIStyles();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={styles.modalKeyboard}
-      >
+      {/* Native <Modal> is a separate window, so touches here never reach the
+          root inactivity responder — report them explicitly. */}
+      <View style={styles.modalKeyboard} onTouchStart={markActivity}>
         <Pressable style={styles.modalOverlay} onPress={onClose}>
           <Pressable style={styles.bottomSheet} onPress={(e) => e.stopPropagation()}>
             <View style={styles.sheetHandle} />
@@ -455,17 +455,17 @@ export function BottomModal({
                 </TouchableOpacity>
               </View>
             )}
-            <ScrollView
+            <KeyboardAwareScrollView
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="interactive"
               contentContainerStyle={styles.sheetScrollContent}
             >
               {children}
-            </ScrollView>
+            </KeyboardAwareScrollView>
           </Pressable>
         </Pressable>
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }

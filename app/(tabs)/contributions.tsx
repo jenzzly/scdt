@@ -33,7 +33,8 @@ import {
   TabRow,
 } from "../../components/ui";
 
-import { C as LightPalette, D as DarkPalette, fmtCurrency, fmtDate, type Palette } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, fmtCurrency, fmtDate, type Palette, showConfirm } from "../../utils/theme";
+import { Layout } from "../../utils/theme";
 import { useTheme, useThemeMode } from "../../hooks/useTheme";
 
 import { exportXlsx, importXlsx } from "../../utils/export";
@@ -107,7 +108,7 @@ const typeLabel = (type: string) => TYPE_LABELS[type] ?? type;
 
 const wideCardStyle = (isWide: boolean) =>
   isWide
-    ? { maxWidth: 900, alignSelf: "center" as const, width: "100%" as const }
+    ? { ...Layout.insetColumn }
     : null;
 
 // -----------------------------------------------------------------------------
@@ -128,6 +129,7 @@ export default function ContributionsScreen() {
     approveContribution,
     rejectContribution,
     activeGroupId,
+    deleteContribution,
     applyContributionLateFee,
     recalcTotals,
   } = useStore();
@@ -163,6 +165,17 @@ export default function ContributionsScreen() {
 
   const getMemberName = (id: string) =>
     allMembers.find((m) => m.id === id)?.fullName ?? "Unknown";
+
+  const handleDelete = (id: string) => {
+    let msg = `⚠️ This will cascade delete the linked contribution and update member savings.\n\n${id}`;
+    showConfirm("Delete Transaction", msg, async () => {
+      try {
+        await deleteContribution(id, "Deleted by admin");
+        show("Transaction deleted");
+        recalcTotals();
+      } catch { show("Failed to delete", "error"); }
+    }, undefined, true);
+  };
 
   const handleEditPress = (id: string) => {
     router.push(`/modals/edit-contribution?id=${id}`);
@@ -742,7 +755,8 @@ export default function ContributionsScreen() {
     router.push("/modals/add-contribution");
   };
 
-  const cardWide = wideCardStyle(isWide);
+  // Width is handled once, by the ScrollView's content container below.
+  const cardWide = null;
   const activeTab =
     statusFilter === "all"
       ? "All"
@@ -767,7 +781,7 @@ export default function ContributionsScreen() {
       <ScrollView
         contentContainerStyle={[
           { paddingBottom: 100 },
-          isWide && { paddingHorizontal: 24 },
+          isWide && Layout.insetColumn,
         ]}
         showsVerticalScrollIndicator={false}
       >
@@ -938,6 +952,7 @@ export default function ContributionsScreen() {
               canApprove={canApprove}
               canEdit={canEditContribution}
               onEdit={handleEditPress}
+              onDelete={handleDelete}
               onApprove={handleApprove}
               onReject={handleReject}
             />
@@ -952,6 +967,7 @@ export default function ContributionsScreen() {
                     canEdit={canEditContribution}
                     onApprove={() => handleApprove(c.id)}
                     onReject={() => handleReject(c.id)}
+                    onDelete={() => handleDelete(c.id)}
                     onEdit={() => handleEditPress(c.id)}
                   />
                   {i < paginated.length - 1 && <Divider />}
@@ -1140,13 +1156,7 @@ function GoalCard({
 
   return (
     <View
-      style={[
-        st.goalCard,
-        wideCardStyle(isWide) && {
-          ...wideCardStyle(isWide),
-          marginHorizontal: 0,
-        },
-      ]}
+      style={st.goalCard}
     >
       <View style={st.cardAccentDot} />
 
@@ -1993,6 +2003,7 @@ function ContributionTable({
   canApprove,
   canEdit,
   onEdit,
+  onDelete,
   onApprove,
   onReject,
 }: {
@@ -2001,6 +2012,7 @@ function ContributionTable({
   canApprove: boolean;
   canEdit: boolean;
   onEdit: (id: string) => void;
+  onDelete: (id: string) => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
 }) {
@@ -2039,6 +2051,7 @@ function ContributionTable({
           canEdit={canEdit}
           canApprove={canApprove}
           onEdit={() => onEdit(c.id)}
+          onDelete={() => onDelete(c.id) }
           onApprove={() => onApprove(c.id)}
           onReject={() => onReject(c.id)}
         />
@@ -2053,6 +2066,7 @@ const TableRow = ({
   canEdit,
   canApprove,
   onEdit,
+  onDelete,
   onApprove,
   onReject,
 }: {
@@ -2061,6 +2075,7 @@ const TableRow = ({
   canEdit: boolean;
   canApprove: boolean;
   onEdit: () => void;
+  onDelete: () => void;
   onApprove: () => void;
   onReject: () => void;
 }) => {
@@ -2148,6 +2163,14 @@ const TableRow = ({
           </TouchableOpacity>
         </View>
       )}
+      {canEdit && (
+        <TouchableOpacity
+          onPress={onDelete}
+          style={st.rowRejectBtn}
+        >
+          <Text style={st.rowRejectText}>Delete</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 };
@@ -2170,6 +2193,7 @@ function ContributionRow({
   memberName,
   canApprove,
   canEdit,
+  onDelete,
   onApprove,
   onReject,
   onEdit,
@@ -2180,6 +2204,7 @@ function ContributionRow({
   canEdit: boolean;
   onApprove: () => void;
   onReject: () => void;
+  onDelete: () => void;
   onEdit: () => void;
 }) {
   const C = useTheme();
@@ -2267,6 +2292,14 @@ function ContributionRow({
                 style={st.rowEditBtn}
               >
                 <Text style={st.rowEditText}>Edit</Text>
+              </TouchableOpacity>
+            )}
+            {canEdit && (
+              <TouchableOpacity
+                onPress={onDelete}
+                style={st.rowRejectBtn}
+              >
+                <Text style={st.rowRejectText}>Delete</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -2614,6 +2647,7 @@ const makeSt = (C: Palette) => StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: C.border,
+    marginHorizontal: Layout.gutter,
     overflow: "hidden",
   },
 

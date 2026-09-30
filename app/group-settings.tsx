@@ -9,6 +9,7 @@ import { useStore, useActiveGroup, useGroupAuditLogs } from "../stores/useStore"
 import { useGroupMembers } from "../stores/selectors";
 import { useAuth } from "../hooks/useAuth";
 import { Input, Select, Button, useToast, Toast, Card, DatePicker, SearchBar, TabRow, BottomModal, Badge, Avatar, Empty } from "../components/ui";
+import { KeyboardAwareScrollView } from "../components/ui/KeyboardAwareScrollView";
 import { C as LightPalette, D as DarkPalette, fmtCurrency, fmtDate, showConfirm, round2, uid, type Palette } from "../utils/theme";
 import { useTheme, useThemeMode } from "../hooks/useTheme";
 import { exportFullData, importFullData } from "../utils/importExport";
@@ -1562,10 +1563,7 @@ They won't be able to sign in or participate in group activities, and any new la
 
     return (
       <BottomModal visible={!!member} onClose={onClose} title="Member">
-        <ScrollView
-          contentContainerStyle={detailStyles.body}
-          showsVerticalScrollIndicator={false}
-        >
+        <View style={detailStyles.body}>
           {/* ── Hero ─────────────────────────────────────────────── */}
           <View style={detailStyles.hero}>
             <View style={detailStyles.heroAvatar}>
@@ -1827,7 +1825,7 @@ They won't be able to sign in or participate in group activities, and any new la
           >
             <Text style={detailStyles.closeBtnText}>Close</Text>
           </TouchableOpacity>
-        </ScrollView>
+        </View>
       </BottomModal>
     );
   };
@@ -2153,7 +2151,7 @@ They won't be able to sign in or participate in group activities, and any new la
 
       {/* ─── SETTINGS SECTION ────────────────────────────────────────────── */}
       {activeSection === "settings" && (
-        <ScrollView
+        <KeyboardAwareScrollView
           style={styles.contentScroll}
           contentContainerStyle={[styles.body, isWide && styles.bodyWide]}
           showsVerticalScrollIndicator={false}
@@ -2490,13 +2488,13 @@ They won't be able to sign in or participate in group activities, and any new la
               <Button label="Save Settings" onPress={handleSave} loading={saving} size="lg" />
             </View>
           )}
-        </ScrollView>
+        </KeyboardAwareScrollView>
       )}
 
       {/* ─── MEMBERS SECTION ────────────────────────────────────────────── */}
       {activeSection === "members" && isAdmin && (
         <View style={styles.contentScroll}>
-          <ScrollView
+          <KeyboardAwareScrollView
             contentContainerStyle={[
               { paddingBottom: 40 },
               isWide && styles.contentWide,
@@ -2679,11 +2677,7 @@ They won't be able to sign in or participate in group activities, and any new la
             />
           </View>
 
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 80 }}
-            showsVerticalScrollIndicator={false}
-          >
+          <View style={{ paddingHorizontal: 16, paddingBottom: 40 }}>
             {filteredMembers.length === 0 ? (
               <Empty
                 message="No members found"
@@ -2780,8 +2774,8 @@ They won't be able to sign in or participate in group activities, and any new la
                 })}
               </View>
             )}
-          </ScrollView>
-          </ScrollView>
+          </View>
+          </KeyboardAwareScrollView>
         </View>
       )}
 
@@ -2805,7 +2799,7 @@ They won't be able to sign in or participate in group activities, and any new la
             </Text>
           </View>
 
-          <ScrollView
+          <KeyboardAwareScrollView
             contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 80 }}
             showsVerticalScrollIndicator={false}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
@@ -3003,7 +2997,7 @@ They won't be able to sign in or participate in group activities, and any new la
                 );
               })
             )}
-          </ScrollView>
+          </KeyboardAwareScrollView>
         </View>
       )}
 
@@ -3245,7 +3239,7 @@ They won't be able to sign in or participate in group activities, and any new la
           </View>
 
           {/* Audit Log List */}
-          <ScrollView
+          <KeyboardAwareScrollView
             style={{ flex: 1 }}
             contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primary]} />}
@@ -3284,7 +3278,7 @@ They won't be able to sign in or participate in group activities, and any new la
                 <Pagination currentPage={currentPage} totalPages={totalPages} onChange={setCurrentPage} />
               </>
             )}
-          </ScrollView>
+          </KeyboardAwareScrollView>
         </View>
       )}
 

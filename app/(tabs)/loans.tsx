@@ -46,6 +46,8 @@ import {
   round2,
   showConfirm,
 } from "../../utils/theme";
+import { Layout } from "../../utils/theme";
+import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 import { useTheme, useT } from "../../hooks/useTheme";
 import { exportPdf, generatePaymentScheduleHtml } from "../../utils/export";
 import { Loan, Member } from "../../types";
@@ -397,7 +399,7 @@ function LoanDetailModal({
 
   return (
     <BottomModal visible={visible} onClose={onClose} title="Loan Details">
-      <ScrollView
+      <KeyboardAwareScrollView
         contentContainerStyle={detailSt.body}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -1173,7 +1175,7 @@ function LoanDetailModal({
         >
           <Text style={detailSt.closeBtnText}>Close</Text>
         </TouchableOpacity>
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </BottomModal>
   );
 }
@@ -2117,16 +2119,7 @@ export default function LoansScreen() {
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
 
-      <View
-        style={[
-          styles.topBar,
-          isWide && {
-            maxWidth: 960,
-            alignSelf: "center" as any,
-            width: "100%" as any,
-          },
-        ]}
-      >
+      <View style={[styles.topBar, isWide && Layout.insetColumn]}>
         <View>
           <Text style={styles.pageSummaryLabel}>
             {isGroupView ? "Group" : "Personal"}
@@ -2149,24 +2142,11 @@ export default function LoansScreen() {
       <ScrollView
         contentContainerStyle={[
           { paddingBottom: 100 },
-          isWide && {
-            maxWidth: 960,
-            alignSelf: "center" as any,
-            width: "100%" as any,
-          },
+          isWide && Layout.insetColumn,
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <View
-          style={[
-            styles.block,
-            isWide && {
-              maxWidth: 960,
-              alignSelf: "center" as any,
-              width: "100%" as any,
-            },
-          ]}
-        >
+        <View style={styles.block}>
           <View style={styles.kpiGrid}>
             <KpiCard
               label="Total Disbursed"

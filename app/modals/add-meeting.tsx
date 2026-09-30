@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -21,6 +20,7 @@ import {
   DatePicker,
 } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
+import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 import { type Palette, S } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 
@@ -109,8 +109,8 @@ export default function AddMeetingModal() {
   })();
 
   return (
-    <ModalShell title="Schedule Meeting" onClose={() => router.back()}>
-      <ScrollView
+    <ModalShell noScroll title="Schedule Meeting" onClose={() => router.back()}>
+      <KeyboardAwareScrollView
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
@@ -212,7 +212,7 @@ export default function AddMeetingModal() {
           loading={loading}
           size="lg"
         />
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       <Toast visible={visible} msg={msg} type={type} />
     </ModalShell>

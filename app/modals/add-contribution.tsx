@@ -39,7 +39,7 @@
 //   against contributionSlice.ts.
 
 import { useMemo, useState } from "react";
-import { View, Text, ScrollView, StyleSheet } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 
 import {
@@ -62,6 +62,7 @@ import {
 } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
+import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 import { type Palette, S } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 
@@ -189,8 +190,8 @@ export default function AddContributionModal() {
   };
 
   return (
-    <ModalShell title="Add Contribution" onClose={() => router.back()}>
-      <ScrollView
+    <ModalShell noScroll title="Add Contribution" onClose={() => router.back()}>
+      <KeyboardAwareScrollView
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
@@ -261,7 +262,7 @@ export default function AddContributionModal() {
         />
 
         <View style={styles.bottomSpacer} />
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       <Toast visible={visible} msg={msg} type={type} />
     </ModalShell>

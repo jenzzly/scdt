@@ -30,6 +30,7 @@ import {
 } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
+import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 
 import { type Palette, R, S, addMonthsToYmd, fmtCurrency, loanSchedule, round2, showConfirm, formatAmountInput, padAmountOnBlur, parseFormattedAmount } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
@@ -1081,11 +1082,11 @@ export default function AddLoanModal() {
   // ------------------------------------------------------------
 
   return (
-    <ModalShell
+    <ModalShell noScroll
       title="Apply for Loan"
       onClose={() => router.back()}
     >
-      <ScrollView
+      <KeyboardAwareScrollView
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
@@ -1596,7 +1597,7 @@ export default function AddLoanModal() {
 
           size="lg"
         />
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       {/* ------------------------------------------------------ */}
       {/* PENALTY DETAILS */}

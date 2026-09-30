@@ -63,6 +63,7 @@ import {
   round2,
   type Palette,
 } from "../../utils/theme";
+import { Layout } from "../../utils/theme";
 import { useTheme, useThemeMode, useT } from "../../hooks/useTheme";
 import {
   createUserAsAdmin,
@@ -1904,7 +1905,7 @@ export default function MembersScreen() {
       <Toast visible={visible} msg={msg} type={type} />
 
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
+        contentContainerStyle={{ padding: Layout.gutter, paddingBottom: 100, ...Layout.column }}
         showsVerticalScrollIndicator={false}
       >
         <Text style={st.viewModeLabel}>
@@ -2236,7 +2237,7 @@ const makeSt = (C: Palette) => StyleSheet.create({
     letterSpacing: 0.4,
   },
 
-  container: { paddingHorizontal: 24, paddingVertical: 16 },
+  container: { paddingHorizontal: Layout.gutter, paddingVertical: 16, ...Layout.column },
 
   // ── Mobile controls (2026 refresh) ─────────────────────────────
   mobileSearchRow: {

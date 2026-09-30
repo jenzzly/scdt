@@ -24,7 +24,6 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   Platform,
   ActivityIndicator,
@@ -32,6 +31,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   useStore,
   useGroupMembers,
@@ -41,6 +41,7 @@ import {
 import { type Palette, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 import { useToast, Toast } from "../../components/ui";
+import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 
 // ─── Model ──────────────────────────────────────────────────────────────
 
@@ -71,6 +72,17 @@ export default function MeetingAttendanceModal() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const twoCol = width >= 720;
+  // Real device insets instead of a hardcoded 56/20 guess, so the header
+  // never slides under the status bar / notch (same fix as ModalShell).
+  const insets = useSafeAreaInsets();
+  const headerPaddingTop = Math.max(
+    insets.top + 8,
+    Platform.OS === "ios" ? 56 : 40,
+  );
+  const footerPaddingBottom = Math.max(
+    insets.bottom,
+    Platform.OS === "ios" ? 28 : 12,
+  );
   const { meetingId } = useLocalSearchParams<{ meetingId: string }>();
   const { show, visible, msg, type } = useToast();
 
@@ -440,7 +452,7 @@ export default function MeetingAttendanceModal() {
   return (
     <View style={styles.container}>
       {/* ── Header ───────────────────────────────────────────────── */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
         <TouchableOpacity
           onPress={handleCancel}
           hitSlop={10}
@@ -468,7 +480,7 @@ export default function MeetingAttendanceModal() {
         </View>
       </View>
 
-      <ScrollView
+      <KeyboardAwareScrollView
         style={{ flex: 1 }}
         contentContainerStyle={[
           styles.scroll,
@@ -608,10 +620,10 @@ export default function MeetingAttendanceModal() {
         )}
 
         <View style={{ height: 24 }} />
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       {/* ── Footer ───────────────────────────────────────────────── */}
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: footerPaddingBottom }]}>
         {isDirty ? (
           <View style={styles.dirtyBar}>
             <Text style={styles.dirtyBarText}>

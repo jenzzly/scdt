@@ -15,6 +15,7 @@ import {
   Input,
 } from "../../components/ui";
 import { type Palette, R, T, fmtCurrency, fmtDate, round2, showConfirm } from "../../utils/theme";
+import { Layout } from "../../utils/theme";
 import { useTheme, useT } from "../../hooks/useTheme";
 import type { Investment } from "../../types";
 import { KpiCard } from "../../components/ui/KpiCard";
@@ -218,7 +219,7 @@ export default function InvestmentsScreen() {
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
 
       {/* Top action bar */}
-      <View style={[ivt.topBar, isWide && { maxWidth: 960, alignSelf: "center" as any, width: "100%" as any }]}>
+      <View style={[ivt.topBar, isWide && Layout.insetColumn]}>
         <View>
           <Text style={ivt.pageSummaryLabel}>{isGroupView ? "Group" : "Personal"}</Text>
           <Text style={ivt.pageSummaryTitle}>{isGroupView ? " " : " "}</Text>
@@ -230,15 +231,15 @@ export default function InvestmentsScreen() {
         )}
       </View>
 
-      <ScrollView 
+      <ScrollView
         contentContainerStyle={[
           { paddingBottom: 100, paddingTop: 16 },
-          isWide && { paddingHorizontal: 24 }
-        ]} 
+          isWide && Layout.insetColumn
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* ── KPI Cards ── */}
-        <View style={[ivt.block, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+        <View style={[ivt.block]}>
           <View style={ivt.kpiGrid}>
             <KpiCard
               label="Total Invested"
@@ -246,7 +247,7 @@ export default function InvestmentsScreen() {
               icon="📊"
               subtext={`${visibleInvestments.length} investments`}
               accentColor={C.primary}
-              onPress={() => {}} 
+              onPress={() => {}}
             />
             <KpiCard
               label="Returns"
@@ -254,7 +255,7 @@ export default function InvestmentsScreen() {
               icon="📈"
               subtext="Total returns so far"
               accentColor={C.success}
-              onPress={() => {}} 
+              onPress={() => {}}
             />
             <KpiCard
               label="Active"
@@ -276,7 +277,7 @@ export default function InvestmentsScreen() {
         </View>
 
         {/* ── Controls: search + tabs + sort ── */}
-        <View style={[ivt.controls, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+        <View style={[ivt.controls]}>
           <View style={ivt.controlsTop}>
             <View style={{ flex: 1 }}>
               <SearchBar value={search} onChange={handleSearch} placeholder="Search investments…" />
@@ -298,7 +299,7 @@ export default function InvestmentsScreen() {
         </View>
 
         {/* ── List ── */}
-        <View style={[{ marginTop: 8 }, isWide && { maxWidth: 900, alignSelf: "center" as any, width: "100%" as any }]}>
+        <View style={[{ marginTop: 8 }]}>
           {paginated.length === 0 ? (
             <Empty message="No investments found" icon="📊" />
           ) : (
@@ -1079,14 +1080,10 @@ const makeIvt = (C: Palette) => StyleSheet.create({
     paddingVertical: 8, paddingHorizontal: 14,
   },
   addInlineBtnText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  // kpi card 
-  block: { 
-    marginHorizontal: 16, 
+  // kpi card
+  block: {
+    marginHorizontal: Layout.gutter,
     marginBottom: 14,
-    ...Platform.select({
-      web: {},
-      default: { marginHorizontal: 12 }
-    })
   },
   kpiGrid: {
     flexDirection: "row",
@@ -1106,7 +1103,7 @@ const makeIvt = (C: Palette) => StyleSheet.create({
   sortChipText: { fontSize: 12, fontWeight: "600", color: C.text3 },
   sortChipTextActive: { color: "#fff" },
 
-  list: { backgroundColor: C.surface, borderRadius: 14, borderWidth: 1, borderColor: C.border, overflow: "hidden" },
+  list: { backgroundColor: C.surface, borderRadius: 14, borderWidth: 1, borderColor: C.border, marginHorizontal: Layout.gutter, overflow: "hidden" },
   row: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 13 },
   rowIcon: {
     width: 36, height: 36, borderRadius: 10, backgroundColor: C.mutedBg,

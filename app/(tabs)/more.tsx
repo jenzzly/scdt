@@ -9,6 +9,7 @@
 import { useCallback, useMemo, useState } from "react";
 import {
   ScrollView,
+  Switch,
   View,
   Text,
   TouchableOpacity,
@@ -32,8 +33,8 @@ import {
   InfoRow,
 } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
-import { type Palette, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
-import { useTheme } from "../../hooks/useTheme";
+import { type Palette, R, S, fmtCurrency, round2, showConfirm, Layout } from "../../utils/theme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Config
@@ -64,6 +65,7 @@ const LANGUAGE_OPTIONS = [
 
 export default function MoreScreen() {
   const C = useTheme();
+  const isDark = useThemeMode() === "dark";
   const st = useMemo(() => makeSt(C), [C]);
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -143,6 +145,21 @@ export default function MoreScreen() {
       setSaving(false);
     }
   };
+
+  // ── Appearance ──────────────────────────────────────────────────────
+  // Prefers a dedicated store action if one exists; otherwise writes
+  // themeMode straight into the (persisted) store.
+  const setThemeMode = useStore((s) => (s as any).setThemeMode) as
+    | ((mode: "light" | "dark") => void)
+    | undefined;
+  const handleToggleDark = useCallback(
+    (value: boolean) => {
+      const mode = value ? "dark" : "light";
+      if (typeof setThemeMode === "function") setThemeMode(mode);
+      else useStore.setState({ themeMode: mode } as any);
+    },
+    [setThemeMode],
+  );
 
   // ── Sign out / password reset ───────────────────────────────────────
   const handleSignOut = () => {
@@ -272,6 +289,27 @@ export default function MoreScreen() {
           </View>
         </Card>
 
+        {/* ── Appearance ── */}
+        <Text style={st.sectionLabel}>Appearance</Text>
+        <View style={st.actionRow}>
+          <View style={st.actionIcon}>
+            <Text style={st.actionIconText}>{isDark ? "🌙" : "☀️"}</Text>
+          </View>
+          <View style={st.actionText}>
+            <Text style={st.actionLabelText}>Dark mode</Text>
+            <Text style={st.actionSub}>
+              {isDark ? "Dark theme is on" : "Switch to a darker theme"}
+            </Text>
+          </View>
+          <Switch
+            value={isDark}
+            onValueChange={handleToggleDark}
+            trackColor={{ false: C.border, true: C.primary }}
+            thumbColor="#FFFFFF"
+            accessibilityLabel="Toggle dark mode"
+          />
+        </View>
+
         {/* ── Admin section ── */}
         {isAdmin ? (
           <>
@@ -345,6 +383,9 @@ export default function MoreScreen() {
         >
           <Text style={st.dangerBtnText}>Sign Out</Text>
         </TouchableOpacity>
+        <Text style={[st.actionSub, { textAlign: "center", marginTop: 12 }]}>
+          For your security you're signed out automatically after 5 minutes of inactivity.
+        </Text>
       </ScrollView>
 
       {/* ── Edit Profile Modal ── */}
@@ -353,11 +394,7 @@ export default function MoreScreen() {
         onClose={() => setEditOpen(false)}
         title="Edit My Profile"
       >
-        <ScrollView
-          contentContainerStyle={st.modalContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
+        <View style={st.modalContent}>
           <Input
             label="Full Name *"
             value={editForm.fullName}
@@ -412,7 +449,7 @@ export default function MoreScreen() {
             size="lg"
           />
           <View style={st.modalBottomSpacer} />
-        </ScrollView>
+        </View>
       </BottomModal>
     </View>
   );
@@ -430,11 +467,9 @@ const makeSt = (C: Palette) => StyleSheet.create({
     paddingBottom: 120,
   },
   scrollContentWide: {
-    paddingHorizontal: 24,
+    paddingHorizontal: Layout.gutter,
     paddingTop: 16,
-    maxWidth: 800,
-    width: "100%" as any,
-    alignSelf: "center" as any,
+    ...Layout.column,
   },
 
   // ── Profile card ──
