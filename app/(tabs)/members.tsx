@@ -56,12 +56,14 @@ import {
 } from "../../components/ui";
 ;
 import {
-  C,
-  T,
+  C as LightPalette,
+  D as DarkPalette,
   fmtCurrency,
   fmtDate,
   round2,
+  type Palette,
 } from "../../utils/theme";
+import { useTheme, useThemeMode, useT } from "../../hooks/useTheme";
 import {
   createUserAsAdmin,
   resetUserPasswordAsAdmin,
@@ -103,35 +105,37 @@ interface MemberRisk {
   lastContributionDate: string | null;
 }
 
-const TIER_META: Record<
+function getTierMeta(C: Palette): Record<
   RiskTier,
   { label: string; color: string; bg: string; icon: string }
-> = {
-  excellent: {
-    label: "Excellent",
-    color: C.success,
-    bg: C.greenBg,
-    icon: "✓",
-  },
-  good: {
-    label: "Good",
-    color: C.primary,
-    bg: C.pill,
-    icon: "✓",
-  },
-  watch: {
-    label: "Watch",
-    color: C.gold,
-    bg: C.goldBg,
-    icon: "⚠",
-  },
-  at_risk: {
-    label: "At Risk",
-    color: C.error,
-    bg: C.redBg,
-    icon: "!",
-  },
-};
+> {
+  return {
+    excellent: {
+      label: "Excellent",
+      color: C.success,
+      bg: C.greenBg,
+      icon: "✓",
+    },
+    good: {
+      label: "Good",
+      color: C.primary,
+      bg: C.pill,
+      icon: "✓",
+    },
+    watch: {
+      label: "Watch",
+      color: C.gold,
+      bg: C.goldBg,
+      icon: "⚠",
+    },
+    at_risk: {
+      label: "At Risk",
+      color: C.error,
+      bg: C.redBg,
+      icon: "!",
+    },
+  };
+}
 
 function tierFromScore(score: number): RiskTier {
   if (score >= 85) return "excellent";
@@ -158,6 +162,9 @@ function RiskDistributionDonut({
   size?: number;
   strokeWidth?: number;
 }) {
+  const C = useTheme();
+  const st = useThemeMode() === "dark" ? darkSt : lightSt;
+
   const total =
     counts.excellent + counts.good + counts.watch + counts.at_risk;
 
@@ -243,6 +250,8 @@ function TierSummary({
   tierFilter: TierFilter;
   onSelect: (t: TierFilter) => void;
 }) {
+  const C = useTheme();
+  const st = useThemeMode() === "dark" ? darkSt : lightSt;
   const tiers: {
     key: TierFilter;
     label: string;
@@ -350,8 +359,10 @@ function PersonalRiskCard({
   score: number;
   topConcern: string | null;
 }) {
+  const C = useTheme();
+  const st = useThemeMode() === "dark" ? darkSt : lightSt;
   if (!tier) return null;
-  const meta = TIER_META[tier];
+  const meta = getTierMeta(C)[tier];
 
   return (
     <View style={[st.personalRiskCard, { borderLeftColor: meta.color }]}>
@@ -638,6 +649,13 @@ const ROLE_BADGE: Record<
 };
 
 export default function MembersScreen() {
+  const C = useTheme();
+  const T = useT();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+  const TIER_META = getTierMeta(C);
+
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = Platform.OS === "web" && width >= 768;
@@ -2087,7 +2105,7 @@ export default function MembersScreen() {
 // Styles
 // ═════════════════════════════════════════════════════════════════════════
 
-const st = StyleSheet.create({
+const makeSt = (C: Palette) => StyleSheet.create({
   // ── Tier summary (group view) ────────────────────────────────────
   tierSummaryCard: {
     flexDirection: "row",
@@ -2688,3 +2706,6 @@ const st = StyleSheet.create({
     fontWeight: "700",
   },
 });
+
+const lightSt = makeSt(LightPalette);
+const darkSt = makeSt(DarkPalette);

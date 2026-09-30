@@ -9,7 +9,8 @@ import { useRouter } from "expo-router";
 import { useAuth } from "../../hooks/useAuth";
 import { useStore } from "../../stores/useStore";
 import { Input, Button, useToast, Toast } from "../../components/ui";
-import { C, S, fmtCurrency } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, S, fmtCurrency, type Palette } from "../../utils/theme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
 import { BRAND } from "../../lib/brand";
 import * as FS from "../../lib/firestore";
 
@@ -19,7 +20,11 @@ export default function RegisterScreen() {
   // const { show, Toast } = useToast();
   const { show, visible, msg, type } = useToast();
   const { setActiveGroup, recalcTotals } = useStore();
-  
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -236,7 +241,7 @@ export default function RegisterScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   container: {
     flexGrow: 1,
     paddingHorizontal: S.lg,
@@ -316,3 +321,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 });
+
+const lightStyles = makeStyles(LightPalette);
+const darkStyles = makeStyles(DarkPalette);

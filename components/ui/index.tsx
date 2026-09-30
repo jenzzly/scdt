@@ -17,10 +17,18 @@ import {
   type ViewStyle,
 type StyleProp,} from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { C, R, S, fmtCurrency, initials } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, R, S, fmtCurrency, initials, type Palette } from "../../utils/theme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
+
+function useUIStyles() {
+  const C = useTheme();
+  const mode = useThemeMode();
+  return { C, styles: mode === "dark" ? darkStyles : lightStyles, isDark: mode === "dark" };
+}
 
 // ── Screen wrapper ─────────────────────────────────────────────────────────────
 export function Screen({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
+  const { C } = useUIStyles();
   return (
     <View style={[{ flex: 1, backgroundColor: C.bg }, style]}>
       {children}
@@ -32,6 +40,7 @@ export function Screen({ children, style }: { children: React.ReactNode; style?:
 export function Header({
   title, subtitle, right, left, showBorder = true,
 }: { title: string; subtitle?: string; right?: React.ReactNode; left?: React.ReactNode; showBorder?: boolean }) {
+  const { styles } = useUIStyles();
   return (
     <View style={[styles.header, showBorder && styles.headerBorder]}>
       {left || <View style={{ width: 38 }} />}
@@ -52,6 +61,7 @@ export function HeroCard({
   pills?: { label: string; color?: "gold" | "green" | "teal" }[];
   currency?: string;
 }) {
+  const { styles } = useUIStyles();
   return (
     <LinearGradient
       colors={["#1A3C5E", "#0D2840", "#0A1E32"]}
@@ -93,12 +103,14 @@ export function HeroCard({
 
 // ── Stat Grid ─────────────────────────────────────────────────────────────────
 export function StatGrid({ children }: { children: React.ReactNode }) {
+  const { styles } = useUIStyles();
   return <View style={styles.statGrid}>{children}</View>;
 }
 
 export function StatCard({
   label, value, sub, color = "teal",
 }: { label: string; value: string; sub?: string; color?: "teal" | "gold" | "green" | "red" }) {
+  const { C, styles } = useUIStyles();
   const accent = { teal: C.accent, gold: C.gold, green: C.success, red: C.error };
   const accentFaint = {
     teal: C.accentFaint, gold: "rgba(217,119,6,0.08)",
@@ -125,6 +137,7 @@ export function Card({
   onPress?: () => void;
   activeOpacity?: number;
 }) {
+  const { styles } = useUIStyles();
   if (onPress) {
     return (
       <TouchableOpacity
@@ -145,6 +158,7 @@ export function CardRow({
   left?: React.ReactNode; title: string; subtitle?: string;
   right?: React.ReactNode; onPress?: () => void; showBorder?: boolean;
 }) {
+  const { styles } = useUIStyles();
   const Wrapper = onPress ? TouchableOpacity : View;
   return (
     <Wrapper
@@ -166,6 +180,7 @@ export function CardRow({
 export function Avatar({
   name, size = 40, color = "teal",
 }: { name: string; size?: number; color?: "teal" | "gold" | "red" | "blue" | "green" }) {
+  const { C, styles } = useUIStyles();
   const bg = {
     teal: C.accentFaint, gold: "rgba(217,119,6,0.1)",
     red: "rgba(220,38,38,0.1)", blue: "rgba(37,99,235,0.1)", green: "rgba(5,150,105,0.08)"
@@ -193,6 +208,7 @@ export function Avatar({
 export function IconBadge({
   children, color = "teal", size = 40,
 }: { children: React.ReactNode; color?: "teal" | "gold" | "red" | "green" | "blue"; size?: number }) {
+  const { C, styles } = useUIStyles();
   const map = {
     teal: { bg: C.accentFaint, border: "rgba(13,148,136,0.2)" },
     gold: { bg: "rgba(217,119,6,0.1)", border: "rgba(217,119,6,0.2)" },
@@ -214,6 +230,7 @@ export function IconBadge({
 export function Badge({
   label, color = "teal",
 }: { label: string; color?: "teal" | "gold" | "green" | "red" | "blue" | "muted" }) {
+  const { C, styles } = useUIStyles();
   const map = {
     teal: { bg: C.accentFaint, text: C.accent },
     gold: { bg: "rgba(217,119,6,0.1)", text: C.gold },
@@ -238,6 +255,7 @@ export function Button({
   size?: "sm" | "md" | "lg"; fullWidth?: boolean; disabled?: boolean;
   loading?: boolean; icon?: React.ReactNode; style?: ViewStyle;
 }) {
+  const { C, styles } = useUIStyles();
   const variantStyles = {
     primary: { bg: C.primary, text: "#fff", border: C.primary },
     secondary: { bg: C.surface, text: C.primary, border: C.border },
@@ -316,6 +334,7 @@ export const Input = forwardRef<TextInput, InputProps>(({
   onSubmitEditing, onKeyPress, clearButtonMode, containerStyle, style, testID,
   onFocus: onFocusExternal, onBlur: onBlurExternal,
 }, ref) => {
+  const { C, styles } = useUIStyles();
   const [focused, setFocused] = useState(false);
   return (
     <View style={[styles.formGroup, containerStyle]}>
@@ -377,6 +396,7 @@ export function Select({
   hint?: string;
   style?: any;
 }) {
+  const { C, styles } = useUIStyles();
   const [open, setOpen] = useState(false);
   // Accept either options or items (items is alias for options)
   const opts = options || items || [];
@@ -417,6 +437,7 @@ export function Select({
 export function BottomModal({
   visible, onClose, title, children,
 }: { visible: boolean; onClose: () => void; title?: string; children?: React.ReactNode }) {
+  const { C, styles } = useUIStyles();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView
@@ -453,6 +474,7 @@ export function BottomModal({
 export function Section({
   title, action, actionLabel, children,
 }: { title: string; action?: () => void; actionLabel?: string; children: React.ReactNode }) {
+  const { styles } = useUIStyles();
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
@@ -470,6 +492,7 @@ export function Section({
 
 // ── Loan Progress Bar ─────────────────────────────────────────────────────────
 export function LoanProgress({ pct }: { pct: number }) {
+  const { C, styles } = useUIStyles();
   const color = pct >= 80 ? C.success : pct >= 50 ? C.accent : C.warning;
   return (
     <View style={styles.progressBg}>
@@ -482,6 +505,7 @@ export function LoanProgress({ pct }: { pct: number }) {
 export function Empty({ message, icon, action, actionLabel }: {
   message: string; icon?: string; action?: () => void; actionLabel?: string;
 }) {
+  const { styles } = useUIStyles();
   return (
     <View style={styles.empty}>
       <View style={styles.emptyIconWrap}>
@@ -502,6 +526,7 @@ export function Empty({ message, icon, action, actionLabel }: {
 export function TabRow({
   tabs, active, onChange,
 }: { tabs: string[]; active: string; onChange: (t: string) => void }) {
+  const { styles } = useUIStyles();
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabRowWrap} contentContainerStyle={styles.tabRow}>
       {tabs.map((t) => (
@@ -520,6 +545,7 @@ export function TabRow({
 export function SearchBar({ value, onChange, placeholder = "Search…" }: {
   value: string; onChange: (v: string) => void; placeholder?: string;
 }) {
+  const { C, styles } = useUIStyles();
   return (
     <View style={styles.searchBar}>
       <Text style={{ color: C.text3, marginRight: 8, fontSize: 14 }}>⌕</Text>
@@ -539,6 +565,7 @@ export function SearchBar({ value, onChange, placeholder = "Search…" }: {
 
 // ── Divider ───────────────────────────────────────────────────────────────────
 export function Divider({ label }: { label?: string }) {
+  const { styles } = useUIStyles();
   if (!label) return <View style={styles.divider} />;
   return (
     <View style={styles.dividerRow}>
@@ -551,6 +578,7 @@ export function Divider({ label }: { label?: string }) {
 
 // ── Info Row ──────────────────────────────────────────────────────────────────
 export function InfoRow({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  const { C, styles } = useUIStyles();
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
@@ -572,6 +600,7 @@ export function Toast({
   msg: string;
   type: ToastType;
 }) {
+  const { C, styles } = useUIStyles();
   if (!visible) return null;
 
   return (
@@ -645,7 +674,7 @@ export function useToast() {
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   // Header
   header: {
     flexDirection: "row", alignItems: "center",
@@ -887,6 +916,9 @@ const styles = StyleSheet.create({
   toastDot: { width: 8, height: 8, borderRadius: 4 },
   toastText: { fontSize: 13, fontWeight: "600" },
 });
+
+const lightStyles = makeStyles(LightPalette);
+const darkStyles = makeStyles(DarkPalette);
 
 export { ModalShell } from './ModalShell';
 export { DatePicker } from './DatePicker';

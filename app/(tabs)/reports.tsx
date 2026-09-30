@@ -43,12 +43,14 @@ import {
 } from "../../components/ui";
 
 import {
-  C,
-  T,
+  C as LightPalette,
+  D as DarkPalette,
   fmtCurrency,
   fmtDate,
   round2,
+  type Palette,
 } from "../../utils/theme";
+import { useTheme, useThemeMode, useT } from "../../hooks/useTheme";
 
 import {
   exportXlsx,
@@ -335,6 +337,11 @@ function EarningsDonut({
 }: {
   segments: { label: string; value: number; color: string }[];
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
   const positiveSegments = segments.filter(
     (s) => Number.isFinite(s.value) && s.value > 0
   );
@@ -457,14 +464,22 @@ function EarningsDonut({
 function Gauge({
   value,
   max = 100,
-  color = C.success,
-  trackColor = C.border,
+  color,
+  trackColor,
 }: {
   value: number;
   max?: number;
   color?: string;
   trackColor?: string;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
+  const finalColor = color ?? C.success;
+  const finalTrackColor = trackColor ?? C.border;
+
   const size = 190;
   const strokeWidth = 16;
   const padding = strokeWidth / 2 + 2;
@@ -491,7 +506,7 @@ function Gauge({
       >
         <Path
           d={arcPath}
-          stroke={trackColor}
+          stroke={finalTrackColor}
           strokeWidth={strokeWidth}
           fill="none"
           strokeLinecap="round"
@@ -500,7 +515,7 @@ function Gauge({
         {progressLength > 0 && (
           <Path
             d={arcPath}
-            stroke={color}
+            stroke={finalColor}
             strokeWidth={strokeWidth}
             fill="none"
             strokeLinecap="round"
@@ -531,6 +546,11 @@ function CashflowBarChart({
   income: number[];
   expenses: number[];
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
   const safeIncome = income.map((v) => (Number.isFinite(v) ? Math.max(0, v) : 0));
   const safeExpenses = expenses.map((v) =>
     Number.isFinite(v) ? Math.max(0, v) : 0
@@ -593,6 +613,11 @@ function MemberSharesChart({
 }: {
   data: { name: string; population: number; color: string }[];
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
   const total = data.reduce((s, d) => s + d.population, 0) || 1;
 
   return (
@@ -659,6 +684,10 @@ function CategoryBarChart({
   values: number[];
   color: string;
 }) {
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
   const safeValues = values.map((v) =>
     Number.isFinite(v) ? Math.max(0, v) : 0
   );
@@ -736,6 +765,10 @@ function Dropdown({
   options: DropdownOption[];
   onChange: (value: string) => void;
 }) {
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
   const [open, setOpen] = useState(false);
 
   const selected = options.find((o) => o.value === value);
@@ -832,30 +865,51 @@ function StatusChipRow({
   value,
   options,
   onChange,
+  scroll = false,
 }: {
   value: string;
   options: { label: string; value: string }[];
   onChange: (value: string) => void;
+  /** One line, scrolls sideways. Used by the inline source cards. The
+   *  advanced filter popup keeps the default wrapping layout. */
+  scroll?: boolean;
 }) {
-  return (
-    <View style={styles.chipRow}>
-      {options.map((opt) => {
-        const active = opt.value === value;
-        return (
-          <TouchableOpacity
-            key={opt.value}
-            style={[styles.statusChip, active && styles.statusChipActive]}
-            onPress={() => onChange(opt.value)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
-              {opt.label}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
+  const chips = options.map((opt) => {
+    const active = opt.value === value;
+    return (
+      <TouchableOpacity
+        key={opt.value}
+        style={[styles.statusChip, active && styles.statusChipActive]}
+        onPress={() => onChange(opt.value)}
+        activeOpacity={0.7}
+      >
+        <Text
+          style={[styles.statusChipText, active && styles.statusChipTextActive]}
+          numberOfLines={1}
+        >
+          {opt.label}
+        </Text>
+      </TouchableOpacity>
+    );
+  });
+
+  if (scroll) {
+    return (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.chipRowScroll}
+      >
+        {chips}
+      </ScrollView>
+    );
+  }
+
+  return <View style={styles.chipRow}>{chips}</View>;
 }
 
 function FilterModal({
@@ -881,6 +935,10 @@ function FilterModal({
   onClear,
   activeFilterCount,
 }: any) {
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
   return (
     <BottomModal visible={visible} onClose={onClose} title="Advanced Filters">
       <ScrollView
@@ -1030,6 +1088,12 @@ function FilterModal({
 // ─────────────────────────────────────────────────────────────────────────
 
 export default function ReportsScreen() {
+  const C = useTheme();
+  const T = useT();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
   const { width } = useWindowDimensions();
 
   const isWide = width >= 1024;
@@ -1225,6 +1289,20 @@ export default function ReportsScreen() {
     memberStatusFilter !== "all" ||
     lateFeeSourceFilter !== "all" ||
     earningsSourceFilter !== "all";
+
+  // Badge on the Filters button: how many filters are currently applied
+  // (advanced popup filters + the member dropdown).
+  const appliedFilterCount =
+    countActiveFilters({
+      search: searchTerm,
+      fromDate: selectedFromDate,
+      toDate: selectedToDate,
+      loanStatus,
+      contributionStatus,
+      memberStatus: memberStatusFilter,
+      lateFeeSource: lateFeeSourceFilter,
+      earningsSource: earningsSourceFilter,
+    }) + (memberIdFilter !== "all" ? 1 : 0);
 
   const inDateRange = (dStr?: string) => {
     if (!dStr) return true;
@@ -2041,14 +2119,14 @@ export default function ReportsScreen() {
       .filter((m) => m.status === "active" && m.totalContributions > 0)
       .slice(0, 5);
 
-    const palette = [C.accent, C.gold, C.info, C.success, "#7C3AED"];
+    const palette = [C.accent, C.gold, C.info, C.success, C.purple];
 
     return top.map((m, i) => ({
       name: m.fullName.split(" ")[0],
       population: m.totalContributions,
       color: palette[i % palette.length],
     }));
-  }, [members]);
+  }, [members, C]);
 
   const monthOptions = useMemo(() => {
     const dateFieldByCat: Record<Category, string> = {
@@ -2667,6 +2745,7 @@ export default function ReportsScreen() {
     projectedLoanInterest,
     projectedLoanLateFees,
     earningsMode,
+    C, // chartColor is read from the palette — recompute on theme toggle
   ]);
 
   const exportRows = view.rows.map(view.toRow);
@@ -2776,7 +2855,7 @@ export default function ReportsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
+      <StatusBar barStyle={isDark ? "light-content" : "dark-content"} backgroundColor={C.bg} />
 
       <ScrollView
         contentContainerStyle={[styles.page, { paddingBottom: 80 }]}
@@ -2789,8 +2868,8 @@ export default function ReportsScreen() {
             </Text>
 
             <View style={styles.gfpRow}>
-              <View style={[styles.gfpStat, styles.gfpStatBorderRight, styles.gfpStatBorderBottom]}>
-                <Text style={T.label} numberOfLines={1}>
+              <View style={styles.gfpStat}>
+                <Text style={styles.gfpStatLabel} numberOfLines={1}>
                   {isPersonalView ? "My Account" : "Members"}
                 </Text>
 
@@ -2810,8 +2889,8 @@ export default function ReportsScreen() {
                 </Text>
               </View>
 
-              <View style={[styles.gfpStat, styles.gfpStatBorderBottom]}>
-                <Text style={T.label} numberOfLines={1}>
+              <View style={styles.gfpStat}>
+                <Text style={styles.gfpStatLabel} numberOfLines={1}>
                   Total Net Assets
                 </Text>
 
@@ -2831,8 +2910,8 @@ export default function ReportsScreen() {
             </View>
 
             <View style={styles.gfpRow}>
-              <View style={[styles.gfpStat, styles.gfpStatBorderRight, styles.gfpStatBorderBottom]}>
-                <Text style={T.label} numberOfLines={1}>
+              <View style={styles.gfpStat}>
+                <Text style={styles.gfpStatLabel} numberOfLines={1}>
                   Contributions
                 </Text>
 
@@ -2850,7 +2929,7 @@ export default function ReportsScreen() {
                 </Text>
               </View>
 
-              <View style={[styles.gfpStat, styles.gfpStatBorderBottom]}>
+              <View style={styles.gfpStat}>
                 <Text style={styles.gfpStatLabel} numberOfLines={1}>
                   Interest Earned
                 </Text>
@@ -2871,13 +2950,13 @@ export default function ReportsScreen() {
             </View>
 
             <View style={styles.gfpRow}>
-              <View style={[styles.gfpStat, styles.gfpStatBorderRight, styles.gfpStatBorderBottom]}>
+              <View style={styles.gfpStat}>
                 <Text style={styles.gfpStatLabel} numberOfLines={1}>
                   Late Fees Owed
                 </Text>
 
                 <Text
-                  style={[styles.gfpStatValue, { color: "#a855f7" }]}
+                  style={[styles.gfpStatValue, { color: C.purple }]}
                   numberOfLines={1}
                   adjustsFontSizeToFit
                   minimumFontScale={0.7}
@@ -2890,13 +2969,13 @@ export default function ReportsScreen() {
                 </Text>
               </View>
 
-              <View style={[styles.gfpStat, styles.gfpStatBorderBottom]}>
+              <View style={styles.gfpStat}>
                 <Text style={styles.gfpStatLabel} numberOfLines={1}>
                   Projected Interest
                 </Text>
 
                 <Text
-                  style={[styles.gfpStatValue, { color: "#6366f1" }]}
+                  style={[styles.gfpStatValue, { color: C.indigo }]}
                   numberOfLines={1}
                   adjustsFontSizeToFit
                   minimumFontScale={0.7}
@@ -2911,8 +2990,8 @@ export default function ReportsScreen() {
             </View>
 
             <View style={styles.gfpRow}>
-              <View style={[styles.gfpStat, styles.gfpStatBorderRight, styles.gfpStatBorderBottom]}>
-                <Text style={T.label} numberOfLines={1}>
+              <View style={styles.gfpStat}>
+                <Text style={styles.gfpStatLabel} numberOfLines={1}>
                   Penalties & Late Fees
                 </Text>
 
@@ -2930,13 +3009,13 @@ export default function ReportsScreen() {
                 </Text>
               </View>
 
-              <View style={[styles.gfpStat, styles.gfpStatBorderBottom]}>
-                <Text style={T.label} numberOfLines={1}>
+              <View style={styles.gfpStat}>
+                <Text style={styles.gfpStatLabel} numberOfLines={1}>
                   Total Loans
                 </Text>
 
                 <Text
-                  style={[styles.gfpStatValue, { color: "#f97316" }]}
+                  style={[styles.gfpStatValue, { color: C.orange }]}
                   numberOfLines={1}
                   adjustsFontSizeToFit
                   minimumFontScale={0.7}
@@ -2950,9 +3029,9 @@ export default function ReportsScreen() {
               </View>
             </View>
 
-            <View style={styles.gfpRow}>
-              <View style={[styles.gfpStat, styles.gfpStatBorderRight]}>
-                <Text style={T.label} numberOfLines={1}>
+            <View style={[styles.gfpRow, styles.gfpRowLast]}>
+              <View style={styles.gfpStat}>
+                <Text style={styles.gfpStatLabel} numberOfLines={1}>
                   Investment Returns
                 </Text>
 
@@ -2971,7 +3050,7 @@ export default function ReportsScreen() {
               </View>
 
               <View style={styles.gfpStat}>
-                <Text style={T.label} numberOfLines={1}>
+                <Text style={styles.gfpStatLabel} numberOfLines={1}>
                   Other
                 </Text>
 
@@ -3001,13 +3080,13 @@ export default function ReportsScreen() {
 
             <EarningsDonut
               segments={[
-                { label: "Loan interest (actual)", value: donutLoanInterest, color: "#2a78d6" },
-                { label: "Late fees (actual)", value: donutLateFees, color: "#eb6834" },
-                { label: "Investment returns", value: donutInvestmentReturns, color: "#1baf7a" },
-                { label: "Accrued (unpaid)", value: donutAccruedUnpaid, color: "#a855f7" },
-                { label: isPersonalView ? "Projected interest (my 1/N share)" : "Projected interest (schedule)", value: donutProjectedInterest, color: "#6366f1" },
-                { label: "Projected late fees", value: donutProjectedLateFees, color: "#f97316" },
-                { label: "Other", value: donutOther, color: "#eda100" },
+                { label: "Loan interest (actual)", value: donutLoanInterest, color: C.info },
+                { label: "Late fees (actual)", value: donutLateFees, color: C.coral },
+                { label: "Investment returns", value: donutInvestmentReturns, color: C.success },
+                { label: "Accrued (unpaid)", value: donutAccruedUnpaid, color: C.purple },
+                { label: isPersonalView ? "Projected interest (my 1/N share)" : "Projected interest (schedule)", value: donutProjectedInterest, color: C.indigo },
+                { label: "Projected late fees", value: donutProjectedLateFees, color: C.orange },
+                { label: "Other", value: donutOther, color: C.gold },
               ]}
             />
           </View>
@@ -3038,11 +3117,11 @@ export default function ReportsScreen() {
 
           {memberPie.length > 0 && (
             <View style={styles.chartCard}>
-              <Text style={styles.chartTitle}>
+              {/*<Text style={styles.chartTitle}>
                 {isPersonalView ? "My Savings" : "Savings by Member (Top 5)"}
               </Text>
 
-              <MemberSharesChart data={memberPie} />
+              <MemberSharesChart data={memberPie} />*/}
             </View>
           )}
         </View>
@@ -3075,13 +3154,13 @@ export default function ReportsScreen() {
             ))}
           </ScrollView>
 
-          <View style={[styles.filterArea, isMobile && styles.filterAreaMobile]}>
-            <View style={[styles.filterDropdown, isMobile && styles.filterDropdownMobile]}>
+          <View style={styles.filterArea}>
+            <View style={[styles.filterDropdown, !isMobile && styles.filterDropdownWeb]}>
               <Dropdown label="Month" value={monthFilter} options={monthOptions} onChange={handleMonthChange} />
             </View>
 
             {!isPersonalView && (
-              <View style={[styles.filterDropdown, isMobile && styles.filterDropdownMobile]}>
+              <View style={[styles.filterDropdown, !isMobile && styles.filterDropdownWeb]}>
                 <Dropdown
                   label="Member"
                   value={memberIdFilter}
@@ -3091,17 +3170,35 @@ export default function ReportsScreen() {
               </View>
             )}
 
-            <TouchableOpacity style={styles.filterBtn} onPress={openFilterModal} activeOpacity={0.8}>
-              <Text style={styles.filterBtnText}>
-                {hasActiveFilters ? "🎯 Advanced" : "🔍 Advanced"}
-              </Text>
+            <TouchableOpacity
+              style={[
+                styles.filterBtn,
+                isMobile && styles.filterBtnIcon,
+                hasActiveFilters && styles.filterBtnActive,
+              ]}
+              onPress={openFilterModal}
+              activeOpacity={0.8}
+              accessibilityLabel={
+                appliedFilterCount > 0 ? `Filters, ${appliedFilterCount} applied` : "Filters"
+              }
+            >
+              <Text style={styles.filterBtnIconText}>🔍</Text>
+              {!isMobile && <Text style={styles.filterBtnText}>Filters</Text>}
 
-              {hasActiveFilters && <View style={styles.filterDot} />}
+              {appliedFilterCount > 0 && (
+                <View style={styles.filterBadge}>
+                  <Text style={styles.filterBadgeText}>{appliedFilterCount}</Text>
+                </View>
+              )}
             </TouchableOpacity>
 
             {hasActiveFilters && (
-              <TouchableOpacity onPress={clearAllFilters} style={styles.clearBtn}>
-                <Text style={styles.clearBtnText}>Clear</Text>
+              <TouchableOpacity
+                onPress={clearAllFilters}
+                style={[styles.clearBtn, isMobile && styles.clearBtnIcon]}
+                accessibilityLabel="Clear filters"
+              >
+                <Text style={styles.clearBtnText}>{isMobile ? "✕" : "✕ Clear"}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -3111,6 +3208,7 @@ export default function ReportsScreen() {
             <View style={styles.inlineFilterCard}>
               <Text style={styles.inlineFilterLabel}>Late Fee Source</Text>
               <StatusChipRow
+                scroll
                 value={lateFeeSourceFilter}
                 options={LATE_FEE_SOURCE_CHIPS}
                 onChange={(v) => setLateFeeSourceFilter(v as LateFeeSourceFilter)}
@@ -3122,6 +3220,7 @@ export default function ReportsScreen() {
             <View style={styles.inlineFilterCard}>
               <Text style={styles.inlineFilterLabel}>Profit Source</Text>
               <StatusChipRow
+                scroll
                 value={earningsSourceFilter}
                 options={EARNINGS_SOURCE_CHIPS}
                 onChange={(v) =>
@@ -3450,6 +3549,10 @@ function MembersTab({
   onExportContributions,
   exportRows,
 }: any) {
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
   const [selectedMember, setSelectedMember] = useState<any>(
     !isGroupView && members.length === 1 ? members[0] : null
   );
@@ -3598,18 +3701,23 @@ function WaiverCard({
   onRemove: () => void;
   removing: boolean;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
   const scope = exemption.scope ?? "contribution";
   const scopeStyle =
     scope === "loan"
-      ? { bg: "#FEF3C7", fg: "#B45309", label: "Loan" }
+      ? { bg: C.goldBg, fg: C.goldText, label: "Loan" }
       : scope === "both"
-      ? { bg: "#E0E7FF", fg: "#4338CA", label: "Both" }
-      : { bg: "#DBEAFE", fg: "#1D4ED8", label: "Contribution" };
+      ? { bg: C.tealBg, fg: C.tealText, label: "Both" }
+      : { bg: C.infoBg, fg: C.infoText, label: "Contribution" };
 
   return (
     <View style={styles.waiverCard}>
       <View style={styles.waiverCardHeader}>
-        <View style={[styles.waiverScopeBadge, { backgroundColor: scopeStyle.bg }]}>
+        <View style={[styles.waiverScopeBadge, { backgroundColor: scopeStyle.bg, borderColor: scopeStyle.fg }]}>
           <Text style={[styles.waiverScopeText, { color: scopeStyle.fg }]}>
             {scopeStyle.label}
           </Text>
@@ -3653,6 +3761,11 @@ function MemberDetail({
   onBack,
   onExportContributions,
 }: any) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
   const { show } = useToast();
   const removeLateFeeExemption = useStore((s) => s.removeLateFeeExemption);
 
@@ -3806,7 +3919,7 @@ function MemberDetail({
         <View style={styles.memberKpi}>
           <Text style={styles.memberKpiLabel}>Accrued (Unpaid)</Text>
 
-          <Text style={[styles.memberKpiValue, { color: "#a855f7" }]}>
+          <Text style={[styles.memberKpiValue, { color: C.purple }]}>
             {fmtCurrency(accruedInterestUnpaid)}
           </Text>
         </View>
@@ -3998,15 +4111,18 @@ function MemberDetail({
   );
 }
 
-const Divider = () => (
-  <View style={{ height: 1, backgroundColor: C.borderLight, marginHorizontal: 16 }} />
-);
+const Divider = () => {
+  const C = useTheme();
+  return (
+    <View style={{ height: 1, backgroundColor: C.borderLight, marginHorizontal: 16 }} />
+  );
+};
 
 // ─────────────────────────────────────────────────────────────────────────
 // Styles
 // ─────────────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   page: { padding: 20 },
 
   contentContainer: { width: "100%" },
@@ -4291,12 +4407,10 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
 
-  // ── Section cards now carry a tinted background so the page reads as
-  //    distinct blocks rather than one flat surface. The tint is a very
-  //    light version of the surface — subtle enough to stay readable,
-  //    distinct enough to visually separate sections.
+  // ── Section cards use the themed surface so they separate from the page
+  //    background in both light and dark mode.
   chartCard: {
-    backgroundColor: "#F4F7FB",           // ← tinted background
+    backgroundColor: C.surface,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: C.border,
@@ -4336,17 +4450,31 @@ const styles = StyleSheet.create({
 
   cardTitle: { fontSize: 15, fontWeight: "800", color: C.text },
 
-  gfpRow: { flexDirection: "row" },
+  // Financial Position: each cell is its own tile.
+  gfpRow: { flexDirection: "row", gap: 10, marginBottom: 10 },
 
-  gfpStat: { flex: 1, minWidth: 0, padding: 14, gap: 3 },
+  gfpRowLast: { marginBottom: 0 },
 
-  gfpStatBorderRight: { borderRightWidth: 1, borderRightColor: C.border },
-
-  gfpStatBorderBottom: { borderBottomWidth: 1, borderBottomColor: C.border },
+  gfpStat: {
+    flex: 1,
+    minWidth: 0,
+    padding: 14,
+    gap: 3,
+    backgroundColor: C.bg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
 
   gfpStatValue: { fontSize: 16, fontWeight: "800", color: C.text, letterSpacing: -0.3 },
 
-  gfpStatLabel: { fontSize: 11, fontWeight: "700", color: C.text3 },
+  gfpStatLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: C.text3,
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
 
   categoryScroller: { marginTop: 4, marginBottom: 14 },
 
@@ -4364,7 +4492,7 @@ const styles = StyleSheet.create({
     backgroundColor: C.surface,
   },
 
-  pillActive: { backgroundColor: "#2E7D6C", borderColor: "#2E7D6C" },
+  pillActive: { backgroundColor: C.primary, borderColor: C.primary },
 
   pillIcon: { fontSize: 15 },
 
@@ -4372,19 +4500,20 @@ const styles = StyleSheet.create({
 
   pillLabelActive: { color: "#fff" },
 
+  // Month · Member · Filters · Clear all sit on ONE row (mobile + web).
   filterArea: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
+    gap: 8,
     marginBottom: 12,
   },
 
-  filterAreaMobile: { flexDirection: "column", alignItems: "stretch" },
+  // Dropdowns share the available width…
+  filterDropdown: { flex: 1, minWidth: 0 },
 
-  filterDropdown: { width: 190 },
-
-  filterDropdownMobile: { width: "100%" },
+  // …but stop stretching on wide screens.
+  filterDropdownWeb: { maxWidth: 280 },
 
   filterBtn: {
     minHeight: 46,
@@ -4399,20 +4528,41 @@ const styles = StyleSheet.create({
     gap: 6,
   },
 
+  // Mobile: icon only.
+  filterBtnIcon: { width: 46, paddingHorizontal: 0 },
+
+  // Any filter applied → teal border.
+  filterBtnActive: { borderColor: C.teal },
+
+  filterBtnIconText: { fontSize: 14 },
+
   filterBtnText: { fontSize: 13, fontWeight: "600", color: C.text2 },
 
-  filterDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.accent },
+  filterBadge: {
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 5,
+    borderRadius: 9,
+    backgroundColor: C.teal,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  filterBadgeText: { fontSize: 10, fontWeight: "800", color: "#fff" },
 
   clearBtn: { minHeight: 46, justifyContent: "center", paddingHorizontal: 6 },
+
+  // Mobile: small ✕ only.
+  clearBtnIcon: { width: 28, alignItems: "center", paddingHorizontal: 0 },
 
   clearBtnText: { fontSize: 12, fontWeight: "700", color: C.error },
 
   // NEW: inline card that wraps the late-fee source chips
   inlineFilterCard: {
-    backgroundColor: "#FFF7ED",           // ← warm tint matching late-fee theme
+    backgroundColor: C.goldBg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#FDBA74",
+    borderColor: C.gold,
     padding: 12,
     marginBottom: 12,
   },
@@ -4420,7 +4570,7 @@ const styles = StyleSheet.create({
   inlineFilterLabel: {
     fontSize: 10,
     fontWeight: "800",
-    color: "#9A3412",
+    color: C.goldText,
     textTransform: "uppercase",
     letterSpacing: 0.6,
     marginBottom: 8,
@@ -4773,6 +4923,9 @@ const styles = StyleSheet.create({
 
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
 
+  // Inline source chips: single line, scrolls sideways.
+  chipRowScroll: { flexDirection: "row", flexWrap: "nowrap", gap: 8, paddingRight: 4 },
+
   statusChip: {
     paddingHorizontal: 14,
     paddingVertical: 8,
@@ -4870,7 +5023,7 @@ const styles = StyleSheet.create({
     backgroundColor: C.surface,
   },
 
-  earningsModeBtnActive: { backgroundColor: "#2E7D6C", borderColor: "#2E7D6C" },
+  earningsModeBtnActive: { backgroundColor: C.primary, borderColor: C.primary },
 
   earningsModeBtnText: { fontSize: 12, fontWeight: "700", color: C.text2 },
 
@@ -4913,16 +5066,19 @@ const styles = StyleSheet.create({
   waiverCountBadge: { minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 11, backgroundColor: C.pill, alignItems: "center", justifyContent: "center" },
   waiverCountText: { fontSize: 11, fontWeight: "800", color: C.primary },
   waiverGroupLabel: { fontSize: 10, fontWeight: "800", color: C.text3, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 },
-  waiverCard: { backgroundColor: "#FFFBEB", borderRadius: 12, borderWidth: 1, borderColor: "#FDE68A", padding: 12, marginBottom: 8 },
+  waiverCard: { backgroundColor: C.goldBg, borderRadius: 12, borderWidth: 1, borderColor: C.gold, padding: 12, marginBottom: 8 },
   waiverCardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 8, gap: 8 },
-  waiverScopeBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  waiverScopeBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
   waiverScopeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.4 },
   waiverPeriod: { fontSize: 13, fontWeight: "700", color: C.text, marginBottom: 4 },
   waiverReason: { fontSize: 12, color: C.text2, lineHeight: 17, marginBottom: 6 },
   waiverMeta: { fontSize: 10, color: C.text3, marginBottom: 10 },
-  waiverRemoveBtn: { alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, borderWidth: 1, borderColor: "#FCA5A5", backgroundColor: "#FEF2F2" },
-  waiverRemoveBtnText: { fontSize: 11, fontWeight: "700", color: C.error },
+  waiverRemoveBtn: { alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, borderWidth: 1, borderColor: C.error, backgroundColor: C.redBg },
+  waiverRemoveBtnText: { fontSize: 11, fontWeight: "700", color: C.redText },
   waiverEmpty: { fontSize: 12, color: C.text3, textAlign: "center", paddingVertical: 16 },
-  memberWaiverPill: { marginTop: 4, alignSelf: "flex-start", paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, backgroundColor: "#FEF3C7" },
-  memberWaiverPillText: { fontSize: 9, fontWeight: "800", color: "#92400E", letterSpacing: 0.2 },
+  memberWaiverPill: { marginTop: 4, alignSelf: "flex-start", paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, backgroundColor: C.goldBg, borderWidth: 1, borderColor: C.gold },
+  memberWaiverPillText: { fontSize: 9, fontWeight: "800", color: C.goldText, letterSpacing: 0.2 },
 });
+
+const lightStyles = makeStyles(LightPalette);
+const darkStyles = makeStyles(DarkPalette);

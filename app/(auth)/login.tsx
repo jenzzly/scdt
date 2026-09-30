@@ -10,7 +10,8 @@ import { useRouter } from "expo-router";
 import { useAuth } from "../../hooks/useAuth";
 import { useStore } from "../../stores/useStore";
 import { Input, Button, Toast, useToast } from "../../components/ui";
-import { C, S, fmtCurrency } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, S, fmtCurrency, type Palette } from "../../utils/theme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
 import { BRAND } from "../../lib/brand";
 import { FIXED_GROUP_ID } from "../../stores/fixedGroup";
 import * as FS from "../../lib/firestore";
@@ -41,6 +42,10 @@ export default function LoginScreen() {
   const { signIn, resetPassword } = useAuth();
   const { show, visible, msg, type } = useToast();
   const { setActiveGroup, recalcTotals } = useStore();
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const f = isDark ? darkF : lightF;
 
   const isWide = width >= 768;
   const isXWide = width >= 1100;
@@ -491,7 +496,7 @@ export default function LoginScreen() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const f = StyleSheet.create({
+const makeF = (C: Palette) => StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: C.bg,
@@ -723,3 +728,6 @@ const f = StyleSheet.create({
     fontWeight: "700",
   },
 });
+
+const lightF = makeF(LightPalette);
+const darkF = makeF(DarkPalette);

@@ -19,7 +19,8 @@ import { useEffect, useState } from "react";
 import { View, Text, TouchableOpacity } from "react-native";
 import { BottomModal, Input } from "./index";
 import { DatePicker } from "./DatePicker";
-import { C } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, type Palette } from "../../utils/theme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
 import type { LateFeeExemption, Member } from "../../types";
 
 export function LateFeeWaiverModal({
@@ -47,6 +48,10 @@ export function LateFeeWaiverModal({
   ) => void;
   onRemoveExemption: (exemptionId: string) => void;
 }) {
+  const C = useTheme();
+  const mode = useThemeMode();
+  const styles = mode === "dark" ? darkStyles : lightStyles;
+
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
   const [reason, setReason] = useState("");
@@ -229,7 +234,7 @@ export function LateFeeWaiverModal({
   );
 }
 
-const styles = {
+const makeStyles = (C: Palette) => ({
   waiverIntro: {
     fontSize: 12,
     lineHeight: 17,
@@ -340,4 +345,7 @@ const styles = {
     fontWeight: "800" as const,
     color: "#fff",
   },
-};
+});
+
+const lightStyles = makeStyles(LightPalette);
+const darkStyles = makeStyles(DarkPalette);

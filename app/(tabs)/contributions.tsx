@@ -33,7 +33,8 @@ import {
   TabRow,
 } from "../../components/ui";
 
-import { C, fmtCurrency, fmtDate } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, fmtCurrency, fmtDate, type Palette } from "../../utils/theme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
 
 import { exportXlsx, importXlsx } from "../../utils/export";
 import { findOverdueContributions } from "../../utils/lateFees";
@@ -97,7 +98,10 @@ const SORT_COMPARATORS: Record<
 // Small shared pieces
 // -----------------------------------------------------------------------------
 
-const Divider = () => <View style={st.divider} />;
+const Divider = () => {
+  const C = useTheme();
+  return <View style={{ height: 1, backgroundColor: C.border, marginHorizontal: 16 }} />;
+};
 
 const typeLabel = (type: string) => TYPE_LABELS[type] ?? type;
 
@@ -111,6 +115,11 @@ const wideCardStyle = (isWide: boolean) =>
 // -----------------------------------------------------------------------------
 
 export default function ContributionsScreen() {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
@@ -1008,6 +1017,11 @@ function TopBar({
   onImport: () => void;
   onAdd: () => void;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   return (
     <View style={[st.topBar, wideCardStyle(isWide)]}>
       <View>
@@ -1066,6 +1080,11 @@ function ViewModeButton({
   active: boolean;
   onPress: () => void;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   return (
     <TouchableOpacity
       style={[st.viewModeBtn, active && st.viewModeBtnActive]}
@@ -1082,6 +1101,11 @@ function ViewModeButton({
 }
 
 function EmptyState({ icon, text }: { icon: string; text: string }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   return (
     <View style={st.empty}>
       <Text style={st.emptyIcon}>{icon}</Text>
@@ -1107,6 +1131,10 @@ function GoalCard({
   goalProgress: NonNullable<ReturnType<typeof useGoalProgressType>>;
   minimumContribution: number;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
   const amountText = (value: number) =>
     fmtCurrency(value, currency).replace(`${currency} `, "");
 
@@ -1264,6 +1292,11 @@ function ProgressBar({
   percentage: number;
   color: string;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   return (
     <View style={st.progressBarContainer}>
       <View
@@ -1288,6 +1321,11 @@ function GoalStat({
   value: string;
   dimWhenComplete?: boolean;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   return (
     <View style={st.goalStat}>
       <Text
@@ -1334,6 +1372,11 @@ function GoalProgressList({
     isCompleted: boolean;
   }[];
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   if (!goalPeriod) {
     return (
       <EmptyState
@@ -1535,6 +1578,11 @@ function LateFeeList({
   onClear: (item: any) => void;
   onWaive: (item: any) => void;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -1956,6 +2004,11 @@ function ContributionTable({
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   return (
     <View style={st.table}>
       <View style={[st.tableRow, st.tableHeadRow]}>
@@ -2011,6 +2064,11 @@ const TableRow = ({
   onApprove: () => void;
   onReject: () => void;
 }) => {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   const allMembers = useGroupMembers();
   const memberName =
     allMembers.find((m) => m.id === contribution.memberId)?.fullName ??
@@ -2099,6 +2157,7 @@ const TableRow = ({
 // -----------------------------------------------------------------------------
 
 function statusBadge(status: string) {
+  const C = useTheme();
   if (status === "approved")
     return { icon: "✓", bg: C.greenBg, color: C.greenText };
   if (status === "pending")
@@ -2123,6 +2182,11 @@ function ContributionRow({
   onReject: () => void;
   onEdit: () => void;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   const { icon, bg, color } = statusBadge(contribution.status);
 
   const metaParts = [
@@ -2227,6 +2291,11 @@ const Pagination = ({
   setPage: (p: number) => void;
   filtered: any[];
 }) => {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   if (totalPages <= 1) return null;
 
   const isFirst = page === 1;
@@ -2269,7 +2338,7 @@ const Pagination = ({
 // Styles
 // -----------------------------------------------------------------------------
 
-const st = StyleSheet.create({
+const makeSt = (C: Palette) => StyleSheet.create({
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -3206,3 +3275,6 @@ const st = StyleSheet.create({
     color: "#fff",
   },
 });
+
+const lightSt = makeSt(LightPalette);
+const darkSt = makeSt(DarkPalette);

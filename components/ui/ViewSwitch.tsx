@@ -2,7 +2,8 @@
 ;
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { useStore, useHasViewToggle, useDataViewMode } from "../../stores/useStore";
-import { C } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, type Palette } from "../../utils/theme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
 
 interface ViewSwitchProps {
   compact?: boolean;
@@ -13,6 +14,9 @@ export function ViewSwitch({ compact = false }: ViewSwitchProps) {
   const dataViewMode = useDataViewMode();
   const isGroup = isGroupViewActive(dataViewMode);
   const setDataViewMode = useStore((s) => s.setDataViewMode);
+  const C = useTheme();
+  const mode = useThemeMode();
+  const styles = mode === "dark" ? darkStyles : lightStyles;
 
   if (!hasToggle) return null;
 
@@ -44,7 +48,7 @@ function isGroupViewActive(mode: string): boolean {
   return mode === "group" || mode === "admin";
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   container: {
     flexDirection: "row",
     alignItems: "center",
@@ -107,5 +111,8 @@ const styles = StyleSheet.create({
     color: C.primary,
   },
 });
+
+const lightStyles = makeStyles(LightPalette);
+const darkStyles = makeStyles(DarkPalette);
 
 export default ViewSwitch;

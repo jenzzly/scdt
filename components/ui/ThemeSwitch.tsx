@@ -8,7 +8,8 @@
 // scripts/add_theme_toggle.py for the scope note.
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { useStore } from "../../stores/useStore";
-import { C } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, type Palette } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 
 interface ThemeSwitchProps {
   compact?: boolean;
@@ -17,8 +18,10 @@ interface ThemeSwitchProps {
 export function ThemeSwitch({ compact = false }: ThemeSwitchProps) {
   const themeMode = useStore((s) => s.themeMode);
   const setThemeMode = useStore((s) => s.setThemeMode);
+  const C = useTheme();
 
   const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
 
   const toggle = () => {
     setThemeMode(isDark ? "light" : "dark");
@@ -56,7 +59,7 @@ export function ThemeSwitch({ compact = false }: ThemeSwitchProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   container: {
     flexDirection: "row",
     alignItems: "center",
@@ -116,5 +119,8 @@ const styles = StyleSheet.create({
     color: C.primary,
   },
 });
+
+const lightStyles = makeStyles(LightPalette);
+const darkStyles = makeStyles(DarkPalette);
 
 export default ThemeSwitch;

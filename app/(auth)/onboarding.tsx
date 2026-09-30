@@ -14,65 +14,73 @@ import {
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { C, R, S } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, R, S, type Palette } from "../../utils/theme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
 
-const SLIDES = [
-  {
-    id: 1,
-    icon: "💰",
-    title: "Track Your Savings",
-    description: "Record monthly contributions, view your personal savings balance, and stay on top of the group's total funds in real time.",
-    color: C.accent,
-    gradient: ["#0D9488", "#0F766E", "#0A5C52"] as const,
-    features: [
-      "Real-time balance updates",
-      "Contribution history",
-      "Group savings overview",
-    ],
-  },
-  {
-    id: 2,
-    icon: "🏦",
-    title: "Smart Loan Management",
-    description: "Apply for loans, track repayments with progress bars, and monitor outstanding balances — all in one transparent place.",
-    color: "#F59E0B",
-    gradient: ["#F59E0B", "#D97706", "#B45309"] as const,
-    features: [
-      "3-step approval process",
-      "Auto-calculated interest",
-      "Repayment tracking",
-    ],
-  },
-  {
-    id: 3,
-    icon: "📈",
-    title: "Smart Investments",
-    description: "Grow your wealth with group investments. Track returns, monitor performance, and make informed financial decisions.",
-    color: "#7C3AED",
-    gradient: ["#7C3AED", "#6D28D9", "#5B21B6"] as const,
-    features: [
-      "Investment tracking",
-      "ROI calculations",
-      "Maturity alerts",
-    ],
-  },
-  {
-    id: 4,
-    icon: "📊",
-    title: "Reports & Insights",
-    description: "View savings charts, member statements, and investment tracking to keep the entire group financially accountable.",
-    color: C.primary,
-    gradient: ["#1A3C5E", "#0D2840", "#081A2A"] as const,
-    features: [
-      "Export CSV/PDF",
-      "Visual analytics",
-      "Member statements",
-    ],
-  },
-];
+function getSlides(C: Palette) {
+  return [
+    {
+      id: 1,
+      icon: "💰",
+      title: "Track Your Savings",
+      description: "Record monthly contributions, view your personal savings balance, and stay on top of the group's total funds in real time.",
+      color: C.accent,
+      gradient: ["#0D9488", "#0F766E", "#0A5C52"] as const,
+      features: [
+        "Real-time balance updates",
+        "Contribution history",
+        "Group savings overview",
+      ],
+    },
+    {
+      id: 2,
+      icon: "🏦",
+      title: "Smart Loan Management",
+      description: "Apply for loans, track repayments with progress bars, and monitor outstanding balances — all in one transparent place.",
+      color: "#F59E0B",
+      gradient: ["#F59E0B", "#D97706", "#B45309"] as const,
+      features: [
+        "3-step approval process",
+        "Auto-calculated interest",
+        "Repayment tracking",
+      ],
+    },
+    {
+      id: 3,
+      icon: "📈",
+      title: "Smart Investments",
+      description: "Grow your wealth with group investments. Track returns, monitor performance, and make informed financial decisions.",
+      color: "#7C3AED",
+      gradient: ["#7C3AED", "#6D28D9", "#5B21B6"] as const,
+      features: [
+        "Investment tracking",
+        "ROI calculations",
+        "Maturity alerts",
+      ],
+    },
+    {
+      id: 4,
+      icon: "📊",
+      title: "Reports & Insights",
+      description: "View savings charts, member statements, and investment tracking to keep the entire group financially accountable.",
+      color: C.primary,
+      gradient: ["#1A3C5E", "#0D2840", "#081A2A"] as const,
+      features: [
+        "Export CSV/PDF",
+        "Visual analytics",
+        "Member statements",
+      ],
+    },
+  ];
+}
 
 export default function OnboardingScreen() {
   const router = useRouter();
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+  const SLIDES = getSlides(C);
   // Reactive width — updates on rotation/resize, unlike a module-level
   // Dimensions.get("window") snapshot taken once at import time. On wide
   // screens (web/tablet) the carousel is capped to a comfortable reading
@@ -262,7 +270,7 @@ export default function OnboardingScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: C.bg,
@@ -483,3 +491,6 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
 });
+
+const lightStyles = makeStyles(LightPalette);
+const darkStyles = makeStyles(DarkPalette);

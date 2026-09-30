@@ -9,7 +9,8 @@ import { useStore, useActiveGroup, useGroupAuditLogs } from "../stores/useStore"
 import { useGroupMembers } from "../stores/selectors";
 import { useAuth } from "../hooks/useAuth";
 import { Input, Select, Button, useToast, Toast, Card, DatePicker, SearchBar, TabRow, BottomModal, Badge, Avatar, Empty } from "../components/ui";
-import { C, fmtCurrency, fmtDate, showConfirm, round2, uid } from "../utils/theme";
+import { C as LightPalette, D as DarkPalette, fmtCurrency, fmtDate, showConfirm, round2, uid, type Palette } from "../utils/theme";
+import { useTheme, useThemeMode } from "../hooks/useTheme";
 import { exportFullData, importFullData } from "../utils/importExport";
 import * as FS from "../lib/firestore";
 import type { AuditLog, MemberPermissions, Member, GroupRole, MemberRole } from "../types";
@@ -168,8 +169,26 @@ const ACTION_CONFIG: Record<string, { bg: string; text: string; label: string }>
   reverted: { bg: "#e0e7ff", text: "#4338ca", label: "Reverted"  },
 };
 
-function getActionConfig(action: string) {
-  return ACTION_CONFIG[action] ?? { bg: C.elevated, text: C.text3, label: action };
+// Dark-mode counterparts of ACTION_CONFIG — deep tinted backgrounds with
+// light foregrounds so badges don't glare against the dark surface.
+const ACTION_CONFIG_DARK: Record<string, { bg: string; text: string }> = {
+  created:   { bg: "#1E3A5F", text: "#93C5FD" },
+  approved:  { bg: "#052E1B", text: "#6EE7B7" },
+  rejected:  { bg: "#3F1212", text: "#FCA5A5" },
+  deleted:   { bg: "#3F1212", text: "#FCA5A5" },
+  updated:   { bg: "#2D1F0A", text: "#FCD34D" },
+  disbursed: { bg: "#2E1A47", text: "#D8B4FE" },
+  failed:    { bg: "#3F1212", text: "#FCA5A5" },
+  repaid:    { bg: "#052E1B", text: "#6EE7B7" },
+  reverted:  { bg: "#25275A", text: "#A5B4FC" },
+};
+
+function getActionConfig(action: string, C: Palette, isDark = false) {
+  const base = ACTION_CONFIG[action];
+  if (!base) return { bg: C.elevated, text: C.text3, label: action };
+  return isDark && ACTION_CONFIG_DARK[action]
+    ? { ...base, ...ACTION_CONFIG_DARK[action] }
+    : base;
 }
 
 function entityLabel(type: string): string {
@@ -224,6 +243,8 @@ function FilterModal({
   onSearchChange: (v: string) => void;
   onApply: () => void;
 }) {
+  const isDark = useThemeMode() === "dark";
+  const fm = isDark ? fmDark : fmLight;
   const yearOpts  = [{ label: "All years",  value: 0 }, ...Array.from({ length: 6 }, (_, i) => { const y = new Date().getFullYear() - 2 + i; return { label: String(y), value: y }; })];
   const monthOpts = [{ label: "All months", value: 0 }, ...MONTHS];
   const dayOpts   = [{ label: "All days",   value: 0 }, ...DAYS];
@@ -271,7 +292,7 @@ function FilterModal({
   );
 }
 
-const fm = StyleSheet.create({
+const makeFm = (C: Palette) => StyleSheet.create({
   sectionLabel: {
     fontSize: 12,
     fontWeight: "700",
@@ -309,6 +330,8 @@ const fm = StyleSheet.create({
     color: "#fff",
   },
 });
+const fmLight = makeFm(LightPalette);
+const fmDark = makeFm(DarkPalette);
 
 // ─────────────────────────────────────────────
 // Section Heading
@@ -317,26 +340,30 @@ function SectionHeading({
   label,
   description,
   icon,
-  accent = C.primary,
+  accent,
 }: {
   label: string;
   description?: string;
   icon?: string;
   accent?: string;
 }) {
+  const C = useTheme();
+  const isDark = useThemeMode() === "dark";
+  const sh = isDark ? shDark : shLight;
+  const accentColor = accent ?? C.primary;
   return (
     <View style={sh.container}>
       <View style={sh.titleRow}>
-        <View style={[sh.accentBar, { backgroundColor: accent }]} />
+        <View style={[sh.accentBar, { backgroundColor: accentColor }]} />
         {icon ? <Text style={sh.icon}>{icon}</Text> : null}
-        <Text style={[sh.label, { color: accent }]}>{label}</Text>
+        <Text style={[sh.label, { color: accentColor }]}>{label}</Text>
       </View>
       {description && <Text style={sh.description}>{description}</Text>}
     </View>
   );
 }
 
-const sh = StyleSheet.create({
+const makeSh = (C: Palette) => StyleSheet.create({
   container: {
     marginTop: 4,
     marginBottom: 8,
@@ -369,6 +396,8 @@ const sh = StyleSheet.create({
     paddingLeft: 11,
   },
 });
+const shLight = makeSh(LightPalette);
+const shDark = makeSh(DarkPalette);
 
 // ─────────────────────────────────────────────
 // Group at a glance card
@@ -401,6 +430,9 @@ function GroupAtAGlanceCard({
   lateFeePct: number;
   lateFeeGraceDays: number;
 }) {
+  const C = useTheme();
+  const isDark = useThemeMode() === "dark";
+  const glanceStyles = isDark ? glanceStylesDark : glanceStylesLight;
   const freqLabel =
     contributionFrequency === "monthly"
       ? "per month"
@@ -481,7 +513,7 @@ function GroupAtAGlanceCard({
   );
 }
 
-const glanceStyles = StyleSheet.create({
+const makeGlanceStyles = (C: Palette) => StyleSheet.create({
   card: {
     backgroundColor: C.surface,
     borderWidth: 1,
@@ -524,11 +556,14 @@ const glanceStyles = StyleSheet.create({
     lineHeight: 14,
   },
 });
+const glanceStylesLight = makeGlanceStyles(LightPalette);
+const glanceStylesDark = makeGlanceStyles(DarkPalette);
 
 // ─────────────────────────────────────────────
 // Divider
 // ─────────────────────────────────────────────
 function Divider() {
+  const C = useTheme();
   return <View style={{ height: 1, backgroundColor: C.border, marginVertical: 10 }} />;
 }
 
@@ -536,6 +571,8 @@ function Divider() {
 // Setting Card
 // ─────────────────────────────────────────────
 function SettingCard({ children, noPadding }: { children: React.ReactNode; noPadding?: boolean }) {
+  const isDark = useThemeMode() === "dark";
+  const sc = isDark ? scDark : scLight;
   return (
     <View style={[sc.card, noPadding && sc.cardNoPadding]}>
       {children}
@@ -543,7 +580,7 @@ function SettingCard({ children, noPadding }: { children: React.ReactNode; noPad
   );
 }
 
-const sc = StyleSheet.create({
+const makeSc = (C: Palette) => StyleSheet.create({
   card: {
     backgroundColor: C.surface,
     borderWidth: 1,
@@ -554,11 +591,22 @@ const sc = StyleSheet.create({
   },
   cardNoPadding: { padding: 0 },
 });
+const scLight = makeSc(LightPalette);
+const scDark = makeSc(DarkPalette);
 
 // ─────────────────────────────────────────────
 // Main Screen
 // ─────────────────────────────────────────────
 export default function GroupSettingsScreen() {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+  const detailStyles = isDark ? detailStylesDark : detailStylesLight;
+  const deleteStyles = isDark ? deleteStylesDark : deleteStylesLight;
+  const memberStyles = isDark ? memberStylesDark : memberStylesLight;
+  const permStyles = isDark ? permStylesDark : permStylesLight;
+  const auditStyles = isDark ? auditStylesDark : auditStylesLight;
   const { width } = useWindowDimensions();
   const isWide = width >= 720;
   const router = useRouter();
@@ -735,7 +783,7 @@ export default function GroupSettingsScreen() {
         const updatedCustomRoles = (group?.customRoles ?? []).map((r) =>
           r.id === role.id ? { ...r, permissions: perms } : r
         );
-        await updateGroup(activeGroupId, { 
+        await updateGroup(activeGroupId, {
           customRoles: updatedCustomRoles,
           customRolePermissions: { ...(group?.customRolePermissions ?? {}), [role.id]: perms }
         });
@@ -774,7 +822,7 @@ export default function GroupSettingsScreen() {
         isSystem: false,
         createdAt: new Date().toISOString(),
       };
-      await updateGroup(activeGroupId, { 
+      await updateGroup(activeGroupId, {
         customRoles: [...(group?.customRoles ?? []), newRole],
         customRolePermissions: { ...(group?.customRolePermissions ?? {}), [newRole.id]: newRole.permissions }
       });
@@ -803,25 +851,25 @@ export default function GroupSettingsScreen() {
 
   const handleProcessTokenRequest = useCallback(async (request: any) => {
     if (!activeGroupId) { show("No active group", "error"); return; }
-    
+
     setProcessingTokenRequest(request.id);
     try {
       // Find member by email
       const member = members.find(m => m.email?.toLowerCase() === request.email.toLowerCase());
-      
+
       if (!member) {
         show(`No member found with email ${request.email}`, "error");
         await FS.updateTokenRequest(request.id, { status: "cancelled", processedAt: new Date().toISOString() });
         return;
       }
-      
+
       // Generate token
       const tokenData = generateLoginToken();
       await useStore.getState().updateMember(member.id, {
         loginToken: tokenData.token,
         loginTokenExpiry: tokenData.expiry,
       });
-      
+
       // Send email notification
       if (member.email) {
         await FS.addNotification(
@@ -840,13 +888,13 @@ This token will expire in 24 hours. Use it on the login screen to access your ac
           member.email
         );
       }
-      
+
       // Mark request as processed
-      await FS.updateTokenRequest(request.id, { 
-        status: "processed", 
-        processedAt: new Date().toISOString() 
+      await FS.updateTokenRequest(request.id, {
+        status: "processed",
+        processedAt: new Date().toISOString()
       });
-      
+
       show(`Login token sent to ${member.email}`, "success");
     } catch (e: any) {
       show(e.message || "Failed to process token request", "error");
@@ -857,9 +905,9 @@ This token will expire in 24 hours. Use it on the login screen to access your ac
 
   const handleCancelTokenRequest = useCallback(async (requestId: string) => {
     try {
-      await FS.updateTokenRequest(requestId, { 
-        status: "cancelled", 
-        processedAt: new Date().toISOString() 
+      await FS.updateTokenRequest(requestId, {
+        status: "cancelled",
+        processedAt: new Date().toISOString()
       });
       show("Token request cancelled");
     } catch (e: any) {
@@ -1286,7 +1334,7 @@ They won't be able to sign in or participate in group activities, and any new la
       show("No prior state was recorded for this action, so it can't be reverted", "error");
       return;
     }
-    const actionLabel = getActionConfig(log.action).label.toLowerCase();
+    const actionLabel = getActionConfig(log.action, C, isDark).label.toLowerCase();
     showConfirm(
       "Revert this action?",
       `This will undo the "${actionLabel}" action on this ${entityLabel(log.entityType).toLowerCase()} and restore its previous state. This itself will be recorded in the audit trail.`,
@@ -1456,10 +1504,10 @@ They won't be able to sign in or participate in group activities, and any new la
       // Trigger a proper sync using the store's sync mechanism
       const { triggerForceSync, syncStatus, syncError } = useStore.getState();
       triggerForceSync();
-      
+
       // Wait a bit for sync to complete
       await new Promise((r) => setTimeout(r, 2000));
-      
+
       // Check sync status after refresh
       const state = useStore.getState();
       if (state.syncStatus === "failed") {
@@ -2979,13 +3027,13 @@ They won't be able to sign in or participate in group activities, and any new la
             ) : (
               <View style={{ gap: 12 }}>
                 {pendingTokenRequests.map((request) => (
-                  <View key={request.id} style={{ 
-                    backgroundColor: C.surface, 
-                    borderRadius: 12, 
-                    borderWidth: 1, 
+                  <View key={request.id} style={{
+                    backgroundColor: C.surface,
+                    borderRadius: 12,
+                    borderWidth: 1,
                     borderColor: C.border,
                     padding: 16,
-                    gap: 12 
+                    gap: 12
                   }}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <View style={{ flex: 1 }}>
@@ -2996,11 +3044,11 @@ They won't be able to sign in or participate in group activities, and any new la
                           Requested {request.requestedAt ? new Date(request.requestedAt.toDate()).toLocaleString() : "Recently"}
                         </Text>
                       </View>
-                      <View style={{ 
-                        paddingHorizontal: 8, 
-                        paddingVertical: 4, 
-                        borderRadius: 6, 
-                        backgroundColor: C.warning + "20" 
+                      <View style={{
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderRadius: 6,
+                        backgroundColor: C.warning + "20"
                       }}>
                         <Text style={{ fontSize: 11, fontWeight: "600", color: C.warning }}>
                           Pending
@@ -3018,11 +3066,11 @@ They won't be able to sign in or participate in group activities, and any new la
                       />
                       <TouchableOpacity
                         onPress={() => handleCancelTokenRequest(request.id)}
-                        style={{ 
-                          paddingHorizontal: 16, 
-                          paddingVertical: 10, 
-                          borderRadius: 8, 
-                          borderWidth: 1, 
+                        style={{
+                          paddingHorizontal: 16,
+                          paddingVertical: 10,
+                          borderRadius: 8,
+                          borderWidth: 1,
                           borderColor: C.border,
                           backgroundColor: C.elevated
                         }}
@@ -3441,7 +3489,7 @@ They won't be able to sign in or participate in group activities, and any new la
 // ─────────────────────────────────────────────
 // Detail Styles
 // ─────────────────────────────────────────────
-const detailStyles = StyleSheet.create({
+const makeDetailStyles = (C: Palette) => StyleSheet.create({
   body: { padding: 16, paddingBottom: 32 },
 
   // ── Hero ──
@@ -3606,11 +3654,13 @@ const detailStyles = StyleSheet.create({
     color: C.text2,
   },
 });
+const detailStylesLight = makeDetailStyles(LightPalette);
+const detailStylesDark = makeDetailStyles(DarkPalette);
 
 // ─────────────────────────────────────────────
 // Delete Confirmation Styles
 // ─────────────────────────────────────────────
-const deleteStyles = StyleSheet.create({
+const makeDeleteStyles = (C: Palette) => StyleSheet.create({
   iconCircle: {
     width: 64,
     height: 64,
@@ -3655,11 +3705,13 @@ const deleteStyles = StyleSheet.create({
     lineHeight: 17,
   },
 });
+const deleteStylesLight = makeDeleteStyles(LightPalette);
+const deleteStylesDark = makeDeleteStyles(DarkPalette);
 
 // ─────────────────────────────────────────────
 // Main Styles
 // ─────────────────────────────────────────────
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
 
   header: {
@@ -4017,7 +4069,7 @@ const styles = StyleSheet.create({
 // ─────────────────────────────────────────────
 // Member Styles - Simple summary
 // ─────────────────────────────────────────────
-const memberStyles = StyleSheet.create({
+const makeMemberStyles = (C: Palette) => StyleSheet.create({
   // ── Pending alert ────────────────────────────────────────────────────
   pendingAlert: {
     flexDirection: "row",
@@ -4231,11 +4283,13 @@ const memberStyles = StyleSheet.create({
     letterSpacing: 0.2,
   },
 });
+const memberStylesLight = makeMemberStyles(LightPalette);
+const memberStylesDark = makeMemberStyles(DarkPalette);
 
 // ─────────────────────────────────────────────
 // Permission Styles (now role cards, not member cards)
 // ─────────────────────────────────────────────
-const permStyles = StyleSheet.create({
+const makePermStyles = (C: Palette) => StyleSheet.create({
   searchContainer: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 },
   searchBox: {
     flexDirection: "row",
@@ -4402,11 +4456,13 @@ const permStyles = StyleSheet.create({
     color: C.text3,
   },
 });
+const permStylesLight = makePermStyles(LightPalette);
+const permStylesDark = makePermStyles(DarkPalette);
 
 // ─────────────────────────────────────────────
 // Audit Styles
 // ─────────────────────────────────────────────
-const auditStyles = StyleSheet.create({
+const makeAuditStyles = (C: Palette) => StyleSheet.create({
   // ── Audit toolbar (redesigned) ──────────────────────────────────────
   // Vertical stack, three rows. Every row has a stable width, so
   // nothing inside jumps when siblings wrap or conditional UI
@@ -4519,11 +4575,13 @@ const auditStyles = StyleSheet.create({
   emptyTitle: { fontSize: 14, fontWeight: "700", color: C.text, marginTop: 8 },
   emptyDesc: { fontSize: 12, color: C.text3, textAlign: "center", marginTop: 4, paddingHorizontal: 16 },
 });
+const auditStylesLight = makeAuditStyles(LightPalette);
+const auditStylesDark = makeAuditStyles(DarkPalette);
 
 // ─────────────────────────────────────────────
 // Audit Row Styles
 // ─────────────────────────────────────────────
-const atr = StyleSheet.create({
+const makeAtr = (C: Palette) => StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -4547,11 +4605,13 @@ const atr = StyleSheet.create({
   diffLabel: { fontSize: 9, fontWeight: "700", letterSpacing: 0.4, marginBottom: 3, textTransform: "uppercase" },
   diffCode: { fontSize: 9, color: C.text2, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", lineHeight: 13 },
 });
+const atrLight = makeAtr(LightPalette);
+const atrDark = makeAtr(DarkPalette);
 
 // ─────────────────────────────────────────────
 // Audit Card Styles
 // ─────────────────────────────────────────────
-const atc = StyleSheet.create({
+const makeAtc = (C: Palette) => StyleSheet.create({
   card: {
     backgroundColor: C.surface,
     borderRadius: 10,
@@ -4572,24 +4632,31 @@ const atc = StyleSheet.create({
   revertText: { fontSize: 11, fontWeight: "600", color: C.primary },
   expand: { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.borderLight },
 });
+const atcLight = makeAtc(LightPalette);
+const atcDark = makeAtc(DarkPalette);
 
 // ─────────────────────────────────────────────
 // Pagination Styles
 // ─────────────────────────────────────────────
-const pg = StyleSheet.create({
+const makePg = (C: Palette) => StyleSheet.create({
   bar: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12, paddingVertical: 12 },
   btn: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: C.elevated, borderRadius: 6, borderWidth: 1, borderColor: C.border },
   btnDisabled: { opacity: 0.4 },
   btnText: { fontSize: 12, fontWeight: "600", color: C.text },
   info: { fontSize: 12, color: C.text3 },
 });
+const pgLight = makePg(LightPalette);
+const pgDark = makePg(DarkPalette);
 
 // ─────────────────────────────────────────────
 // Audit Log Row (Desktop)
 // ─────────────────────────────────────────────
 function AuditLogRow({ log, onRevert }: { log: AuditLog; onRevert: () => void }) {
+  const C = useTheme();
+  const isDark = useThemeMode() === "dark";
+  const atr = isDark ? atrDark : atrLight;
   const [expanded, setExpanded] = useState(false);
-  const cfg = getActionConfig(log.action);
+  const cfg = getActionConfig(log.action, C, isDark);
   const ts = new Date(log.timestamp);
   const tsStr = isNaN(ts.getTime()) ? log.timestamp : ts.toLocaleString();
   const canRevert = log.action !== "reverted" && (log.action === "deleted" || log.action === "created" || !!log.before);
@@ -4646,8 +4713,12 @@ function AuditLogRow({ log, onRevert }: { log: AuditLog; onRevert: () => void })
 // Audit Log Card (Mobile)
 // ─────────────────────────────────────────────
 function AuditLogCard({ log, onRevert }: { log: AuditLog; onRevert: () => void }) {
+  const C = useTheme();
+  const isDark = useThemeMode() === "dark";
+  const atr = isDark ? atrDark : atrLight;
+  const atc = isDark ? atcDark : atcLight;
   const [expanded, setExpanded] = useState(false);
-  const cfg = getActionConfig(log.action);
+  const cfg = getActionConfig(log.action, C, isDark);
   const ts = new Date(log.timestamp);
   const tsStr = isNaN(ts.getTime()) ? log.timestamp : ts.toLocaleDateString() + " " + ts.toLocaleTimeString();
   const canRevert = log.action !== "reverted" && (log.action === "deleted" || log.action === "created" || !!log.before);
@@ -4707,6 +4778,8 @@ function AuditLogCard({ log, onRevert }: { log: AuditLog; onRevert: () => void }
 // Pagination
 // ─────────────────────────────────────────────
 function Pagination({ currentPage, totalPages, onChange }: { currentPage: number; totalPages: number; onChange: (p: number) => void }) {
+  const isDark = useThemeMode() === "dark";
+  const pg = isDark ? pgDark : pgLight;
   if (totalPages <= 1) return null;
 
   return (
@@ -4729,3 +4802,6 @@ function Pagination({ currentPage, totalPages, onChange }: { currentPage: number
     </View>
   );
 }
+
+const lightStyles = makeStyles(LightPalette);
+const darkStyles = makeStyles(DarkPalette);

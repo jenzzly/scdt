@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { StyleSheet, ScrollView, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { useStore, useActiveGroup } from "../../stores/useStore";
 import { Input, Select, Button, useToast, Toast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
-import { S } from "../../utils/theme";
+import { S, type Palette } from "../../utils/theme";
+import { useTheme } from "../../hooks/useTheme";
 
 const CATEGORIES = [
   { label: "Bank Charges", value: "bank_charges" },
@@ -18,6 +19,9 @@ const CATEGORIES = [
 
 export default function AddExpenseModal() {
   const router = useRouter();
+  const C = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+
   const { addExpense, activeGroupId } = useStore();
   const group = useActiveGroup();
   // const { show, Toast } = useToast();
@@ -63,6 +67,6 @@ export default function AddExpenseModal() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   body: { padding: S.lg },
 });

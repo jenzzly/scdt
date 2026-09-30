@@ -39,7 +39,8 @@ import {
   Select,
 } from "../../components/ui";
 import { KpiCard } from "../../components/ui/KpiCard";
-import { C, fmtCurrency, showConfirm } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, fmtCurrency, showConfirm, type Palette } from "../../utils/theme";
+import { useTheme, useThemeMode, useT } from "../../hooks/useTheme";
 import {
   getMeetingStatus,
   findUnrecordedAttendees,
@@ -74,7 +75,10 @@ function hasManageMeetingsPermission(
   return permissions.updateMeetings === true;
 }
 
-const Divider = () => <View style={{ height: 1, backgroundColor: C.border }} />;
+const Divider = () => {
+  const C = useTheme();
+  return <View style={{ height: 1, backgroundColor: C.border }} />;
+};
 
 function Chip({
   label,
@@ -85,6 +89,11 @@ function Chip({
   bg: string;
   color: string;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   return (
     <View style={[st.chip, { backgroundColor: bg }]}>
       <Text style={[st.chipText, { color }]}>{label}</Text>
@@ -103,6 +112,11 @@ function PersonalAttendanceStrip({
 }: {
   attendee: any;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   const status =
     attendee.status ?? (attendee.attended ? "present" : "absent");
   const penaltyAmount = attendee.penaltyAmount ?? 0;
@@ -177,6 +191,11 @@ function PersonalAttendanceCard({
     paidPenalties: number;
   };
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   const attendanceRate =
     stats.total > 0
       ? Math.round(((stats.present + stats.late) / stats.total) * 100)
@@ -289,6 +308,11 @@ function MeetingRow({
   onClearPenalties: () => void;
   onFinalize: () => void;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   const [menuOpen, setMenuOpen] = useState(false);
 
   const isCancelledStatus = meeting.status === "cancelled";
@@ -653,6 +677,11 @@ function MenuAction({
   tone?: "default" | "primary" | "danger";
   onPress: () => void;
 }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   const labelColor =
     tone === "danger" ? C.error : tone === "primary" ? C.primary : C.text;
   const iconBg =
@@ -692,6 +721,11 @@ function MenuAction({
 }
 
 export default function MeetingsScreen() {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   const router = useRouter();
   const { width, height } = useWindowDimensions();
   const penaltyListMaxHeight = Math.min(360, height * 0.4);
@@ -1377,7 +1411,7 @@ export default function MeetingsScreen() {
 }
 
 // ── Styles ───────────────────────────────────────────────────────────
-const st = StyleSheet.create({
+const makeSt = (C: Palette) => StyleSheet.create({
   // ── Redesigned meeting row (2026 refresh) ──────────────────────
   rowWrap: {
     padding: 16,
@@ -2032,3 +2066,6 @@ const st = StyleSheet.create({
     paddingVertical: 24,
   },
 });
+
+const lightSt = makeSt(LightPalette);
+const darkSt = makeSt(DarkPalette);

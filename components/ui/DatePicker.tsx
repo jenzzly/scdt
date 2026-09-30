@@ -9,7 +9,8 @@ import {
   Pressable,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { C, R, fmtDate } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, R, fmtDate, type Palette } from "../../utils/theme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
 
 interface DatePickerProps {
   label?: string;
@@ -32,6 +33,11 @@ export function DatePicker({
   error,
   hint,
 }: DatePickerProps) {
+  const C = useTheme();
+  const mode = useThemeMode();
+  const isDark = mode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
   const [showPicker, setShowPicker] = useState(false);
   const [draftValue, setDraftValue] = useState(value);
 
@@ -113,6 +119,7 @@ export function DatePicker({
           color: value
             ? C.text
             : C.text3,
+          colorScheme: isDark ? "dark" : "light",
           fontSize: 14,
           fontFamily: "inherit",
           cursor: "pointer",
@@ -281,7 +288,7 @@ export function DatePicker({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   formGroup: {
     marginBottom: 16,
   },
@@ -344,7 +351,7 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor:
-      "rgba(15,31,51,0.5)",
+      "rgba(0,0,0,0.5)",
     justifyContent: "flex-end",
   },
 
@@ -382,3 +389,6 @@ const styles = StyleSheet.create({
     width: "100%",
   },
 });
+
+const lightStyles = makeStyles(LightPalette);
+const darkStyles = makeStyles(DarkPalette);

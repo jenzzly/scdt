@@ -1,4 +1,3 @@
-
 import { Platform, StyleSheet } from "react-native";
 import { BRAND } from "../lib/brand";
 import type { LoanInterestMethod } from "../types";
@@ -68,7 +67,7 @@ export const C = {
   elevated:    "#F0F2F5",
   tealBg:      "#CCFBF1",
   tealText:    BRAND.colors.secondary || "#0F766E",
-  tealDim:     "#09491e", 
+  tealDim:     "#09491e",
   borderLight: "#EEF1F6",
   teal:        BRAND.colors.secondary || "#0F766E",
   bgWhite: "#FFFFFF",
@@ -81,6 +80,13 @@ export const C = {
   tealLight: BRAND.colors.primary || "#10B981",
   tealFaint: "#CCFBF1",
   goldDim: "#B45309",
+  // Accent hues for summary tiles + donut segments. Light values are
+  // darkened for contrast on white; dark values are lightened for contrast
+  // on the dark surface.
+  purple: "#9333EA",
+  indigo: "#4F46E5",
+  orange: "#EA580C",
+  coral:  "#E4572E",
   chartColors: [
     BRAND.colors.secondary || "#0F766E",
     BRAND.colors.primary || "#10B981",
@@ -159,6 +165,10 @@ export const D: Palette = {
   tealLight:    BRAND.colors.primary || "#10B981",
   tealFaint:    "#134E4A",
   goldDim:      "#FCD34D",
+  purple:       "#C084FC",
+  indigo:       "#818CF8",
+  orange:       "#FB923C",
+  coral:        "#F87F5C",
   chartColors: [
     BRAND.colors.secondary || "#0F766E",
     BRAND.colors.primary || "#10B981",

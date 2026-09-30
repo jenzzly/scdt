@@ -3,13 +3,14 @@
 // On mobile  : full-screen, keyboard-aware
 // On tablet  : centred card, max-width 520px, shadow
 // On desktop : centred card, max-width 560px, visible backdrop
-import React from "react";
+import React, { useMemo } from "react";
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
   KeyboardAvoidingView, ScrollView, useWindowDimensions, StatusBar,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { C, S } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, S, type Palette } from "../../utils/theme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
 
 interface ModalShellProps {
   title: string;
@@ -26,6 +27,11 @@ interface ModalShellProps {
 export function ModalShell({
   title, onClose, children, maxWidth = 540, headerRight, noScroll,
 }: ModalShellProps) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const st = isDark ? darkSt : lightSt;
+
   const { width, height } = useWindowDimensions();
   const isWeb = Platform.OS === "web";
   const isWide = isWeb && width >= 640;
@@ -87,20 +93,20 @@ export function ModalShell({
 
   return (
     <View style={st.root}>
-      <StatusBar barStyle="dark-content" backgroundColor={C.surface} />
+      <StatusBar barStyle={isDark ? "light-content" : "dark-content"} backgroundColor={C.surface} />
       {inner}
     </View>
   );
 }
 
-const st = StyleSheet.create({
+const makeSt = (C: Palette) => StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: C.bg,
   },
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.35)",
+    backgroundColor: "rgba(0,0,0,0.5)",
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
@@ -110,7 +116,7 @@ const st = StyleSheet.create({
     backgroundColor: C.bg,
     // Web: card appearance
     ...(Platform.OS === "web" ? {
-      boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+      boxShadow: "0 20px 60px rgba(0,0,0,0.4)",
       maxHeight: "90vh",
     } as any : {}),
   },
@@ -145,3 +151,6 @@ const st = StyleSheet.create({
     paddingBottom: 60,
   },
 });
+
+const lightSt = makeSt(LightPalette);
+const darkSt = makeSt(DarkPalette);

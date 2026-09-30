@@ -1,20 +1,26 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import { View, Text, StyleSheet, Animated } from "react-native";
 import { useStore } from "../../stores/useStore";
-import { C } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, type Palette } from "../../utils/theme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
 
-const STATUS_CONFIG = {
+const makeStatusConfig = (C: Palette) => ({
   synced:  { color: C.success,  label: "Synced",   dot: C.success },
   pending: { color: C.warning,  label: "Pending",  dot: C.warning },
   syncing: { color: C.teal,     label: "Syncing…", dot: C.teal },
   failed:  { color: C.error,    label: "Sync failed", dot: C.error },
   offline: { color: C.text3,    label: "Offline",  dot: C.text3 },
-};
+});
 
 export function SyncStatusPill() {
   const { syncStatus } = useStore();
+  const C = useTheme();
+  const mode = useThemeMode();
+  const styles = mode === "dark" ? darkStyles : lightStyles;
+  const config = useMemo(() => makeStatusConfig(C), [C]);
+
   const pulse = useRef(new Animated.Value(1)).current;
-  const cfg = STATUS_CONFIG[syncStatus as keyof typeof STATUS_CONFIG];
+  const cfg = config[syncStatus as keyof typeof config] || config.offline;
 
   useEffect(() => {
     if (syncStatus === "syncing" || syncStatus === "pending") {
@@ -37,7 +43,7 @@ export function SyncStatusPill() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   pill: {
     flexDirection: "row", alignItems: "center", gap: 5,
     backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
@@ -46,3 +52,6 @@ const styles = StyleSheet.create({
   dot: { width: 6, height: 6, borderRadius: 3 },
   label: { fontSize: 11, fontWeight: "600" },
 });
+
+const lightStyles = makeStyles(LightPalette);
+const darkStyles = makeStyles(DarkPalette);

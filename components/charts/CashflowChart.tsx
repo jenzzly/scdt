@@ -8,7 +8,8 @@
 // version is fully responsive — it fills whatever width its parent gives it.
 import React, { useState } from "react";
 import { View, Text, StyleSheet, LayoutChangeEvent } from "react-native";
-import { C } from "../../utils/theme";
+import { C as LightPalette, D as DarkPalette, type Palette } from "../../utils/theme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
 
 interface Props {
   months: string[];
@@ -18,6 +19,10 @@ interface Props {
 }
 
 export function CashflowChart({ months, income, expenses, height = 150 }: Props) {
+  const C = useTheme();
+  const mode = useThemeMode();
+  const styles = mode === "dark" ? darkStyles : lightStyles;
+
   const [, setContainerWidth] = useState(0);
   const onLayout = (e: LayoutChangeEvent) => setContainerWidth(e.nativeEvent.layout.width);
 
@@ -64,7 +69,7 @@ export function CashflowChart({ months, income, expenses, height = 150 }: Props)
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C: Palette) => StyleSheet.create({
   legend: { flexDirection: "row", gap: 14, marginBottom: 8 },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 5 },
   legendDot: { width: 8, height: 8, borderRadius: 2 },
@@ -77,3 +82,6 @@ const styles = StyleSheet.create({
   bar: { width: 12, borderRadius: 3 },
   barLabel: { fontSize: 9, color: C.text3, marginTop: 6 },
 });
+
+const lightStyles = makeStyles(LightPalette);
+const darkStyles = makeStyles(DarkPalette);
