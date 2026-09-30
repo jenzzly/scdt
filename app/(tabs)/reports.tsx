@@ -1,11 +1,12 @@
 // app/(tabs)/reports.tsx
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
+  TextInput,
   StyleSheet,
   StatusBar,
   useWindowDimensions,
@@ -52,7 +53,7 @@ import {
 } from "../../utils/theme";
 import { Layout } from "../../utils/theme";
 import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
-import { useTheme, useThemeMode, useT } from "../../hooks/useTheme";
+import { useTheme, useThemeMode } from "../../hooks/useTheme";
 
 import {
   exportXlsx,
@@ -94,9 +95,6 @@ type MemberStatusFilter =
 
 type EarningsViewMode = "all" | "actual" | "projected";
 
-// Late-fee source — new dimension for the Late Fees category only.
-// "all" shows both combined (previous behavior); "contribution" and
-// "loan" show one source at a time.
 type LateFeeSourceFilter =
   | "all"
   | "contribution"
@@ -149,8 +147,6 @@ const CONTRIBUTION_STATUS_CHIPS: { label: string; value: "all" | "approved" | "p
   { label: "Rejected", value: "rejected" },
 ];
 
-// Late-fee source chips — new. Shown inline on the Late Fees category
-// itself and inside the advanced filter modal.
 const LATE_FEE_SOURCE_CHIPS: { label: string; value: LateFeeSourceFilter }[] = [
   { label: "All Sources", value: "all" },
   { label: "Contributions", value: "contribution" },
@@ -261,6 +257,7 @@ function countActiveFilters(opts: {
   memberStatus: string;
   lateFeeSource: string;
   earningsSource: string;
+  contributionType?: string;
 }) {
   let n = 0;
   if (opts.search) n++;
@@ -270,6 +267,7 @@ function countActiveFilters(opts: {
   if (opts.memberStatus !== "all") n++;
   if (opts.lateFeeSource !== "all") n++;
   if (opts.earningsSource !== "all") n++;
+  if (opts.contributionType && opts.contributionType !== "all") n++;
   return n;
 }
 
@@ -315,11 +313,6 @@ function calculateLoanInterestProjection(
     if (fromDateObj && dueDate < fromDateObj) return;
     if (asOfDate && dueDate > asOfDate) return;
 
-    // Number(...) || 0 — one legacy/malformed schedule item with a
-    // missing `interest` field used to turn the whole sum into NaN,
-    // which the downstream .filter(projectedInterest > 0) then dropped
-    // silently, making projectedLoanInterest read 0 even when dozens
-    // of unpaid installments existed.
     projectedInterest += Number(installment.interest) || 0;
   });
 
@@ -327,9 +320,147 @@ function calculateLoanInterestProjection(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// KPI
+// Shared helpers for the overview layout
 // ─────────────────────────────────────────────────────────────────────────
 
+const PAGE_SIZE = 5;
+
+function fmtAxis(n: number) {
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return `${+(n / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `${+(n / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3) return `${+(n / 1e3).toFixed(1)}K`;
+  return String(Math.round(n));
+}
+
+function niceScale(max: number, tickCount = 4) {
+  if (!Number.isFinite(max) || max <= 0) {
+    return { top: 100, ticks: [0, 25, 50, 75, 100] };
+  }
+
+  const raw = max / tickCount;
+  const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  const frac = raw / pow;
+  const mult = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 3 ? 3 : frac <= 5 ? 5 : 10;
+  const step = mult * pow;
+
+  return {
+    top: step * tickCount,
+    ticks: Array.from({ length: tickCount + 1 }, (_, i) => i * step),
+  };
+}
+
+function titleCase(s: string) {
+  return String(s)
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Financial Position KPI card — no icon, 2-col grid style matching the
+// "Group Financial Position" panel design.
+// ─────────────────────────────────────────────────────────────────────────
+
+type KpiCardProps = {
+  label: string;
+  value: string;
+  sub: string;
+  valueColor?: string;
+  onPress?: () => void;
+};
+
+function KpiCard({ label, value, sub, valueColor, onPress }: KpiCardProps) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
+  const body = (
+    <>
+      <Text style={styles.positionCardLabel} numberOfLines={1}>
+        {label}
+      </Text>
+
+      <Text
+        style={[
+          styles.positionCardValue,
+          valueColor ? { color: valueColor } : null,
+        ]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.6}
+      >
+        {value}
+      </Text>
+
+      <Text style={styles.positionCardSub} numberOfLines={1}>
+        {sub}
+      </Text>
+    </>
+  );
+
+  if (!onPress) {
+    return <View style={styles.positionCard}>{body}</View>;
+  }
+
+  return (
+    <TouchableOpacity
+      style={styles.positionCard}
+      onPress={onPress}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${value}. Open report`}
+    >
+      {body}
+    </TouchableOpacity>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Status badge (table cells)
+// ─────────────────────────────────────────────────────────────────────────
+
+function StatusBadge({ value }: { value: string }) {
+  const C = useTheme();
+  const themeMode = useThemeMode();
+  const isDark = themeMode === "dark";
+  const styles = isDark ? darkStyles : lightStyles;
+
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+
+  const v = text.toLowerCase();
+
+  let bg = C.elevated;
+  let fg = C.text2;
+  let border = C.border;
+
+  if (["approved", "paid", "active", "repaid", "actual", "disbursed"].includes(v)) {
+    bg = C.greenBg;
+    fg = C.success;
+    border = C.success;
+  } else if (v.startsWith("pending")) {
+    bg = C.goldBg;
+    fg = C.goldText;
+    border = C.gold;
+  } else if (["rejected", "unpaid", "overdue", "defaulted", "inactive", "suspended"].includes(v)) {
+    bg = C.redBg;
+    fg = C.redText;
+    border = C.error;
+  } else if (v === "projected") {
+    bg = C.infoBg;
+    fg = C.infoText;
+    border = C.info;
+  }
+
+  return (
+    <View style={[styles.tableBadge, { backgroundColor: bg, borderColor: border }]}>
+      <Text style={[styles.tableBadgeText, { color: fg }]} numberOfLines={1}>
+        {titleCase(text)}
+      </Text>
+    </View>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Earnings donut
@@ -349,7 +480,7 @@ function EarningsDonut({
   );
   const total = positiveSegments.reduce((sum, s) => sum + s.value, 0);
 
-  const size = 150;
+  const size = 148;
   const strokeWidth = 22;
   const center = size / 2;
   const radius = (size - strokeWidth) / 2;
@@ -371,11 +502,7 @@ function EarningsDonut({
   return (
     <View style={styles.donutContainer}>
       <View style={styles.donutVisual}>
-        <Svg
-          width={size}
-          height={size}
-          viewBox={`0 0 ${size} ${size}`}
-        >
+        <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
           <Circle
             cx={center}
             cy={center}
@@ -438,20 +565,17 @@ function EarningsDonut({
           return (
             <View key={`${seg.label}-legend-${i}`} style={styles.donutLegendRow}>
               <View style={styles.donutLegendName}>
-                <View
-                  style={[
-                    styles.donutLegendDot,
-                    { backgroundColor: seg.color },
-                  ]}
-                />
-                <Text
-                  style={styles.donutLegendText}
-                  numberOfLines={1}
-                >
+                <View style={[styles.donutLegendDot, { backgroundColor: seg.color }]} />
+                <Text style={styles.donutLegendText} numberOfLines={1}>
                   {seg.label}
                 </Text>
               </View>
+
               <Text style={styles.donutLegendPct}>{pct}%</Text>
+
+              <Text style={styles.donutLegendAmount} numberOfLines={1}>
+                {fmtCurrency(seg.value)}
+              </Text>
             </View>
           );
         })}
@@ -468,11 +592,13 @@ function Gauge({
   max = 100,
   color,
   trackColor,
+  caption,
 }: {
   value: number;
   max?: number;
   color?: string;
   trackColor?: string;
+  caption?: string;
 }) {
   const C = useTheme();
   const themeMode = useThemeMode();
@@ -482,15 +608,15 @@ function Gauge({
   const finalColor = color ?? C.success;
   const finalTrackColor = trackColor ?? C.border;
 
-  const size = 190;
-  const strokeWidth = 16;
-  const padding = strokeWidth / 2 + 2;
+  const size = 168;
+  const strokeWidth = 14;
   const centerX = size / 2;
   const centerY = size / 2 + 4;
   const radius = (size - strokeWidth) / 2 - 2;
   const left = centerX - radius;
   const right = centerX + radius;
   const arcLength = Math.PI * radius;
+  const svgHeight = centerY + strokeWidth / 2 + 2;
 
   const safeMax = max > 0 ? max : 100;
   const safeValue = Number.isFinite(value) ? value : 0;
@@ -499,38 +625,43 @@ function Gauge({
 
   const arcPath = `M ${left} ${centerY} A ${radius} ${radius} 0 0 1 ${right} ${centerY}`;
 
+  const displayText =
+    safeValue > safeMax
+      ? `${Math.round(safeMax)}%+`
+      : `${Math.round(Math.max(0, safeValue))}%`;
+
   return (
     <View style={styles.gaugeContainer}>
-      <Svg
-        width={size}
-        height={size / 2 + padding}
-        viewBox={`0 0 ${size} ${size / 2 + padding}`}
-      >
-        <Path
-          d={arcPath}
-          stroke={finalTrackColor}
-          strokeWidth={strokeWidth}
-          fill="none"
-          strokeLinecap="round"
-        />
-
-        {progressLength > 0 && (
+      <View style={{ width: size, height: svgHeight }}>
+        <Svg width={size} height={svgHeight} viewBox={`0 0 ${size} ${svgHeight}`}>
           <Path
             d={arcPath}
-            stroke={finalColor}
+            stroke={finalTrackColor}
             strokeWidth={strokeWidth}
             fill="none"
             strokeLinecap="round"
-            strokeDasharray={`${progressLength} ${arcLength}`}
           />
-        )}
-      </Svg>
 
-      <View style={styles.gaugeValueWrap}>
-        <Text style={styles.gaugeValue}>
-          {Math.round(Math.max(0, safeValue))}%
-        </Text>
+          {progressLength > 0 && (
+            <Path
+              d={arcPath}
+              stroke={finalColor}
+              strokeWidth={strokeWidth}
+              fill="none"
+              strokeLinecap="round"
+              strokeDasharray={`${progressLength} ${arcLength}`}
+            />
+          )}
+        </Svg>
+
+        <View style={styles.gaugeValueWrap}>
+          <Text style={styles.gaugeValue}>{displayText}</Text>
+        </View>
       </View>
+
+      {caption ? (
+        <Text style={[styles.gaugeCaption, { color: finalColor }]}>{caption}</Text>
+      ) : null}
     </View>
   );
 }
@@ -553,53 +684,90 @@ function CashflowBarChart({
   const isDark = themeMode === "dark";
   const styles = isDark ? darkStyles : lightStyles;
 
+  const [plotWidth, setPlotWidth] = useState(0);
+
   const safeIncome = income.map((v) => (Number.isFinite(v) ? Math.max(0, v) : 0));
   const safeExpenses = expenses.map((v) =>
     Number.isFinite(v) ? Math.max(0, v) : 0
   );
-  const max = Math.max(1, ...safeIncome, ...safeExpenses);
-  const chartWidth = Math.max(320, months.length * 72);
+
+  const rawMax = Math.max(0, ...safeIncome, ...safeExpenses);
+  const { top, ticks } = niceScale(rawMax, 4);
+
+  const plotH = 108;
+  const labelH = 22;
+  const minColWidth = 40;
+
+  const innerWidth = Math.max(plotWidth, months.length * minColWidth);
+  const colWidth = innerWidth / Math.max(1, months.length);
+  const barWidth = Math.max(7, Math.min(18, colWidth / 4));
 
   return (
-    <View style={{ marginTop: 8 }}>
-      <View style={styles.cashflowLegend}>
-        <View style={styles.cashflowLegendItem}>
-          <View style={[styles.cashflowLegendDot, { backgroundColor: C.success }]} />
-          <Text style={styles.cashflowLegendText}>Income</Text>
-        </View>
-
-        <View style={styles.cashflowLegendItem}>
-          <View style={[styles.cashflowLegendDot, { backgroundColor: C.error }]} />
-          <Text style={styles.cashflowLegendText}>Expenses</Text>
-        </View>
+    <View style={styles.cashflowWrap}>
+      <View style={{ width: 42, height: plotH + labelH }}>
+        {ticks.map((t, i) => (
+          <Text
+            key={`${t}_${i}`}
+            style={[
+              styles.cashflowAxisText,
+              { bottom: labelH + (t / top) * plotH - 6 },
+            ]}
+          >
+            {fmtAxis(t)}
+          </Text>
+        ))}
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={[styles.cashflowPlot, { width: chartWidth }]}>
-          {months.map((m, i) => {
-            const incH = safeIncome[i] > 0 ? Math.max(3, (safeIncome[i] / max) * 120) : 0;
-            const expH = safeExpenses[i] > 0 ? Math.max(3, (safeExpenses[i] / max) * 120) : 0;
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ flex: 1 }}
+        onLayout={(e) => setPlotWidth(e.nativeEvent.layout.width)}
+      >
+        <View style={{ width: innerWidth, height: plotH + labelH }}>
+          {ticks.map((t, i) => (
+            <View
+              key={`grid_${t}_${i}`}
+              style={[
+                styles.cashflowGridLine,
+                { bottom: labelH + (t / top) * plotH },
+              ]}
+            />
+          ))}
 
-            return (
-              <View key={`${m}_${i}`} style={styles.cashflowMonth}>
-                <View style={styles.cashflowBars}>
-                  {incH > 0 && (
-                    <View style={[styles.cashflowBar, { height: incH, backgroundColor: C.success }]} />
-                  )}
-                  {expH > 0 && (
-                    <View style={[styles.cashflowBar, { height: expH, backgroundColor: C.error }]} />
-                  )}
+          <View style={{ flexDirection: "row", height: plotH + labelH }}>
+            {months.map((m, i) => {
+              const incH = safeIncome[i] > 0 ? Math.max(3, (safeIncome[i] / top) * plotH) : 0;
+              const expH = safeExpenses[i] > 0 ? Math.max(3, (safeExpenses[i] / top) * plotH) : 0;
+
+              return (
+                <View key={`${m}_${i}`} style={{ width: colWidth }}>
+                  <View style={styles.cashflowBars}>
+                    {incH > 0 && (
+                      <View
+                        style={[
+                          styles.cashflowBar,
+                          { height: incH, width: barWidth, backgroundColor: C.success },
+                        ]}
+                      />
+                    )}
+                    {expH > 0 && (
+                      <View
+                        style={[
+                          styles.cashflowBar,
+                          { height: expH, width: barWidth, backgroundColor: C.error },
+                        ]}
+                      />
+                    )}
+                  </View>
+
+                  <Text style={styles.cashflowMonthLabel} numberOfLines={1}>
+                    {m}
+                  </Text>
                 </View>
-
-                <Text
-                  style={styles.cashflowMonthLabel}
-                  numberOfLines={1}
-                >
-                  {m}
-                </Text>
-              </View>
-            );
-          })}
+              );
+            })}
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -872,8 +1040,6 @@ function StatusChipRow({
   value: string;
   options: { label: string; value: string }[];
   onChange: (value: string) => void;
-  /** One line, scrolls sideways. Used by the inline source cards. The
-   *  advanced filter popup keeps the default wrapping layout. */
   scroll?: boolean;
 }) {
   const themeMode = useThemeMode();
@@ -989,7 +1155,6 @@ function FilterModal({
           />
         </View>
 
-        {/* NEW: Late Fee Source — only affects Late Fees tab */}
         <View style={styles.filterSection}>
           <Text style={styles.filterSectionTitle}>Late Fee Source</Text>
           <Text style={styles.filterSectionHelp}>
@@ -1090,7 +1255,6 @@ function FilterModal({
 
 export default function ReportsScreen() {
   const C = useTheme();
-  const T = useT();
   const themeMode = useThemeMode();
   const isDark = themeMode === "dark";
   const styles = isDark ? darkStyles : lightStyles;
@@ -1136,7 +1300,6 @@ export default function ReportsScreen() {
   const [memberStatusFilter, setMemberStatusFilter] =
     useState<MemberStatusFilter>("all");
 
-  // NEW: source of late fees — "all" | "contribution" | "loan"
   const [lateFeeSourceFilter, setLateFeeSourceFilter] =
     useState<LateFeeSourceFilter>("all");
 
@@ -1158,6 +1321,15 @@ export default function ReportsScreen() {
   const [tempEarningsSource, setTempEarningsSource] =
     useState<EarningsSourceFilter>("all");
 
+  const scrollRef = useRef<ScrollView>(null);
+  const activityY = useRef(0);
+
+  // "all" = no year filter (aggregate every year), otherwise the picked year.
+  const [year, setYear] = useState<string>(String(new Date().getFullYear()));
+  const [contributionTypeFilter, setContributionTypeFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [tableWidth, setTableWidth] = useState(0);
+
   useEffect(() => {
     if (isPersonalView) {
       setMemberIdFilter("all");
@@ -1168,11 +1340,6 @@ export default function ReportsScreen() {
   // Scope
   // ───────────────────────────────────────────────────────────────────────
 
-   // Dual-key set — records in this app used both `memberId` =
-  // member-doc-id (newer writes) and `memberId` = auth-userId (older
-  // writes). See useMyMemberIds in stores/selectors.ts for the full
-  // reasoning. All five scoped collections below filter against this
-  // set instead of comparing to a single id.
   const myIds = useMyMemberIds();
 
   const members = isPersonalView
@@ -1215,6 +1382,43 @@ export default function ReportsScreen() {
           myIds.has((t as any).userId),
       )
     : allWallet;
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Year scoping — header Year dropdown narrows the entire page.
+  // When the picker is set to "all", no year filter is applied.
+  // ───────────────────────────────────────────────────────────────────────
+  const inYear = (dateStr?: string) => {
+    if (year === "all") return true;
+    if (!dateStr) return false;
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return false;
+    return String(d.getFullYear()) === year;
+  };
+
+  const walletYr = useMemo(
+    () => wallet.filter((t) => inYear(t.date)),
+    [wallet, year],
+  );
+
+  const loansYr = useMemo(
+    () => loans.filter((l) => inYear(l.applicationDate)),
+    [loans, year],
+  );
+
+  const contributionsYr = useMemo(
+    () => contributions.filter((c) => inYear(c.date)),
+    [contributions, year],
+  );
+
+  const allWalletYr = useMemo(
+    () => allWallet.filter((t) => inYear(t.date)),
+    [allWallet, year],
+  );
+
+  const allLoansYr = useMemo(
+    () => allLoans.filter((l) => inYear(l.applicationDate)),
+    [allLoans, year],
+  );
 
   // ───────────────────────────────────────────────────────────────────────
   // Filters
@@ -1269,6 +1473,7 @@ export default function ReportsScreen() {
     setMemberStatusFilter("all");
     setLateFeeSourceFilter("all");
     setEarningsSourceFilter("all");
+    setContributionTypeFilter("all");
 
     setTempSearch("");
     setTempFromDate("");
@@ -1289,10 +1494,9 @@ export default function ReportsScreen() {
     memberIdFilter !== "all" ||
     memberStatusFilter !== "all" ||
     lateFeeSourceFilter !== "all" ||
-    earningsSourceFilter !== "all";
+    earningsSourceFilter !== "all" ||
+    contributionTypeFilter !== "all";
 
-  // Badge on the Filters button: how many filters are currently applied
-  // (advanced popup filters + the member dropdown).
   const appliedFilterCount =
     countActiveFilters({
       search: searchTerm,
@@ -1303,11 +1507,15 @@ export default function ReportsScreen() {
       memberStatus: memberStatusFilter,
       lateFeeSource: lateFeeSourceFilter,
       earningsSource: earningsSourceFilter,
+      contributionType: contributionTypeFilter,
     }) + (memberIdFilter !== "all" ? 1 : 0);
 
   const inDateRange = (dStr?: string) => {
     if (!dStr) return true;
     const d = dStr.slice(0, 10);
+
+    if (year !== "all" && d.slice(0, 4) !== year) return false;
+
     if (selectedFromDate && d < selectedFromDate) return false;
     if (selectedToDate && d > selectedToDate) return false;
     return true;
@@ -1318,7 +1526,13 @@ export default function ReportsScreen() {
   const matchesSearch = (item: any, fields: string[]) => {
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
-    return fields.some((field) => item[field]?.toString().toLowerCase().includes(term));
+
+    if (fields.some((field) => item[field]?.toString().toLowerCase().includes(term))) {
+      return true;
+    }
+
+    const name = item.memberName ?? (item.memberId ? getMemberName(item.memberId) : "");
+    return !!name && String(name).toLowerCase().includes(term);
   };
 
   const getMemberName = (id?: string) =>
@@ -1387,15 +1601,6 @@ export default function ReportsScreen() {
 
   // ───────────────────────────────────────────────────────────────────
   // Meeting late fees
-  //
-  // Meeting penalties live on `meeting.attendees[].penaltyAmount` (see
-  // recordAttendance in meetingSlice.ts), mirrored as a `late_fee`
-  // wallet tx with id `meeting-penalty-{meetingId}-{memberId}`.
-  //
-  // The attendee record is the authoritative source for the paid flag:
-  // clearMeetingPenalty flips `attendee.penaltyPaid = true` on the
-  // meeting but does NOT touch `feePaid` on the wallet tx. Reading the
-  // wallet tx here would show cleared meeting fees as still owed.
   // ───────────────────────────────────────────────────────────────────
   const meetingLateFeesList = useMemo(() => {
     const rows: any[] = [];
@@ -1478,7 +1683,7 @@ export default function ReportsScreen() {
         .filter((m) => m.status === "active" && !contributingIds.has(m.id))
         .map((m) => m.id)
     );
-  }, [contributions, members, selectedFromDate, selectedToDate]);
+  }, [contributions, members, selectedFromDate, selectedToDate, year]);
 
   const noLoanMemberIds = useMemo(() => {
     const borrowerIds = new Set(loans.map((l) => l.memberId));
@@ -1534,9 +1739,9 @@ export default function ReportsScreen() {
   const groupWalletEarnings = useMemo(
     () =>
       round2(
-        wallet.reduce((sum, t) => {
+        walletYr.reduce((sum, t) => {
           if (t.type === "loan_repayment") {
-            const loan = loans.find((l) => l.id === t.loanId);
+            const loan = loansYr.find((l) => l.id === t.loanId);
             if (!loan?.totalRepayable) return sum;
             return sum + round2(t.amount * (loan.totalInterest / loan.totalRepayable));
           }
@@ -1548,23 +1753,23 @@ export default function ReportsScreen() {
           return sum;
         }, 0)
       ),
-    [wallet, loans]
+    [walletYr, loansYr]
   );
 
   const groupExpenses = useMemo(
     () =>
-      wallet
+      walletYr
         .filter((t) => ["bank_fee", "other_debit"].includes(t.type))
         .reduce((sum, t) => sum + Math.abs(t.amount), 0),
-    [wallet]
+    [walletYr]
   );
 
   const groupInterestOnly = useMemo(
     () =>
       round2(
-        wallet.reduce((sum, t) => {
+        walletYr.reduce((sum, t) => {
           if (t.type === "loan_repayment") {
-            const loan = loans.find((l) => l.id === t.loanId);
+            const loan = loansYr.find((l) => l.id === t.loanId);
             if (!loan?.totalRepayable) return sum;
             return sum + round2(t.amount * (loan.totalInterest / loan.totalRepayable));
           }
@@ -1576,50 +1781,33 @@ export default function ReportsScreen() {
           return sum;
         }, 0)
       ),
-    [wallet, loans]
+    [walletYr, loansYr]
   );
 
   const groupContributionsOnly = useMemo(
     () =>
       round2(
-        wallet
+        walletYr
           .filter((t) => t.type === "contribution" && t.amount > 0)
           .reduce((s, t) => s + t.amount, 0)
       ),
-    [wallet]
+    [walletYr]
   );
 
   const groupPenaltiesOnly = useMemo(
     () =>
       round2(
-        wallet
+        walletYr
           .filter((t) => t.type === "late_fee" && t.amount > 0)
           .reduce((s, t) => s + t.amount, 0)
       ),
-    [wallet]
+    [walletYr]
   );
 
-  // ── Late fee buckets ─────────────────────────────────────────────
-  //
-  // The summary previously showed every late_fee wallet tx in one cell,
-  // but loan fees and (contribution + meeting) fees are managed on
-  // different screens and mean different things to a user reading the
-  // top-of-page summary. Two separate buckets:
-  //
-  //   • groupContributionAndMeetingFees — the "Penalties & Late Fees"
-  //     cell: contribution late fees + meeting absence/late penalties.
-  //
-  //   • appliedUnpaidLoanLateFees — the recorded-but-unpaid portion of
-  //     loan late fees, which combines with projectedLoanLateFees
-  //     (defined below) to produce the "Late Fees Owed" cell.
-  //
-  // Loan fees are identified by tx ID prefix — applyLoanLateFee in
-  // walletSlice.ts writes them as `late-fee-loan-*`. Any tx with a
-  // loanId is also treated as a loan fee for legacy safety.
   const appliedUnpaidLoanLateFees = useMemo(
     () =>
       round2(
-        wallet
+        walletYr
           .filter(
             (t) =>
               t.type === "late_fee" &&
@@ -1630,13 +1818,13 @@ export default function ReportsScreen() {
           )
           .reduce((s, t) => s + Math.abs(t.amount || 0), 0)
       ),
-    [wallet]
+    [walletYr]
   );
 
   const groupContributionAndMeetingFees = useMemo(
     () =>
       round2(
-        wallet
+        walletYr
           .filter(
             (t) =>
               t.type === "late_fee" &&
@@ -1647,27 +1835,27 @@ export default function ReportsScreen() {
           )
           .reduce((s, t) => s + t.amount, 0)
       ),
-    [wallet]
+    [walletYr]
   );
 
   const groupInvestmentReturnsOnly = useMemo(
     () =>
       round2(
-        wallet
+        walletYr
           .filter((t) => t.type === "investment_return" && t.amount > 0)
           .reduce((s, t) => s + t.amount, 0)
       ),
-    [wallet]
+    [walletYr]
   );
 
   const groupTotalLoansDisbursed = useMemo(
     () =>
       round2(
-        loans
+        loansYr
           .filter((l) => l.status === "disbursed")
           .reduce((s, l) => s + (l.amount || 0), 0)
       ),
-    [loans]
+    [loansYr]
   );
 
   const groupTotalInvestments = useMemo(
@@ -1694,13 +1882,13 @@ export default function ReportsScreen() {
     ];
 
     return round2(
-      wallet.filter((t) => !known.includes(t.type)).reduce((s, t) => s + t.amount, 0)
+      walletYr.filter((t) => !known.includes(t.type)).reduce((s, t) => s + t.amount, 0)
     );
-  }, [wallet]);
+  }, [walletYr]);
 
   const groupTotalNetAssets = useMemo(
-    () => round2(wallet.reduce((s, t) => s + t.amount, 0)),
-    [wallet]
+    () => round2(walletYr.reduce((s, t) => s + t.amount, 0)),
+    [walletYr]
   );
 
   const groupAccruedInterestUnpaid = useMemo(
@@ -1795,9 +1983,6 @@ export default function ReportsScreen() {
     loanLateFees.reduce((sum, item) => sum + item.feeAmount, 0)
   );
 
-  // Group-wide projected interest (unscoped — same value on every
-  // device). The Financial Position card slices this by active-member
-  // count in personal view; the Earnings tab uses the same slice.
   const projectedLoanInterestAll = useMemo(() => {
     const fromDate = selectedFromDate || "";
     const toDate = selectedToDate || "";
@@ -1812,9 +1997,6 @@ export default function ReportsScreen() {
     );
   }, [allLoans, selectedFromDate, selectedToDate]);
 
-  // Group-wide projected late fees (unscoped). findOverdueInstallments
-  // is already group-wide, so no source swap is needed here — only the
-  // slice in personal view.
   const projectedLoanLateFeesAll = useMemo(() => {
     if (!group) return 0;
 
@@ -1849,21 +2031,6 @@ export default function ReportsScreen() {
     selectedToDate,
   ]);
 
-
-  // ── Total loan late fees owed ────────────────────────────────────
-  //
-  // This MUST match the Loans-screen KPI "Late Fees". That screen
-  // computes:
-  //
-  //     applied   — wallet late_fee txs, filtered to visible loans,
-  //                 not marked paid
-  //     accrued   — findOverdueInstallments with no asOf cap
-  //     total     — applied + accrued
-  //
-  // Deliberately ignores the reports-screen date filter. This is a
-  // current-liability *balance* (what's owed right now), not a flow
-  // within a period. Every other "what do we owe" figure at the top
-  // of the reports page behaves the same way.
   const groupLoanLateFeesOwed = useMemo(() => {
     if (!group) return 0;
 
@@ -1877,7 +2044,6 @@ export default function ReportsScreen() {
 
     const visibleLoanIds = new Set(scopedLoans.map((l) => l.id));
 
-    // Accrued-but-not-yet-applied
     let accruedTotal = 0;
     try {
       const overdue =
@@ -1898,7 +2064,6 @@ export default function ReportsScreen() {
       );
     }
 
-    // Applied-but-unpaid
     const appliedTotal = allWallet
       .filter(
         (t) =>
@@ -1924,25 +2089,12 @@ export default function ReportsScreen() {
     projectedLoanInterest + projectedLoanLateFees
   );
 
-  // ── Profit donut — group-wide categories, scaled in personal view ─
-  //
-  // The donut was previously fed from the scoped `wallet` / `loans`,
-  // so in personal view every segment collapsed to what the current
-  // member happened to have in their own wallet. Now each segment is
-  // computed group-wide from `allWallet` / `allLoans` and multiplied
-  // by `donutScale` — 1/N in personal view (equal-share model), 1 in
-  // group view.
-  // ── Group-wide interest (unscoped) ────────────────────────────────
-  //
-  // Reads allWallet / allLoans regardless of view. Used by both the
-  // Interest Earned cell and the profit donut, which scale this figure
-  // by the active-member count in personal view.
   const groupInterestAllTime = useMemo(
     () =>
       round2(
-        allWallet.reduce((sum, t) => {
+        allWalletYr.reduce((sum, t) => {
           if (t.type === "loan_repayment") {
-            const loan = allLoans.find((l) => l.id === t.loanId);
+            const loan = allLoansYr.find((l) => l.id === t.loanId);
             if (!loan?.totalRepayable) return sum;
             return (
               sum +
@@ -1959,7 +2111,7 @@ export default function ReportsScreen() {
           return sum;
         }, 0)
       ),
-    [allWallet, allLoans]
+    [allWalletYr, allLoansYr]
   );
 
   const activeMemberCount = useMemo(
@@ -1971,12 +2123,6 @@ export default function ReportsScreen() {
     [allMembers]
   );
 
-  // Slice a group-wide figure for the active view.
-  //
-  // Group view    → the figure as-is (whole-group total).
-  // Personal view → the figure ÷ active-member count, matching the
-  //                 equal-share model used by the profit donut and the
-  //                 dashboard's "My Share" card.
   const slice = (groupValue: number) =>
     isPersonalView ? round2(groupValue / activeMemberCount) : groupValue;
 
@@ -1987,23 +2133,23 @@ export default function ReportsScreen() {
   const donutLateFees = useMemo(
     () =>
       round2(
-        allWallet
+        allWalletYr
           .filter((t) => t.type === "late_fee" && t.amount > 0)
           .reduce((s, t) => s + t.amount, 0) * donutScale
       ),
-    [allWallet, donutScale]
+    [allWalletYr, donutScale]
   );
 
   const donutInvestmentReturns = useMemo(
     () =>
       round2(
-        allWallet
+        allWalletYr
           .filter(
             (t) => t.type === "investment_return" && t.amount > 0
           )
           .reduce((s, t) => s + t.amount, 0) * donutScale
       ),
-    [allWallet, donutScale]
+    [allWalletYr, donutScale]
   );
 
   const donutAccruedUnpaid = useMemo(
@@ -2062,57 +2208,78 @@ export default function ReportsScreen() {
         "loan_principal_recovery",
       ];
       return round2(
-        allWallet
+        allWalletYr
           .filter((t) => !known.includes(t.type))
           .reduce((s, t) => s + t.amount, 0) * donutScale
       );
     },
-    [allWallet, donutScale]
+    [allWalletYr, donutScale]
   );
 
-  const collectionRatePct = useMemo(() => {
-    if (!group) return 0;
+  const collection = useMemo(() => {
+    if (!group) return { pct: 0, collected: 0, expected: 0 };
 
     const target = group.contributionAmount || 0;
-    if (target <= 0) return 0;
+    if (target <= 0) return { pct: 0, collected: 0, expected: 0 };
 
     const activeCount = allMembers.filter((m) => m.status === "active").length;
     const expected = isPersonalView ? target : target * Math.max(1, activeCount);
 
-    const collected = contributions
+    const collected = contributionsYr
       .filter((c) => c.status === "approved" && c.contributionType === "regular")
       .reduce((s, c) => s + (c.amount || 0), 0);
 
-    return expected > 0 ? Math.min(999, Math.round((collected / expected) * 100)) : 0;
-  }, [group, allMembers, contributions, isPersonalView]);
+    return {
+      pct: expected > 0 ? Math.min(999, Math.round((collected / expected) * 100)) : 0,
+      collected: round2(collected),
+      expected: round2(expected),
+    };
+  }, [group, allMembers, contributionsYr, isPersonalView]);
+
+  const collectionRatePct = collection.pct;
+
+  // When year === "all", the cashflow chart falls back to the current year
+  // (the chart is a single Jan–Dec view; a full multi-year plot would need
+  // a different axis).
+  const cashflowYearValue =
+    year === "all" ? new Date().getFullYear() : Number(year) || new Date().getFullYear();
 
   const cashflow = useMemo(() => {
-    const months: string[] = [];
-    const income: number[] = [];
-    const expenses: number[] = [];
+    const y = cashflowYearValue;
 
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date();
-      d.setMonth(d.getMonth() - i);
+    const months = Array.from({ length: 12 }, (_, i) =>
+      new Date(y, i, 1).toLocaleDateString("en", { month: "short" })
+    );
+    const income: number[] = Array(12).fill(0);
+    const expenses: number[] = Array(12).fill(0);
 
-      const startOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
-      const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+    wallet.forEach((t) => {
+      const d = new Date(t.date);
+      if (isNaN(d.getTime()) || d.getFullYear() !== y) return;
 
-      const monthTxs = wallet.filter((t) => {
-        const txDate = new Date(t.date);
-        return txDate >= startOfMonth && txDate <= endOfMonth;
-      });
-
-      months.push(d.toLocaleDateString("en", { month: "short" }));
-
-      income.push(monthTxs.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0));
-
-      expenses.push(
-        Math.abs(monthTxs.filter((t) => t.amount < 0).reduce((s, t) => s + t.amount, 0))
-      );
-    }
+      const m = d.getMonth();
+      if (t.amount > 0) income[m] += t.amount;
+      else if (t.amount < 0) expenses[m] += Math.abs(t.amount);
+    });
 
     return { months, income, expenses };
+  }, [wallet, cashflowYearValue]);
+
+  const yearOptions = useMemo(() => {
+    const years = new Set<string>([String(new Date().getFullYear())]);
+
+    wallet.forEach((t) => {
+      const d = new Date(t.date);
+      if (!isNaN(d.getTime())) years.add(String(d.getFullYear()));
+    });
+
+    return [
+      { label: "All Years", value: "all" },
+      ...Array.from(years)
+        .sort()
+        .reverse()
+        .map((y) => ({ label: y, value: y })),
+    ];
   }, [wallet]);
 
   const memberPie = useMemo(() => {
@@ -2195,6 +2362,20 @@ export default function ReportsScreen() {
     [allMembers, isPersonalView]
   );
 
+  const contributionTypeOptions = useMemo(() => {
+    const types = new Set<string>();
+    contributions.forEach((c: any) => {
+      if (c.contributionType) types.add(c.contributionType);
+    });
+
+    return [
+      { label: "All Types", value: "all" },
+      ...Array.from(types)
+        .sort()
+        .map((v) => ({ label: titleCase(v), value: v })),
+    ];
+  }, [contributions]);
+
   // ───────────────────────────────────────────────────────────────────────
   // Category view
   // ───────────────────────────────────────────────────────────────────────
@@ -2243,6 +2424,10 @@ export default function ReportsScreen() {
 
       if (contributionStatus !== "all") {
         list = list.filter((c) => c.status === contributionStatus);
+      }
+
+      if (contributionTypeFilter !== "all") {
+        list = list.filter((c) => (c.contributionType ?? "") === contributionTypeFilter);
       }
 
       list = list.filter((c) =>
@@ -2328,7 +2513,6 @@ export default function ReportsScreen() {
           passesMemberStatus(f.memberId)
       );
 
-      // NEW: apply the source filter
       if (lateFeeSourceFilter !== "all") {
         list = list.filter((f: any) => f.type === lateFeeSourceFilter);
       }
@@ -2587,11 +2771,6 @@ export default function ReportsScreen() {
     const totalInterestAllIn = round2(actualInterest + totalProjectedInterest);
     const totalLateFeesAllIn = round2(actualLateFees + totalLoanLateFees);
 
-    // Both halves of "Total Projected" must come from the same set of
-    // loans. In personal view, source the interest projection from
-    // allLoans (group-wide) — matching the late-fee projection, which
-    // is already group-wide — then slice each row's amount by the
-    // active-member count so the table reconciles to the sliced KPI.
     const projectedInterestSource = isPersonalView
       ? allLoans
           .filter((l) => l.status === "disbursed")
@@ -2728,6 +2907,7 @@ export default function ReportsScreen() {
     searchTerm,
     loanStatus,
     contributionStatus,
+    contributionTypeFilter,
     memberStatusFilter,
     lateFeeSourceFilter,
     earningsSourceFilter,
@@ -2746,10 +2926,37 @@ export default function ReportsScreen() {
     projectedLoanInterest,
     projectedLoanLateFees,
     earningsMode,
-    C, // chartColor is read from the palette — recompute on theme toggle
+    year,
+    C,
   ]);
 
   const exportRows = view.rows.map(view.toRow);
+
+  const totalPages = Math.max(1, Math.ceil(exportRows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pagedRows = exportRows.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [
+    category,
+    searchTerm,
+    monthFilter,
+    memberIdFilter,
+    selectedFromDate,
+    selectedToDate,
+    loanStatus,
+    contributionStatus,
+    contributionTypeFilter,
+    memberStatusFilter,
+    lateFeeSourceFilter,
+    earningsSourceFilter,
+    earningsMode,
+    year,
+  ]);
 
   const handleExport = async (format: "excel" | "pdf") => {
     if (!exportRows.length) {
@@ -2854,382 +3061,498 @@ export default function ReportsScreen() {
     );
   };
 
+  // ───────────────────────────────────────────────────────────────────────
+  // Layout data
+  // ───────────────────────────────────────────────────────────────────────
+
+  const groupName: string = ((group as any)?.name as string) || "";
+
+  const headerSubtitle = isPersonalView
+    ? groupName
+      ? `Personal view · ${groupName}`
+      : "Personal view"
+    : groupName || "Group view";
+
+  const openReport = (
+    key: Category,
+    opts: {
+      lateFeeSource?: LateFeeSourceFilter;
+      earningsSource?: EarningsSourceFilter;
+      earningsMode?: EarningsViewMode;
+    } = {}
+  ) => {
+    setCategory(key);
+    setMonthFilter("all");
+    setSelectedFromDate("");
+    setSelectedToDate("");
+
+    if (key === "latefees") {
+      setLateFeeSourceFilter(opts.lateFeeSource ?? "all");
+    }
+
+    if (key === "earnings") {
+      setEarningsSourceFilter(opts.earningsSource ?? "all");
+      setEarningsMode(opts.earningsMode ?? "all");
+    }
+
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, activityY.current - 12),
+        animated: true,
+      });
+    }, 0);
+  };
+
+  const activeMembersCount = members.filter((m) => m.status === "active").length;
+
+  // KPI data for the "Group Financial Position" panel — no icons, values
+  // colored per bucket, matching the panel design.
+  const kpiCards: KpiCardProps[] = [
+    {
+      label: "Members",
+      value: isPersonalView ? "1" : String(activeMembersCount),
+      sub: isPersonalView ? "personal" : "active",
+      onPress: () => openReport("members"),
+    },
+    {
+      label: "Total Net Assets",
+      value: fmtCurrency(groupTotalNetAssets),
+      sub: isPersonalView ? "my wallet" : "everything in wallet",
+      valueColor: C.success,
+    },
+    {
+      label: "Contributions",
+      value: fmtCurrency(groupContributionsOnly),
+      sub: isPersonalView ? "my contributions" : "total collected",
+      onPress: () => openReport("contributions"),
+    },
+    {
+      label: "Interest Earned",
+      value: fmtCurrency(groupInterestOnly),
+      sub: isPersonalView ? "my interest collected" : "already collected",
+      valueColor: C.gold,
+      onPress: () =>
+        openReport("earnings", {
+          earningsMode: "actual",
+          earningsSource: "loan_interest",
+        }),
+    },
+    {
+      label: "Late Fees Owed",
+      value: fmtCurrency(groupLoanLateFeesOwed),
+      sub: "on loans",
+      valueColor: C.purple,
+      onPress: () => openReport("latefees", { lateFeeSource: "loan" }),
+    },
+    {
+      label: "Projected Interest",
+      value: fmtCurrency(projectedLoanInterest),
+      sub: "from remaining schedule",
+      valueColor: C.indigo,
+      onPress: () =>
+        openReport("earnings", {
+          earningsMode: "projected",
+          earningsSource: "loan_interest",
+        }),
+    },
+    {
+      label: "Penalties & Late Fees",
+      value: fmtCurrency(groupContributionAndMeetingFees),
+      sub: "meetings + contributions",
+      valueColor: C.error,
+      onPress: () => openReport("latefees"),
+    },
+    {
+      label: "Total Loans",
+      value: fmtCurrency(groupTotalLoansDisbursed),
+      sub: isPersonalView ? "my disbursed balance" : "principal disbursed",
+      valueColor: C.orange,
+      onPress: () => openReport("loans"),
+    },
+    {
+      label: "Investment Returns",
+      value: fmtCurrency(groupInvestmentReturnsOnly),
+      sub: "from investments",
+      valueColor: C.success,
+      onPress: () =>
+        openReport("earnings", {
+          earningsMode: "actual",
+          earningsSource: "investment_returns",
+        }),
+    },
+    {
+      label: "Other",
+      value: fmtCurrency(groupOtherOnly),
+      sub: "bank fees, misc",
+      onPress: () =>
+        openReport("earnings", {
+          earningsMode: "actual",
+          earningsSource: "other",
+        }),
+    },
+  ];
+
+  const collectionColor =
+    collectionRatePct >= 100
+      ? C.success
+      : collectionRatePct >= 70
+      ? C.gold
+      : C.error;
+
+  const collectionCaption =
+    collection.expected <= 0
+      ? "No target set"
+      : collectionRatePct > 100
+      ? "Target exceeded"
+      : collectionRatePct === 100
+      ? "Target met"
+      : collectionRatePct >= 70
+      ? "On track"
+      : "Below target";
+
+  const collectionDiff = round2(collection.collected - collection.expected);
+
+  const typeDropdown: {
+    label: string;
+    value: string;
+    options: DropdownOption[];
+    onChange: (v: string) => void;
+  } | null =
+    category === "contributions"
+      ? {
+          label: "Type",
+          value: contributionTypeFilter,
+          options: contributionTypeOptions,
+          onChange: setContributionTypeFilter,
+        }
+      : category === "loans"
+      ? {
+          label: "Status",
+          value: loanStatus,
+          options: LOAN_STATUS_CHIPS,
+          onChange: (v) => setLoanStatus(v as typeof loanStatus),
+        }
+      : category === "latefees"
+      ? {
+          label: "Source",
+          value: lateFeeSourceFilter,
+          options: LATE_FEE_SOURCE_CHIPS,
+          onChange: (v) => setLateFeeSourceFilter(v as LateFeeSourceFilter),
+        }
+      : category === "earnings"
+      ? {
+          label: "Source",
+          value: earningsSourceFilter,
+          options: EARNINGS_SOURCE_CHIPS,
+          onChange: (v) => setEarningsSourceFilter(v as EarningsSourceFilter),
+        }
+      : category === "members"
+      ? {
+          label: "Condition",
+          value: memberStatusFilter,
+          options: MEMBER_STATUS_OPTIONS,
+          onChange: (v) => setMemberStatusFilter(v as MemberStatusFilter),
+        }
+      : null;
+
+  const exportButtons =
+    category !== "members" ? (
+      <View style={styles.exportActions}>
+        <TouchableOpacity
+          style={styles.exportBtn}
+          onPress={() => handleExport("excel")}
+          disabled={!exportRows.length}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.exportBtnText}>📊 Excel</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.exportBtn}
+          onPress={() => handleExport("pdf")}
+          disabled={!exportRows.length}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.exportBtnText}>🖨 PDF</Text>
+        </TouchableOpacity>
+      </View>
+    ) : null;
+
+  const pageStart = Math.max(1, Math.min(currentPage - 2, totalPages - 4));
+  const pageEnd = Math.min(totalPages, pageStart + 4);
+  const pageNumbers = Array.from(
+    { length: pageEnd - pageStart + 1 },
+    (_, i) => pageStart + i
+  );
+
+  const reportTitle = isNoActivityMemberView
+    ? memberStatusFilter === "no_loans"
+      ? "Members With No Loans"
+      : "Members With No Contributions"
+    : `${CATEGORIES.find((c) => c.key === category)?.label} Overview`;
+
+  const positionPanelTitle = isPersonalView
+    ? "My Financial Position"
+    : "Group Financial Position";
+
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle={isDark ? "light-content" : "dark-content"} backgroundColor={C.bg} />
 
       <ScrollView
-        contentContainerStyle={[styles.page, { paddingBottom: 80 }]}
+        ref={scrollRef}
+        contentContainerStyle={[styles.page, { paddingBottom: 60 }]}
         showsVerticalScrollIndicator={false}
       >
         <View style={[styles.contentContainer, isWide && styles.contentContainerWide]}>
-          <View style={styles.chartCard}>
-            <Text style={styles.chartTitle}>
-              {isPersonalView ? "Personal Financial Position" : "Group Financial Position"}
-            </Text>
-
-            <View style={styles.gfpRow}>
-              <View style={styles.gfpStat}>
-                <Text style={styles.gfpStatLabel} numberOfLines={1}>
-                  {isPersonalView ? "My Account" : "Members"}
-                </Text>
-
-                <Text
-                  style={styles.gfpStatValue}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.75}
-                >
-                  {isPersonalView
-                    ? "1"
-                    : members.filter((m) => m.status === "active").length}
-                </Text>
-
-                <Text style={T.small} numberOfLines={1}>
-                  {isPersonalView ? "personal" : "active"}
-                </Text>
-              </View>
-
-              <View style={styles.gfpStat}>
-                <Text style={styles.gfpStatLabel} numberOfLines={1}>
-                  Total Net Assets
-                </Text>
-
-                <Text
-                  style={[styles.gfpStatValue, { color: C.primary }]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.65}
-                >
-                  {fmtCurrency(groupTotalNetAssets)}
-                </Text>
-
-                <Text style={T.small} numberOfLines={1}>
-                  {isPersonalView ? "my wallet" : "everything in wallet"}
-                </Text>
+          {/* ── Header ─────────────────────────────────────────────── */}
+          <View style={styles.ovHeader}>
+            <View style={styles.ovHeaderLeft}>
+              <View style={styles.ovHeaderIcon}>
+                <Text style={{ fontSize: 16 }}>👥</Text>
               </View>
             </View>
 
-            <View style={styles.gfpRow}>
-              <View style={styles.gfpStat}>
-                <Text style={styles.gfpStatLabel} numberOfLines={1}>
-                  Contributions
-                </Text>
+            <View style={styles.ovYearWrap}>
+              <Dropdown label="Year" value={year} options={yearOptions} onChange={setYear} />
+            </View>
+          </View>
 
-                <Text
-                  style={styles.gfpStatValue}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                >
-                  {fmtCurrency(groupContributionsOnly)}
-                </Text>
+          {/* ── Group Financial Position panel ─────────────────────── */}
+          <View style={styles.positionPanel}>
+            <Text style={styles.positionPanelTitle}>{positionPanelTitle}</Text>
 
-                <Text style={T.small} numberOfLines={1}>
-                  {isPersonalView ? "my contributions" : "total collected"}
-                </Text>
-              </View>
+            <View style={styles.positionGrid}>
+              {kpiCards.map((k) => (
+                <View key={k.label} style={styles.positionCell}>
+                  <KpiCard {...k} />
+                </View>
+              ))}
+            </View>
+          </View>
 
-              <View style={styles.gfpStat}>
-                <Text style={styles.gfpStatLabel} numberOfLines={1}>
-                  Interest Earned
-                </Text>
+          {/* ── Profits by source + Collection rate ────────────────── */}
+          <View style={[styles.ovMidRow, isWide && styles.ovMidRowWide]}>
+            <View style={[styles.chartCard, styles.ovMidCard, isWide && { flex: 1.5 }]}>
+              <Text style={styles.chartTitle}>Profits by source</Text>
+              <Text style={styles.chartSubtitle}>
+                {isPersonalView
+                  ? `My share of group profits (1/${activeMemberCount})`
+                  : "Group earnings this period"}
+              </Text>
 
-                <Text
-                  style={[styles.gfpStatValue, { color: C.gold }]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                >
-                  {fmtCurrency(groupInterestOnly)}
-                </Text>
-
-                <Text style={T.small} numberOfLines={1}>
-                  {isPersonalView ? "my interest collected" : "already collected"}
-                </Text>
-              </View>
+              <EarningsDonut
+                segments={[
+                  { label: "Loan interest (actual)", value: donutLoanInterest, color: C.info },
+                  { label: "Late fees (actual)", value: donutLateFees, color: C.coral },
+                  { label: "Investment returns", value: donutInvestmentReturns, color: C.success },
+                  { label: "Accrued (unpaid)", value: donutAccruedUnpaid, color: C.purple },
+                  { label: isPersonalView ? "Projected interest (my 1/N share)" : "Projected interest (schedule)", value: donutProjectedInterest, color: C.indigo },
+                  { label: "Projected late fees", value: donutProjectedLateFees, color: C.orange },
+                  { label: "Other", value: donutOther, color: C.gold },
+                ]}
+              />
             </View>
 
-            <View style={styles.gfpRow}>
-              <View style={styles.gfpStat}>
-                <Text style={styles.gfpStatLabel} numberOfLines={1}>
-                  Late Fees Owed
-                </Text>
+            <View style={[styles.chartCard, styles.ovMidCard, isWide && { flex: 1 }]}>
+              <Text style={styles.chartTitle}>Collection rate</Text>
+              <Text style={styles.chartSubtitle}>
+                {isPersonalView ? "My contributions vs my goal" : "Group contributions vs target"}
+              </Text>
 
-                <Text
-                  style={[styles.gfpStatValue, { color: C.purple }]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                >
-                  {fmtCurrency(groupLoanLateFeesOwed)}
-                </Text>
+              <View style={styles.collectionBody}>
+                <Gauge
+                  value={collectionRatePct}
+                  color={collectionColor}
+                  caption={collectionCaption}
+                />
 
-                <Text style={T.small} numberOfLines={1}>
-                  on loans
-                </Text>
-              </View>
+                <View style={styles.collectionTable}>
+                  <View style={styles.collectionRow}>
+                    <Text style={styles.collectionLabel}>Total Collected</Text>
+                    <Text style={styles.collectionValue} numberOfLines={1}>
+                      {fmtCurrency(collection.collected)}
+                    </Text>
+                  </View>
 
-              <View style={styles.gfpStat}>
-                <Text style={styles.gfpStatLabel} numberOfLines={1}>
-                  Projected Interest
-                </Text>
+                  <View style={styles.collectionRow}>
+                    <Text style={styles.collectionLabel}>Target</Text>
+                    <Text style={styles.collectionValue} numberOfLines={1}>
+                      {fmtCurrency(collection.expected)}
+                    </Text>
+                  </View>
 
-                <Text
-                  style={[styles.gfpStatValue, { color: C.indigo }]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                >
-                  {fmtCurrency(projectedLoanInterest)}
-                </Text>
-
-                <Text style={T.small} numberOfLines={1}>
-                  from remaining schedule
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.gfpRow}>
-              <View style={styles.gfpStat}>
-                <Text style={styles.gfpStatLabel} numberOfLines={1}>
-                  Penalties & Late Fees
-                </Text>
-
-                <Text
-                  style={[styles.gfpStatValue, { color: C.error }]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                >
-                  {fmtCurrency(groupContributionAndMeetingFees)}
-                </Text>
-
-                <Text style={T.small} numberOfLines={1}>
-                  meetings + contributions
-                </Text>
-              </View>
-
-              <View style={styles.gfpStat}>
-                <Text style={styles.gfpStatLabel} numberOfLines={1}>
-                  Total Loans
-                </Text>
-
-                <Text
-                  style={[styles.gfpStatValue, { color: C.orange }]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                >
-                  {fmtCurrency(groupTotalLoansDisbursed)}
-                </Text>
-
-                <Text style={T.small} numberOfLines={1}>
-                  {isPersonalView ? "my disbursed balance" : "principal disbursed"}
-                </Text>
-              </View>
-            </View>
-
-            <View style={[styles.gfpRow, styles.gfpRowLast]}>
-              <View style={styles.gfpStat}>
-                <Text style={styles.gfpStatLabel} numberOfLines={1}>
-                  Investment Returns
-                </Text>
-
-                <Text
-                  style={[styles.gfpStatValue, { color: C.success }]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                >
-                  {fmtCurrency(groupInvestmentReturnsOnly)}
-                </Text>
-
-                <Text style={T.small} numberOfLines={1}>
-                  from investments
-                </Text>
-              </View>
-
-              <View style={styles.gfpStat}>
-                <Text style={styles.gfpStatLabel} numberOfLines={1}>
-                  Other
-                </Text>
-
-                <Text
-                  style={styles.gfpStatValue}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                >
-                  {fmtCurrency(groupOtherOnly)}
-                </Text>
-
-                <Text style={T.small} numberOfLines={1}>
-                  bank fees, misc
-                </Text>
+                  <View style={[styles.collectionRow, styles.collectionRowLast]}>
+                    <Text style={styles.collectionLabel}>
+                      {collectionDiff >= 0 ? "Excess" : "Shortfall"}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.collectionValue,
+                        { color: collectionDiff >= 0 ? C.success : C.error },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {fmtCurrency(Math.abs(collectionDiff))}
+                    </Text>
+                  </View>
+                </View>
               </View>
             </View>
           </View>
 
+          {/* ── Cash flow ──────────────────────────────────────────── */}
           <View style={styles.chartCard}>
-            <Text style={styles.chartTitle}>Profits by source</Text>
-            <Text style={styles.chartSubtitle}>
-              {isPersonalView
-                ? `My share of group profits (1/${activeMemberCount})`
-                : "Group earnings this period"}
-            </Text>
+            <View style={styles.cashflowHead}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.chartTitle}>
+                  {year === "all"
+                    ? `Cash Flow — ${cashflowYearValue}`
+                    : `Cash Flow — ${year}`}
+                </Text>
+                <Text style={[styles.chartSubtitle, { marginBottom: 0 }]}>
+                  Income vs Expenses
+                </Text>
+              </View>
 
-            <EarningsDonut
-              segments={[
-                { label: "Loan interest (actual)", value: donutLoanInterest, color: C.info },
-                { label: "Late fees (actual)", value: donutLateFees, color: C.coral },
-                { label: "Investment returns", value: donutInvestmentReturns, color: C.success },
-                { label: "Accrued (unpaid)", value: donutAccruedUnpaid, color: C.purple },
-                { label: isPersonalView ? "Projected interest (my 1/N share)" : "Projected interest (schedule)", value: donutProjectedInterest, color: C.indigo },
-                { label: "Projected late fees", value: donutProjectedLateFees, color: C.orange },
-                { label: "Other", value: donutOther, color: C.gold },
-              ]}
-            />
-          </View>
+              <View style={styles.cashflowLegend}>
+                <View style={styles.cashflowLegendItem}>
+                  <View style={[styles.cashflowLegendDot, { backgroundColor: C.success }]} />
+                  <Text style={styles.cashflowLegendText}>Income</Text>
+                </View>
 
-          <View style={styles.chartCard}>
-            <Text style={styles.chartTitle}>Collection rate</Text>
-            <Text style={styles.chartSubtitle}>
-              {isPersonalView ? "My contributions vs my goal" : "Group contributions vs target"}
-            </Text>
-
-            <Gauge
-              value={collectionRatePct}
-              color={
-                collectionRatePct >= 100
-                  ? C.success
-                  : collectionRatePct >= 70
-                  ? C.gold
-                  : C.error
-              }
-            />
-          </View>
-
-          <View style={styles.chartCard}>
-            <Text style={styles.chartTitle}>Cash Flow (Last 6 Months)</Text>
+                <View style={styles.cashflowLegendItem}>
+                  <View style={[styles.cashflowLegendDot, { backgroundColor: C.error }]} />
+                  <Text style={styles.cashflowLegendText}>Expenses</Text>
+                </View>
+              </View>
+            </View>
 
             <CashflowBarChart months={cashflow.months} income={cashflow.income} expenses={cashflow.expenses} />
           </View>
 
-          {memberPie.length > 0 && (
-            <View style={styles.chartCard}>
-              {/*<Text style={styles.chartTitle}>
-                {isPersonalView ? "My Savings" : "Savings by Member (Top 5)"}
-              </Text>
+          {memberPie.length > 0 && null}
 
-              <MemberSharesChart data={memberPie} />*/}
-            </View>
-          )}
-        </View>
-
-        <View style={[styles.contentContainer, isWide && styles.contentContainerWide]}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.categoryScroller}
-            contentContainerStyle={styles.categoryContent}
+          {/* ── Financial activity ─────────────────────────────────── */}
+          <View
+            style={styles.activityCard}
+            onLayout={(e) => {
+              activityY.current = e.nativeEvent.layout.y + 20;
+            }}
           >
-            {CATEGORIES.map((c) => (
-              <TouchableOpacity
-                key={c.key}
-                style={[styles.pill, category === c.key && styles.pillActive]}
-                onPress={() => {
-                  setCategory(c.key);
-                  setMonthFilter("all");
-                  setSelectedFromDate("");
-                  setSelectedToDate("");
-                }}
-                activeOpacity={0.8}
+            <View style={[styles.activityHeader, !isWide && styles.activityHeaderStack]}>
+              <View style={styles.activityTitleRow}>
+                {!isWide && exportButtons}
+              </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={isWide ? { flex: 1 } : undefined}
+                contentContainerStyle={styles.categoryContent}
               >
-                <Text style={styles.pillIcon}>{c.icon}</Text>
+                {CATEGORIES.map((c) => (
+                  <TouchableOpacity
+                    key={c.key}
+                    style={[styles.pill, category === c.key && styles.pillActive]}
+                    onPress={() => {
+                      setCategory(c.key);
+                      setMonthFilter("all");
+                      setSelectedFromDate("");
+                      setSelectedToDate("");
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.pillIcon}>{c.icon}</Text>
 
-                <Text style={[styles.pillLabel, category === c.key && styles.pillLabelActive]}>
-                  {c.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+                    <Text style={[styles.pillLabel, category === c.key && styles.pillLabelActive]}>
+                      {c.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
 
-          <View style={styles.filterArea}>
-            <View style={[styles.filterDropdown, !isMobile && styles.filterDropdownWeb]}>
-              <Dropdown label="Month" value={monthFilter} options={monthOptions} onChange={handleMonthChange} />
+              {isWide && exportButtons}
             </View>
 
-            {!isPersonalView && (
-              <View style={[styles.filterDropdown, !isMobile && styles.filterDropdownWeb]}>
-                <Dropdown
-                  label="Member"
-                  value={memberIdFilter}
-                  options={memberOptions}
-                  onChange={setMemberIdFilter}
-                />
+            <View style={styles.activityFilters}>
+              <View style={[styles.activityFilterItem, isMobile && styles.activityFilterItemMobile]}>
+                <Dropdown label="Month" value={monthFilter} options={monthOptions} onChange={handleMonthChange} />
               </View>
-            )}
 
-            <TouchableOpacity
-              style={[
-                styles.filterBtn,
-                isMobile && styles.filterBtnIcon,
-                hasActiveFilters && styles.filterBtnActive,
-              ]}
-              onPress={openFilterModal}
-              activeOpacity={0.8}
-              accessibilityLabel={
-                appliedFilterCount > 0 ? `Filters, ${appliedFilterCount} applied` : "Filters"
-              }
-            >
-              <Text style={styles.filterBtnIconText}>🔍</Text>
-              {!isMobile && <Text style={styles.filterBtnText}>Filters</Text>}
-
-              {appliedFilterCount > 0 && (
-                <View style={styles.filterBadge}>
-                  <Text style={styles.filterBadgeText}>{appliedFilterCount}</Text>
+              {!isPersonalView && (
+                <View style={[styles.activityFilterItem, isMobile && styles.activityFilterItemMobile]}>
+                  <Dropdown
+                    label="Member"
+                    value={memberIdFilter}
+                    options={memberOptions}
+                    onChange={setMemberIdFilter}
+                  />
                 </View>
               )}
-            </TouchableOpacity>
 
-            {hasActiveFilters && (
+              {typeDropdown && (
+                <View style={[styles.activityFilterItem, isMobile && styles.activityFilterItemMobile]}>
+                  <Dropdown
+                    label={typeDropdown.label}
+                    value={typeDropdown.value}
+                    options={typeDropdown.options}
+                    onChange={typeDropdown.onChange}
+                  />
+                </View>
+              )}
+
+              <View style={[styles.activitySearch, isMobile && styles.activitySearchMobile]}>
+                <Text style={styles.filterBtnIconText}>🔍</Text>
+                <TextInput
+                  style={styles.activitySearchInput}
+                  value={searchTerm}
+                  onChangeText={setSearchTerm}
+                  placeholder="Search by member name..."
+                  placeholderTextColor={C.text3}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                />
+                {searchTerm !== "" && (
+                  <TouchableOpacity onPress={() => setSearchTerm("")} hitSlop={8}>
+                    <Text style={styles.activityClearSearch}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
               <TouchableOpacity
-                onPress={clearAllFilters}
-                style={[styles.clearBtn, isMobile && styles.clearBtnIcon]}
-                accessibilityLabel="Clear filters"
-              >
-                <Text style={styles.clearBtnText}>{isMobile ? "✕" : "✕ Clear"}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* NEW: inline Late Fee Source chips — only visible on the Late Fees tab */}
-          {category === "latefees" && (
-            <View style={styles.inlineFilterCard}>
-              <Text style={styles.inlineFilterLabel}>Late Fee Source</Text>
-              <StatusChipRow
-                scroll
-                value={lateFeeSourceFilter}
-                options={LATE_FEE_SOURCE_CHIPS}
-                onChange={(v) => setLateFeeSourceFilter(v as LateFeeSourceFilter)}
-              />
-            </View>
-          )}
-
-          {category === "earnings" && (
-            <View style={styles.inlineFilterCard}>
-              <Text style={styles.inlineFilterLabel}>Profit Source</Text>
-              <StatusChipRow
-                scroll
-                value={earningsSourceFilter}
-                options={EARNINGS_SOURCE_CHIPS}
-                onChange={(v) =>
-                  setEarningsSourceFilter(v as EarningsSourceFilter)
+                style={[
+                  styles.filterBtn,
+                  isMobile && styles.filterBtnIcon,
+                  hasActiveFilters && styles.filterBtnActive,
+                ]}
+                onPress={openFilterModal}
+                activeOpacity={0.8}
+                accessibilityLabel={
+                  appliedFilterCount > 0 ? `Filters, ${appliedFilterCount} applied` : "Filters"
                 }
-              />
+              >
+                <Text style={styles.filterBtnIconText}>⚙️</Text>
+                {!isMobile && <Text style={styles.filterBtnText}>Filters</Text>}
+
+                {appliedFilterCount > 0 && (
+                  <View style={styles.filterBadge}>
+                    <Text style={styles.filterBadgeText}>{appliedFilterCount}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              {hasActiveFilters && (
+                <TouchableOpacity
+                  onPress={clearAllFilters}
+                  style={[styles.clearBtn, isMobile && styles.clearBtnIcon]}
+                  accessibilityLabel="Clear filters"
+                >
+                  <Text style={styles.clearBtnText}>{isMobile ? "✕" : "✕ Clear"}</Text>
+                </TouchableOpacity>
+              )}
             </View>
-          )}
 
           {hasActiveFilters && (
             <View style={styles.activeFiltersRow}>
@@ -3284,6 +3607,17 @@ export default function ReportsScreen() {
                 </View>
               )}
 
+              {contributionTypeFilter !== "all" && (
+                <View style={styles.activeFilterChip}>
+                  <Text style={styles.activeFilterChipText} numberOfLines={1}>
+                    📈 Type: {contributionTypeOptions.find((o) => o.value === contributionTypeFilter)?.label}
+                  </Text>
+                  <TouchableOpacity onPress={() => setContributionTypeFilter("all")} hitSlop={8}>
+                    <Text style={styles.activeFilterChipClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
               {lateFeeSourceFilter !== "all" && (
                 <View style={styles.activeFilterChip}>
                   <Text style={styles.activeFilterChipText} numberOfLines={1}>
@@ -3308,32 +3642,25 @@ export default function ReportsScreen() {
             </View>
           )}
 
-          {category === "members" ? (
-            <MembersTab
-              members={view.rows}
-              contributions={contributions}
-              loans={loans}
-              wallet={wallet}
-              isGroupView={!isPersonalView}
-              showActivityLists={!isPersonalView}
-              currentMember={currentMember}
-              onExport={handleExport}
-              onExportContributions={handleExportMemberContributions}
-              exportRows={exportRows}
-            />
-          ) : (
-            <View style={[styles.reportColumns, isWide && styles.reportColumnsWide]}>
-              <View style={[styles.card, isWide && styles.reportColumn]}>
-                <Text style={styles.cardTitle}>
-                  {isNoActivityMemberView
-                    ? memberStatusFilter === "no_loans"
-                      ? "Members With No Loans"
-                      : "Members With No Contributions"
-                    : `${CATEGORIES.find((c) => c.key === category)?.label} Overview`}
-                </Text>
+            {category === "members" ? (
+              <MembersTab
+                members={view.rows}
+                contributions={contributions}
+                loans={loans}
+                wallet={wallet}
+                isGroupView={!isPersonalView}
+                showActivityLists={!isPersonalView}
+                currentMember={currentMember}
+                onExport={handleExport}
+                onExportContributions={handleExportMemberContributions}
+                exportRows={exportRows}
+              />
+            ) : (
+              <View>
+                <Text style={styles.cardTitle}>{reportTitle}</Text>
 
                 {category === "earnings" && !isNoActivityMemberView && (
-                  <View style={styles.earningsModeRow}>
+                  <View style={[styles.earningsModeRow, { marginTop: 10, marginBottom: 0 }]}>
                     {(
                       [
                         { label: "All", value: "all" },
@@ -3380,84 +3707,107 @@ export default function ReportsScreen() {
                   ))}
                 </View>
 
+                {exportRows.length === 0 ? (
+                  <Text style={styles.noData}>No records match your filters</Text>
+                ) : (
+                  <View onLayout={(e) => setTableWidth(e.nativeEvent.layout.width)}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                      <View style={{ width: Math.max(tableWidth, view.headers.length * 120) }}>
+                        <View style={styles.tableHeadRow}>
+                          {view.headers.map((h) => (
+                            <Text key={h} style={styles.tableHeadCell} numberOfLines={1}>
+                              {h}
+                            </Text>
+                          ))}
+                        </View>
+
+                        {pagedRows.map((row, i) => (
+                          <View key={`${currentPage}_${i}`} style={styles.tableRow}>
+                            {row.map((cell, j) => {
+                              const head = view.headers[j];
+
+                              if (head === "Status" || head === "Source") {
+                                return (
+                                  <View key={j} style={styles.tableCellBadgeWrap}>
+                                    <StatusBadge value={String(cell)} />
+                                  </View>
+                                );
+                              }
+
+                              return (
+                                <Text key={j} style={styles.tableCell} numberOfLines={2}>
+                                  {String(cell)}
+                                </Text>
+                              );
+                            })}
+                          </View>
+                        ))}
+                      </View>
+                    </ScrollView>
+
+                    <View style={styles.pagerRow}>
+                      <Text style={styles.pagerInfo}>
+                        Showing {pagedRows.length} of {exportRows.length} record
+                        {exportRows.length !== 1 ? "s" : ""}
+                      </Text>
+
+                      {totalPages > 1 && (
+                        <View style={styles.pagerBtns}>
+                          <TouchableOpacity
+                            style={[styles.pagerBtn, currentPage === 1 && styles.pagerBtnDisabled]}
+                            disabled={currentPage === 1}
+                            onPress={() => setPage(currentPage - 1)}
+                            accessibilityLabel="Previous page"
+                          >
+                            <Text style={styles.pagerBtnText}>‹</Text>
+                          </TouchableOpacity>
+
+                          {pageNumbers.map((n) => (
+                            <TouchableOpacity
+                              key={n}
+                              style={[styles.pagerBtn, n === currentPage && styles.pagerBtnActive]}
+                              onPress={() => setPage(n)}
+                            >
+                              <Text
+                                style={[
+                                  styles.pagerBtnText,
+                                  n === currentPage && styles.pagerBtnTextActive,
+                                ]}
+                              >
+                                {n}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+
+                          <TouchableOpacity
+                            style={[
+                              styles.pagerBtn,
+                              currentPage === totalPages && styles.pagerBtnDisabled,
+                            ]}
+                            disabled={currentPage === totalPages}
+                            onPress={() => setPage(currentPage + 1)}
+                            accessibilityLabel="Next page"
+                          >
+                            <Text style={styles.pagerBtnText}>›</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                )}
+
+                <View style={styles.activityDivider} />
+
+                <Text style={styles.chartCaption}>Monthly totals</Text>
+
                 {view.chart.labels.length > 0 ? (
                   <CategoryBarChart labels={view.chart.labels} values={view.chart.values} color={view.chartColor} />
                 ) : (
                   <Text style={styles.noData}>No data for this selection</Text>
                 )}
               </View>
-
-              <View style={[styles.card, isWide && styles.reportColumn]}>
-                <View style={styles.previewHeader}>
-                  <Text style={styles.cardTitle}>Data Preview</Text>
-
-                  <View style={styles.exportActions}>
-                    <TouchableOpacity
-                      style={styles.exportBtn}
-                      onPress={() => handleExport("excel")}
-                      disabled={!exportRows.length}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.exportBtnText}>📊 Excel</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.exportBtn}
-                      onPress={() => handleExport("pdf")}
-                      disabled={!exportRows.length}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.exportBtnText}>🖨 PDF</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                {exportRows.length === 0 ? (
-                  <Text style={styles.noData}>No records match your filters</Text>
-                ) : (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                    <View>
-                      <View style={styles.previewRow}>
-                        {view.headers.map((h) => (
-                          <Text key={h} style={styles.previewHeadCell}>
-                            {h}
-                          </Text>
-                        ))}
-                      </View>
-
-                      <ScrollView
-                        style={{ maxHeight: 420 }}
-                        nestedScrollEnabled
-                        showsVerticalScrollIndicator={true}
-                      >
-                        {exportRows.map((row, i) => (
-                          <View
-                            key={i}
-                            style={[
-                              styles.previewRow,
-                              i % 2 === 1 && { backgroundColor: C.elevated },
-                            ]}
-                          >
-                            {row.map((cell, j) => (
-                              <Text key={j} style={styles.previewCell} numberOfLines={2}>
-                                {String(cell)}
-                              </Text>
-                            ))}
-                          </View>
-                        ))}
-                      </ScrollView>
-                    </View>
-                  </ScrollView>
-                )}
-
-                {exportRows.length > 0 && (
-                  <Text style={styles.previewCount}>
-                    {exportRows.length} record{exportRows.length !== 1 ? "s" : ""}
-                  </Text>
-                )}
-              </View>
-            </View>
-          )}
+            )}
+          </View>
         </View>
       </ScrollView>
 
@@ -3500,12 +3850,7 @@ export default function ReportsScreen() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Confirm dialog — window.confirm on web, Alert.alert on native.
-// Module-scope helper so MemberDetail's Remove Waiver flow (and any
-// future yes/no prompt) has a single place to call. Before this was
-// extracted, the handler referenced a `showConfirm` symbol that was
-// never imported or defined — the app compiled fine because the name
-// only resolves at call time, then threw ReferenceError on tap.
+// Confirm dialog
 // ─────────────────────────────────────────────────────────────────────────
 function showConfirm(
   title: string,
@@ -3558,9 +3903,6 @@ function MembersTab({
     !isGroupView && members.length === 1 ? members[0] : null
   );
 
-  // Reconcile selectedMember against the latest `members` array — the
-  // previous version kept the old reference, so store updates (e.g.
-  // adding/removing a waiver) never refreshed the detail view.
   useEffect(() => {
     if (!isGroupView) {
       setSelectedMember(members.length === 1 ? members[0] : null);
@@ -4124,7 +4466,7 @@ const Divider = () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 const makeStyles = (C: Palette) => StyleSheet.create({
-  page: { paddingHorizontal: Layout.gutter, paddingVertical: 20 },
+  page: { paddingHorizontal: Layout.gutter, paddingVertical: 16 },
 
   contentContainer: { width: "100%" },
 
@@ -4153,7 +4495,7 @@ const makeStyles = (C: Palette) => StyleSheet.create({
     marginBottom: 6,
   },
 
-  kpiValue: { fontSize: 18, fontWeight: "800", letterSpacing: -0.3, marginBottom: 2 },
+  kpiValue: { fontSize: 16, fontWeight: "800", letterSpacing: -0.3, marginBottom: 2 },
 
   kpiSubtext: { fontSize: 10, color: C.text3 },
 
@@ -4161,14 +4503,14 @@ const makeStyles = (C: Palette) => StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 24,
+    gap: 22,
     flexWrap: "wrap",
     paddingVertical: 4,
   },
 
   donutVisual: {
-    width: 150,
-    height: 150,
+    width: 148,
+    height: 148,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -4181,35 +4523,33 @@ const makeStyles = (C: Palette) => StyleSheet.create({
     bottom: 0,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 22,
+    paddingHorizontal: 26,
   },
 
   donutCenterLabel: {
-    fontSize: 11,
+    fontSize: 10,
     color: C.text3,
     fontWeight: "600",
     marginBottom: 2,
   },
 
   donutCenterValue: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "800",
     color: C.text,
     textAlign: "center",
-    maxWidth: 96,
+    maxWidth: 90,
   },
 
   donutLegend: {
     flex: 1,
-    minWidth: 170,
-    maxWidth: 280,
+    minWidth: 220,
     gap: 9,
   },
 
   donutLegendRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: 8,
   },
 
@@ -4222,22 +4562,32 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   },
 
   donutLegendDot: {
-    width: 10,
-    height: 10,
+    width: 9,
+    height: 9,
     borderRadius: 3,
     flexShrink: 0,
   },
 
   donutLegendText: {
-    fontSize: 12,
+    fontSize: 11,
     color: C.text2,
     flex: 1,
   },
 
   donutLegendPct: {
-    fontSize: 12,
-    fontWeight: "700",
+    width: 36,
+    textAlign: "right",
+    fontSize: 11,
+    fontWeight: "800",
     color: C.text,
+    flexShrink: 0,
+  },
+
+  donutLegendAmount: {
+    width: 86,
+    textAlign: "right",
+    fontSize: 11,
+    color: C.text2,
     flexShrink: 0,
   },
 
@@ -4248,17 +4598,17 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   },
 
   donutEmptyCircle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    borderWidth: 18,
+    width: 108,
+    height: 108,
+    borderRadius: 54,
+    borderWidth: 16,
     borderColor: C.border,
     alignItems: "center",
     justifyContent: "center",
   },
 
   donutEmptyText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
     color: C.text2,
   },
@@ -4270,27 +4620,59 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   },
 
   gaugeContainer: {
-    width: 190,
-    height: 118,
     alignSelf: "center",
     alignItems: "center",
-    justifyContent: "flex-start",
-    marginTop: 2,
   },
 
   gaugeValueWrap: {
     position: "absolute",
     left: 0,
     right: 0,
-    bottom: 0,
+    bottom: 2,
     alignItems: "center",
   },
 
   gaugeValue: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "800",
     color: C.text,
   },
+
+  gaugeCaption: {
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 4,
+  },
+
+  collectionBody: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 20,
+    marginTop: 4,
+  },
+
+  collectionTable: {
+    flex: 1,
+    minWidth: 190,
+  },
+
+  collectionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderLight,
+  },
+
+  collectionRowLast: { borderBottomWidth: 0 },
+
+  collectionLabel: { fontSize: 11, color: C.text3 },
+
+  collectionValue: { fontSize: 12, fontWeight: "800", color: C.text, flexShrink: 1 },
 
   categoryChartWrap: {
     width: "100%",
@@ -4347,10 +4729,18 @@ const makeStyles = (C: Palette) => StyleSheet.create({
     marginTop: 6,
   },
 
+  cashflowHead: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 10,
+  },
+
   cashflowLegend: {
     flexDirection: "row",
-    gap: 14,
-    marginBottom: 10,
+    gap: 12,
+    paddingTop: 2,
   },
 
   cashflowLegendItem: {
@@ -4366,29 +4756,32 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   },
 
   cashflowLegendText: {
-    fontSize: 11,
+    fontSize: 10,
     color: C.text3,
   },
 
-  cashflowPlot: {
-    height: 150,
+  cashflowWrap: {
     flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    paddingBottom: 2,
-    borderBottomWidth: 1,
-    borderBottomColor: C.borderLight,
+    alignItems: "flex-start",
   },
 
-  cashflowMonth: {
-    width: 72,
-    height: 150,
-    alignItems: "center",
-    justifyContent: "flex-end",
+  cashflowAxisText: {
+    position: "absolute",
+    right: 6,
+    fontSize: 9,
+    color: C.text3,
+  },
+
+  cashflowGridLine: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: C.borderLight,
   },
 
   cashflowBars: {
-    height: 120,
+    height: 108,
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "center",
@@ -4396,98 +4789,340 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   },
 
   cashflowBar: {
-    width: 14,
-    borderRadius: 4,
+    borderTopLeftRadius: 3,
+    borderTopRightRadius: 3,
   },
 
   cashflowMonthLabel: {
-    width: 72,
+    height: 22,
     fontSize: 9,
     color: C.text3,
     textAlign: "center",
-    marginTop: 6,
+    paddingTop: 6,
   },
 
-  // ── Section cards use the themed surface so they separate from the page
-  //    background in both light and dark mode.
   chartCard: {
     backgroundColor: C.surface,
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: C.border,
-    padding: 16,
-    marginBottom: 16,
+    padding: 14,
+    marginBottom: 12,
   },
 
-  chartTitle: { fontSize: 14, fontWeight: "700", color: C.text, marginBottom: 4 },
+  chartTitle: { fontSize: 13, fontWeight: "700", color: C.text, marginBottom: 3 },
 
-  chartSubtitle: { fontSize: 12, color: C.text3, marginBottom: 12 },
+  chartSubtitle: { fontSize: 11, color: C.text3, marginBottom: 10 },
 
   card: {
     backgroundColor: C.surface,
-    borderRadius: 18,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: C.border,
-    padding: 20,
+    padding: 16,
   },
 
   cardWithBottomMargin: {
     backgroundColor: C.surface,
-    borderRadius: 18,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: C.border,
-    padding: 20,
-    marginBottom: 20,
+    padding: 16,
+    marginBottom: 18,
   },
 
   cardWithTopMargin: {
     backgroundColor: C.surface,
-    borderRadius: 18,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: C.border,
-    padding: 20,
-    marginTop: 10,
+    padding: 16,
+    marginTop: 8,
   },
 
-  cardTitle: { fontSize: 15, fontWeight: "800", color: C.text },
+  cardTitle: { fontSize: 14, fontWeight: "800", color: C.text },
 
-  // Financial Position: each cell is its own tile.
-  gfpRow: { flexDirection: "row", gap: 10, marginBottom: 10 },
+  // ── Overview header ─────────────────────────────────────────────────
+  ovHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 12,
+  },
 
-  gfpRowLast: { marginBottom: 0 },
+  ovHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1, minWidth: 0 },
 
-  gfpStat: {
-    flex: 1,
-    minWidth: 0,
+  ovHeaderIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  ovTitle: { fontSize: 18, fontWeight: "800", color: C.text, letterSpacing: -0.3 },
+
+  ovSubtitle: { fontSize: 11, color: C.text3, marginTop: 1 },
+
+  ovYearWrap: { width: 130 },
+
+  // ── Financial Position panel ─────────────────────────────────────────
+  // Outer panel that groups the KPI cells — matches the "Group Financial
+  // Position" section in the reference design.
+  positionPanel: {
+    backgroundColor: C.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: C.border,
     padding: 14,
-    gap: 3,
-    backgroundColor: C.bg,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: C.border,
+    marginBottom: 12,
   },
 
-  gfpStatValue: { fontSize: 16, fontWeight: "800", color: C.text, letterSpacing: -0.3 },
+  positionPanelTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: C.text,
+    marginBottom: 12,
+  },
 
-  gfpStatLabel: {
-    fontSize: 10,
+  positionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+
+  positionCell: {
+    flexBasis: "48%" as any,
+    flexGrow: 1,
+    minWidth: 0,
+  },
+
+  positionCard: {
+    backgroundColor: C.elevated,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.borderLight,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    gap: 3,
+  },
+
+  positionCardLabel: {
+    fontSize: 9.5,
     fontWeight: "700",
     color: C.text3,
     letterSpacing: 0.6,
     textTransform: "uppercase",
   },
 
-  categoryScroller: { marginTop: 4, marginBottom: 14 },
+  positionCardValue: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: C.text,
+    letterSpacing: -0.2,
+  },
 
-  categoryContent: { flexDirection: "row", gap: 10, paddingRight: 10 },
+  positionCardSub: {
+    fontSize: 10.5,
+    color: C.text3,
+  },
+
+  ovMidRow: { flexDirection: "column", gap: 12, marginBottom: 12 },
+
+  ovMidRowWide: { flexDirection: "row" },
+
+  ovMidCard: { marginBottom: 0, minWidth: 0 },
+
+  // ── Financial activity card ─────────────────────────────────────────
+  activityCard: {
+    backgroundColor: C.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 14,
+  },
+
+  activityHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    marginBottom: 10,
+  },
+
+  activityHeaderStack: { flexDirection: "column", alignItems: "stretch", gap: 10 },
+
+  activityTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+
+  activityTitleLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
+
+  activityIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    backgroundColor: C.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  activityTitle: { fontSize: 13, fontWeight: "800", color: C.text },
+
+  activityFilters: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 10,
+  },
+
+  activityFilterItem: { flexGrow: 1, flexBasis: 140, minWidth: 120, maxWidth: 220 },
+
+  activityFilterItemMobile: { flexBasis: "47%" as any, maxWidth: "100%" as any },
+
+  activitySearch: {
+    flex: 2,
+    flexBasis: 200,
+    minWidth: 160,
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    backgroundColor: C.surface,
+  },
+
+  activitySearchMobile: { flexBasis: "100%" as any },
+
+  activitySearchInput: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 12,
+    color: C.text,
+    paddingVertical: 0,
+    minHeight: 38,
+    ...(Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {}),
+  },
+
+  activityClearSearch: { fontSize: 11, color: C.text3 },
+
+  activityDivider: { height: 1, backgroundColor: C.borderLight, marginVertical: 14 },
+
+  chartCaption: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+
+  // ── Data table ──────────────────────────────────────────────────────
+  tableHeadRow: {
+    flexDirection: "row",
+    backgroundColor: C.elevated,
+    borderRadius: 8,
+  },
+
+  tableHeadCell: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 9.5,
+    fontWeight: "800",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+
+  tableRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderLight,
+  },
+
+  tableCell: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 11.5,
+    color: C.text2,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+  },
+
+  tableCellBadgeWrap: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    alignItems: "flex-start",
+  },
+
+  tableBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+
+  tableBadgeText: { fontSize: 10, fontWeight: "700" },
+
+  pagerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10,
+  },
+
+  pagerInfo: { fontSize: 11, color: C.text3 },
+
+  pagerBtns: { flexDirection: "row", gap: 5 },
+
+  pagerBtn: {
+    minWidth: 28,
+    height: 28,
+    paddingHorizontal: 5,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.surface,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  pagerBtnActive: { borderColor: C.primary, backgroundColor: C.pill },
+
+  pagerBtnDisabled: { opacity: 0.4 },
+
+  pagerBtnText: { fontSize: 11, fontWeight: "700", color: C.text2 },
+
+  pagerBtnTextActive: { color: C.primary },
+
+  categoryScroller: { marginTop: 4, marginBottom: 12 },
+
+  categoryContent: { flexDirection: "row", gap: 8, paddingRight: 10 },
 
   pill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderRadius: 12,
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 9,
     borderWidth: 1,
     borderColor: C.border,
     backgroundColor: C.surface,
@@ -4495,13 +5130,12 @@ const makeStyles = (C: Palette) => StyleSheet.create({
 
   pillActive: { backgroundColor: C.primary, borderColor: C.primary },
 
-  pillIcon: { fontSize: 15 },
+  pillIcon: { fontSize: 6 },
 
-  pillLabel: { fontSize: 14, fontWeight: "700", color: C.text2 },
+  pillLabel: { fontSize: 12, fontWeight: "700", color: C.text2 },
 
   pillLabelActive: { color: "#fff" },
 
-  // Month · Member · Filters · Clear all sit on ONE row (mobile + web).
   filterArea: {
     flexDirection: "row",
     alignItems: "center",
@@ -4510,55 +5144,49 @@ const makeStyles = (C: Palette) => StyleSheet.create({
     marginBottom: 12,
   },
 
-  // Dropdowns share the available width…
   filterDropdown: { flex: 1, minWidth: 0 },
 
-  // …but stop stretching on wide screens.
   filterDropdownWeb: { maxWidth: 280 },
 
   filterBtn: {
-    minHeight: 46,
+    minHeight: 40,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: C.elevated,
-    paddingHorizontal: 14,
-    borderRadius: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: C.border,
-    gap: 6,
+    gap: 5,
   },
 
-  // Mobile: icon only.
-  filterBtnIcon: { width: 46, paddingHorizontal: 0 },
+  filterBtnIcon: { width: 40, paddingHorizontal: 0 },
 
-  // Any filter applied → teal border.
   filterBtnActive: { borderColor: C.teal },
 
-  filterBtnIconText: { fontSize: 14 },
+  filterBtnIconText: { fontSize: 12 },
 
-  filterBtnText: { fontSize: 13, fontWeight: "600", color: C.text2 },
+  filterBtnText: { fontSize: 12, fontWeight: "600", color: C.text2 },
 
   filterBadge: {
-    minWidth: 18,
-    height: 18,
-    paddingHorizontal: 5,
-    borderRadius: 9,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
     backgroundColor: C.teal,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  filterBadgeText: { fontSize: 10, fontWeight: "800", color: "#fff" },
+  filterBadgeText: { fontSize: 9, fontWeight: "800", color: "#fff" },
 
-  clearBtn: { minHeight: 46, justifyContent: "center", paddingHorizontal: 6 },
+  clearBtn: { minHeight: 40, justifyContent: "center", paddingHorizontal: 6 },
 
-  // Mobile: small ✕ only.
-  clearBtnIcon: { width: 28, alignItems: "center", paddingHorizontal: 0 },
+  clearBtnIcon: { width: 26, alignItems: "center", paddingHorizontal: 0 },
 
-  clearBtnText: { fontSize: 12, fontWeight: "700", color: C.error },
+  clearBtnText: { fontSize: 11, fontWeight: "700", color: C.error },
 
-  // NEW: inline card that wraps the late-fee source chips
   inlineFilterCard: {
     backgroundColor: C.goldBg,
     borderRadius: 12,
@@ -4580,19 +5208,19 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   searchIndicator: { fontSize: 12, color: C.primary, marginBottom: 16 },
 
   dropdownTrigger: {
-    minHeight: 46,
+    minHeight: 40,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: C.surface,
     borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
 
   dropdownLabel: {
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: "700",
     color: C.text3,
     textTransform: "uppercase",
@@ -4600,9 +5228,9 @@ const makeStyles = (C: Palette) => StyleSheet.create({
     marginBottom: 1,
   },
 
-  dropdownValue: { fontSize: 13, fontWeight: "600", color: C.text },
+  dropdownValue: { fontSize: 12, fontWeight: "600", color: C.text },
 
-  dropdownChevron: { fontSize: 9, color: C.text3, marginLeft: 8 },
+  dropdownChevron: { fontSize: 8, color: C.text3, marginLeft: 6 },
 
   dropdownOverlay: {
     flex: 1,
@@ -4614,9 +5242,9 @@ const makeStyles = (C: Palette) => StyleSheet.create({
 
   dropdownModal: {
     width: "100%",
-    maxWidth: 440,
+    maxWidth: 420,
     backgroundColor: C.surface,
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: C.border,
     overflow: "hidden",
@@ -4630,33 +5258,33 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   dropdownModalHeader: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 18,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: C.borderLight,
   },
 
-  dropdownModalTitle: { fontSize: 16, fontWeight: "800", color: C.text },
+  dropdownModalTitle: { fontSize: 14, fontWeight: "800", color: C.text },
 
-  dropdownModalSubtitle: { fontSize: 11, color: C.text3, marginTop: 2 },
+  dropdownModalSubtitle: { fontSize: 10, color: C.text3, marginTop: 1 },
 
   dropdownClose: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: C.elevated,
   },
 
-  dropdownCloseText: { fontSize: 13, color: C.text3 },
+  dropdownCloseText: { fontSize: 12, color: C.text3 },
 
   dropdownItem: {
     flexDirection: "row",
     alignItems: "center",
-    minHeight: 52,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+    minHeight: 44,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: C.borderLight,
   },
@@ -4664,21 +5292,21 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   dropdownItemActive: { backgroundColor: C.pill },
 
   dropdownRadio: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     borderWidth: 2,
     borderColor: C.border,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 12,
+    marginRight: 10,
   },
 
   dropdownRadioActive: { borderColor: C.primary },
 
-  dropdownRadioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: C.primary },
+  dropdownRadioDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: C.primary },
 
-  dropdownItemText: { flex: 1, fontSize: 14, color: C.text2 },
+  dropdownItemText: { flex: 1, fontSize: 13, color: C.text2 },
 
   dropdownItemTextActive: { color: C.primary, fontWeight: "700" },
 
@@ -4688,47 +5316,47 @@ const makeStyles = (C: Palette) => StyleSheet.create({
 
   reportColumn: { flex: 1, minWidth: 0 },
 
-  kpiMiniRow: { flexDirection: "row", flexWrap: "wrap", gap: 20, marginTop: 10, marginBottom: 16 },
+  kpiMiniRow: { flexDirection: "row", flexWrap: "wrap", gap: 16, marginTop: 8, marginBottom: 12 },
 
-  kpiMini: { minWidth: 100, maxWidth: 180 },
+  kpiMini: { minWidth: 90, maxWidth: 170 },
 
   kpiMiniLabel: {
-    fontSize: 10,
+    fontSize: 9,
     color: C.text3,
     fontWeight: "700",
     textTransform: "uppercase",
-    marginBottom: 3,
+    marginBottom: 2,
   },
 
-  kpiMiniValue: { fontSize: 18, fontWeight: "800", color: C.text },
+  kpiMiniValue: { fontSize: 15, fontWeight: "800", color: C.text },
 
-  noData: { color: C.text3, fontSize: 13, paddingVertical: 30, textAlign: "center" },
-  emptyInline: { color: C.text3, fontSize: 12, paddingVertical: 16, textAlign: "center" },
+  noData: { color: C.text3, fontSize: 12, paddingVertical: 24, textAlign: "center" },
+  emptyInline: { color: C.text3, fontSize: 11, paddingVertical: 14, textAlign: "center" },
 
   previewHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     gap: 12,
-    marginBottom: 14,
+    marginBottom: 12,
   },
 
-  exportActions: { flexDirection: "row", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" },
+  exportActions: { flexDirection: "row", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" },
 
   exportBtn: {
-    minHeight: 38,
+    minHeight: 32,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: C.border,
     backgroundColor: C.elevated,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
 
-  exportBtnText: { fontSize: 12, fontWeight: "700", color: C.text2 },
+  exportBtnText: { fontSize: 11, fontWeight: "700", color: C.text2 },
 
   previewRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: C.borderLight },
 
@@ -4753,37 +5381,37 @@ const makeStyles = (C: Palette) => StyleSheet.create({
 
   previewCount: { fontSize: 11, color: C.text3, marginTop: 10 },
 
-  resultsCount: { fontSize: 12, color: C.text3 },
+  resultsCount: { fontSize: 11, color: C.text3 },
 
-  resultsSubtext: { fontSize: 11, color: C.text3, marginTop: 3 },
+  resultsSubtext: { fontSize: 10, color: C.text3, marginTop: 2 },
 
   sectionHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    marginBottom: 10,
+    marginBottom: 8,
   },
 
   sectionSubtext: {
-    fontSize: 11,
+    fontSize: 10,
     color: C.text3,
-    marginTop: 3,
+    marginTop: 2,
   },
 
   contributionRow: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 14,
-    gap: 12,
+    padding: 12,
+    gap: 10,
     borderBottomWidth: 1,
     borderBottomColor: C.borderLight,
   },
 
   contributionIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 9,
     backgroundColor: C.pill,
     alignItems: "center",
     justifyContent: "center",
@@ -4795,104 +5423,104 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   },
 
   contributionType: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
     color: C.text,
   },
 
   contributionDate: {
-    fontSize: 11,
-    color: C.text3,
-    marginTop: 3,
-  },
-
-  contributionDescription: {
-    fontSize: 11,
+    fontSize: 10,
     color: C.text3,
     marginTop: 2,
   },
 
+  contributionDescription: {
+    fontSize: 10,
+    color: C.text3,
+    marginTop: 1,
+  },
+
   contributionAmount: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "800",
     color: C.success,
   },
 
-  memberRow: { flexDirection: "row", alignItems: "center", padding: 14, gap: 12 },
+  memberRow: { flexDirection: "row", alignItems: "center", padding: 12, gap: 10 },
 
   memberAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
+    width: 38,
+    height: 38,
+    borderRadius: 10,
     backgroundColor: C.pill,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  memberAvatarText: { fontSize: 14, fontWeight: "800", color: C.primary },
+  memberAvatarText: { fontSize: 12, fontWeight: "800", color: C.primary },
 
   memberInfo: { flex: 1, minWidth: 0 },
 
-  memberName: { fontSize: 14, fontWeight: "700", color: C.text },
+  memberName: { fontSize: 13, fontWeight: "700", color: C.text },
 
-  memberContact: { fontSize: 11, color: C.text3, marginTop: 2 },
+  memberContact: { fontSize: 10, color: C.text3, marginTop: 1 },
 
-  memberStats: { alignItems: "flex-end", flexShrink: 0, maxWidth: 130 },
+  memberStats: { alignItems: "flex-end", flexShrink: 0, maxWidth: 120 },
 
-  memberAmount: { fontSize: 13, fontWeight: "700", color: C.primary },
+  memberAmount: { fontSize: 12, fontWeight: "700", color: C.primary },
 
-  memberRole: { fontSize: 10, color: C.text3, textTransform: "capitalize", marginTop: 2 },
+  memberRole: { fontSize: 9.5, color: C.text3, textTransform: "capitalize", marginTop: 1 },
 
-  chevron: { fontSize: 20, color: C.text3, flexShrink: 0 },
+  chevron: { fontSize: 18, color: C.text3, flexShrink: 0 },
 
-  backButton: { marginBottom: 16, alignSelf: "flex-start" },
+  backButton: { marginBottom: 14, alignSelf: "flex-start" },
 
-  backButtonText: { color: C.primary, fontSize: 14, fontWeight: "600" },
+  backButtonText: { color: C.primary, fontSize: 13, fontWeight: "600" },
 
   memberDetailCard: {
     backgroundColor: C.surface,
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: C.border,
-    padding: 16,
-    marginBottom: 16,
+    padding: 14,
+    marginBottom: 14,
   },
 
-  memberDetailHeader: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
+  memberDetailHeader: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
 
-  memberDetailName: { fontSize: 20, fontWeight: "800", color: C.text, marginBottom: 4 },
+  memberDetailName: { fontSize: 18, fontWeight: "800", color: C.text, marginBottom: 3 },
 
-  memberDetailRole: { fontSize: 13, color: C.text3 },
+  memberDetailRole: { fontSize: 12, color: C.text3 },
 
-  memberContactBlock: { alignItems: "center", gap: 4 },
+  memberContactBlock: { alignItems: "center", gap: 3 },
 
-  memberDetailText: { fontSize: 12, color: C.text2 },
+  memberDetailText: { fontSize: 11, color: C.text2 },
 
-  memberKpiGrid: { flexDirection: "row", flexWrap: "wrap", gap: 20, marginBottom: 18 },
+  memberKpiGrid: { flexDirection: "row", flexWrap: "wrap", gap: 16, marginBottom: 16 },
 
-  memberKpi: { flex: 1, minWidth: 120 },
+  memberKpi: { flex: 1, minWidth: 110 },
 
   memberKpiLabel: {
-    fontSize: 10,
+    fontSize: 9,
     color: C.text3,
     fontWeight: "700",
     textTransform: "uppercase",
-    marginBottom: 3,
+    marginBottom: 2,
   },
 
-  memberKpiValue: { fontSize: 18, fontWeight: "800" },
+  memberKpiValue: { fontSize: 16, fontWeight: "800" },
 
-  transactionRow: { flexDirection: "row", alignItems: "center", padding: 14, gap: 12 },
+  transactionRow: { flexDirection: "row", alignItems: "center", padding: 12, gap: 10 },
 
-  txDot: { width: 36, height: 36, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  txDot: { width: 32, height: 32, borderRadius: 9, alignItems: "center", justifyContent: "center" },
 
   transactionInfo: { flex: 1, minWidth: 0 },
 
-  transactionType: { fontSize: 13, fontWeight: "600", color: C.text },
+  transactionType: { fontSize: 12, fontWeight: "600", color: C.text },
 
-  transactionDate: { fontSize: 11, color: C.text3, marginTop: 2 },
+  transactionDate: { fontSize: 10, color: C.text3, marginTop: 1 },
 
-  transactionAmount: { fontSize: 13, fontWeight: "700", marginLeft: 8, flexShrink: 0 },
+  transactionAmount: { fontSize: 12, fontWeight: "700", marginLeft: 8, flexShrink: 0 },
 
   modalIntro: {
     fontSize: 12,
@@ -4902,14 +5530,14 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   },
 
   filterSection: {
-    marginBottom: 22,
-    paddingBottom: 18,
+    marginBottom: 20,
+    paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: C.borderLight,
   },
 
   filterSectionTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "800",
     color: C.text,
     marginBottom: 4,
@@ -4924,13 +5552,12 @@ const makeStyles = (C: Palette) => StyleSheet.create({
 
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
 
-  // Inline source chips: single line, scrolls sideways.
   chipRowScroll: { flexDirection: "row", flexWrap: "nowrap", gap: 8, paddingRight: 4 },
 
   statusChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: C.border,
     backgroundColor: C.surface,
@@ -4938,7 +5565,7 @@ const makeStyles = (C: Palette) => StyleSheet.create({
 
   statusChipActive: { backgroundColor: C.primary, borderColor: C.primary },
 
-  statusChipText: { fontSize: 12, fontWeight: "600", color: C.text2 },
+  statusChipText: { fontSize: 11, fontWeight: "600", color: C.text2 },
 
   statusChipTextActive: { color: "#fff" },
 
@@ -4980,45 +5607,45 @@ const makeStyles = (C: Palette) => StyleSheet.create({
 
   conditionRadioDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: C.primary },
 
-  conditionCardTitle: { fontSize: 13, fontWeight: "700", color: C.text },
+  conditionCardTitle: { fontSize: 12, fontWeight: "700", color: C.text },
 
-  conditionCardDesc: { fontSize: 11, color: C.text3, marginTop: 2, lineHeight: 15 },
+  conditionCardDesc: { fontSize: 10.5, color: C.text3, marginTop: 2, lineHeight: 14 },
 
   activeFiltersRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 16,
+    gap: 6,
+    marginBottom: 12,
   },
 
   activeFilterChip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 16,
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 14,
     backgroundColor: C.pill,
     borderWidth: 1,
     borderColor: C.border,
     maxWidth: "100%",
   },
 
-  activeFilterChipText: { fontSize: 11, fontWeight: "600", color: C.primary, flexShrink: 1 },
+  activeFilterChipText: { fontSize: 10, fontWeight: "600", color: C.primary, flexShrink: 1 },
 
-  activeFilterChipClose: { fontSize: 11, fontWeight: "800", color: C.primary, opacity: 0.7 },
+  activeFilterChipClose: { fontSize: 10, fontWeight: "800", color: C.primary, opacity: 0.7 },
 
   earningsModeRow: {
     flexDirection: "row",
     gap: 8,
-    marginBottom: 14,
+    marginBottom: 12,
   },
 
   earningsModeBtn: {
     flex: 1,
     alignItems: "center",
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 8,
+    borderRadius: 9,
     borderWidth: 1,
     borderColor: C.border,
     backgroundColor: C.surface,
@@ -5026,17 +5653,17 @@ const makeStyles = (C: Palette) => StyleSheet.create({
 
   earningsModeBtnActive: { backgroundColor: C.primary, borderColor: C.primary },
 
-  earningsModeBtnText: { fontSize: 12, fontWeight: "700", color: C.text2 },
+  earningsModeBtnText: { fontSize: 11, fontWeight: "700", color: C.text2 },
 
   earningsModeBtnTextActive: { color: "#fff" },
 
-  modalSectionLabel: { fontSize: 13, fontWeight: "700", color: C.text, marginTop: 12, marginBottom: 8 },
+  modalSectionLabel: { fontSize: 12, fontWeight: "700", color: C.text, marginTop: 12, marginBottom: 8 },
 
   modalRow: { flexDirection: "row", gap: 10, marginBottom: 10 },
 
   modalHalf: { flex: 1, minWidth: 0 },
 
-  modalButtonRow: { flexDirection: "row", gap: 10, marginTop: 20 },
+  modalButtonRow: { flexDirection: "row", gap: 10, marginTop: 18 },
 
   modalClearBtn: {
     flex: 1,
@@ -5044,40 +5671,40 @@ const makeStyles = (C: Palette) => StyleSheet.create({
     borderWidth: 1,
     borderColor: C.border,
     borderRadius: 10,
-    paddingVertical: 12,
+    paddingVertical: 11,
     alignItems: "center",
   },
 
-  modalClearBtnText: { fontSize: 14, fontWeight: "600", color: C.text2 },
+  modalClearBtnText: { fontSize: 13, fontWeight: "600", color: C.text2 },
 
   modalApplyBtn: {
     flex: 2,
     backgroundColor: C.primary,
     borderRadius: 10,
-    paddingVertical: 12,
+    paddingVertical: 11,
     alignItems: "center",
   },
 
-  modalApplyBtnText: { fontSize: 14, fontWeight: "700", color: "#fff" },
+  modalApplyBtnText: { fontSize: 13, fontWeight: "700", color: "#fff" },
 
   // ── Waiver section ────────────────────────────────────────────────────
-  waiverSection: { marginBottom: 20 },
-  waiverHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  waiverSection: { marginBottom: 18 },
+  waiverHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   waiverTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  waiverCountBadge: { minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 11, backgroundColor: C.pill, alignItems: "center", justifyContent: "center" },
-  waiverCountText: { fontSize: 11, fontWeight: "800", color: C.primary },
-  waiverGroupLabel: { fontSize: 10, fontWeight: "800", color: C.text3, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 },
-  waiverCard: { backgroundColor: C.goldBg, borderRadius: 12, borderWidth: 1, borderColor: C.gold, padding: 12, marginBottom: 8 },
-  waiverCardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 8, gap: 8 },
-  waiverScopeBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
-  waiverScopeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.4 },
-  waiverPeriod: { fontSize: 13, fontWeight: "700", color: C.text, marginBottom: 4 },
-  waiverReason: { fontSize: 12, color: C.text2, lineHeight: 17, marginBottom: 6 },
-  waiverMeta: { fontSize: 10, color: C.text3, marginBottom: 10 },
-  waiverRemoveBtn: { alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, borderWidth: 1, borderColor: C.error, backgroundColor: C.redBg },
-  waiverRemoveBtnText: { fontSize: 11, fontWeight: "700", color: C.redText },
-  waiverEmpty: { fontSize: 12, color: C.text3, textAlign: "center", paddingVertical: 16 },
-  memberWaiverPill: { marginTop: 4, alignSelf: "flex-start", paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, backgroundColor: C.goldBg, borderWidth: 1, borderColor: C.gold },
+  waiverCountBadge: { minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, backgroundColor: C.pill, alignItems: "center", justifyContent: "center" },
+  waiverCountText: { fontSize: 10, fontWeight: "800", color: C.primary },
+  waiverGroupLabel: { fontSize: 9, fontWeight: "800", color: C.text3, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 },
+  waiverCard: { backgroundColor: C.goldBg, borderRadius: 10, borderWidth: 1, borderColor: C.gold, padding: 10, marginBottom: 8 },
+  waiverCardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 6, gap: 8 },
+  waiverScopeBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, borderWidth: 1 },
+  waiverScopeText: { fontSize: 9, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.4 },
+  waiverPeriod: { fontSize: 12, fontWeight: "700", color: C.text, marginBottom: 3 },
+  waiverReason: { fontSize: 11, color: C.text2, lineHeight: 15, marginBottom: 5 },
+  waiverMeta: { fontSize: 9.5, color: C.text3, marginBottom: 8 },
+  waiverRemoveBtn: { alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 7, borderWidth: 1, borderColor: C.error, backgroundColor: C.redBg },
+  waiverRemoveBtnText: { fontSize: 10, fontWeight: "700", color: C.redText },
+  waiverEmpty: { fontSize: 11, color: C.text3, textAlign: "center", paddingVertical: 14 },
+  memberWaiverPill: { marginTop: 3, alignSelf: "flex-start", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5, backgroundColor: C.goldBg, borderWidth: 1, borderColor: C.gold },
   memberWaiverPillText: { fontSize: 9, fontWeight: "800", color: C.goldText, letterSpacing: 0.2 },
 });
 

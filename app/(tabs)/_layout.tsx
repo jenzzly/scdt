@@ -5,25 +5,6 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
   useWindowDimensions, ScrollView, Animated,
 } from "react-native";
-
-// Dynamic import to avoid web hydration error with lucide-react-native
-let Icons: any;
-try {
-  Icons = require("lucide-react-native");
-} catch (e) {
-  Icons = {
-    Home: null, CreditCard: null, Wallet: null, BarChart3: null,
-    Settings: null, Calendar: null, LogOut: null, DollarSign: null,
-    TrendingUp: null, ChevronLeft: null, ChevronRight: null,
-    Users: null, Bell: null, RefreshCw: null,
-  };
-}
-
-const {
-  Home, CreditCard, Wallet, BarChart3, Settings, Calendar, LogOut,
-  DollarSign, TrendingUp, ChevronLeft, ChevronRight, Users, Bell,
-} = Icons || {};
-
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
@@ -42,6 +23,23 @@ import { getWebNavForRole } from "../../lib/auth/permissions";
 import { ViewSwitch } from "../../components/ui/ViewSwitch";
 import { ThemeSwitch } from "../../components/ui/ThemeSwitch";
 import { useTheme } from "../../hooks/useTheme";
+// Dynamic import to avoid web hydration error with lucide-react-native
+let Icons: any;
+try {
+  Icons = require("lucide-react-native");
+} catch (e) {
+  Icons = {
+    Home: null, CreditCard: null, Wallet: null, BarChart3: null,
+    Settings: null, Calendar: null, LogOut: null, DollarSign: null,
+    TrendingUp: null, ChevronLeft: null, ChevronRight: null,
+    Users: null, Bell: null, RefreshCw: null,
+  };
+}
+
+const {
+  Home, CreditCard, Wallet, BarChart3, Settings, Calendar, LogOut,
+  DollarSign, TrendingUp, ChevronLeft, ChevronRight, Users, Bell,
+} = Icons || {};
 
 // ─────────────────────────────────────────────────────────────────────────
 // Route registry
@@ -313,7 +311,7 @@ function DesktopTopHeader({
       <View style={dh.left}>
         <View style={dh.titleRow}>
           <Text style={dh.title}>{title}</Text>
-          {groupName && <Text style={dh.groupTag}>· {groupName}</Text>}
+          {/*{groupName && <Text style={dh.groupTag}>· {groupName}</Text>}*/}
         </View>
         <Text style={dh.date}>{today}</Text>
       </View>
