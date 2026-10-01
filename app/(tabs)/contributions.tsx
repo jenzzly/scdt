@@ -1706,8 +1706,8 @@ function LateFeeList({
 
                   <Text style={st.feeMetaLine} numberOfLines={1}>
                     {subline ? `${subline} · ` : ""}
-                    {item.daysLate ?? 0}d late · {item.daysNewlyOwed ?? 0}{" "}
-                    newly · {group?.contributionLateFeeRatePct ?? 0}%
+                    {item.daysLate ?? 0}d Total · {item.daysNewlyOwed ?? 0}{" "}
+                    Late · {group?.contributionLateFeeRatePct ?? 0}%
                   </Text>
                 </View>
 

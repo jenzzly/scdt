@@ -70,13 +70,6 @@ import type { ContributionType } from "../../types";
 
 const TYPE_LABELS: Record<string, string> = {
   regular: "Regular Contribution",
-  loan_repayment: "Loan Repayment",
-  loan_interest: "Loan Interest",
-  late_fee: "Late Fee",
-  investment_funding: "Investment Funding",
-  investment_return: "Investment Return",
-  penalty: "Penalty",
-  other: "Other",
 };
 
 const TYPE_OPTIONS = Object.entries(TYPE_LABELS).map(([value, label]) => ({

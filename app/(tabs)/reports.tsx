@@ -2549,7 +2549,7 @@ export default function ReportsScreen() {
         toRow: (f: any) => {
           let reason: string | number = "—";
           if (f.type === "loan" || f.type === "contribution") {
-            reason = f.daysLate ?? 0;
+            reason = f.daysNewlyOwed ?? 0;
           } else if (f.type === "meeting") {
             if (f.attendanceStatus === "late" && f.lateMinutes) {
               reason = `Late ${f.lateMinutes} min`;
