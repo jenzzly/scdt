@@ -139,7 +139,11 @@ export default function InvestmentsScreen() {
   const handleSort = (v: string) => { setSort(v); setPage(1); };
 
   const totalInvested = useMemo(() => visibleInvestments.reduce((s: number, i: Investment) => s + i.investmentAmount, 0), [visibleInvestments]);
-  const totalReturns  = useMemo(() => visibleInvestments.reduce((s: number, i: Investment) => s + (i.actualReturn || 0), 0), [visibleInvestments]);
+  // Sums returnAmount (the currency figure), NOT actualReturn
+  // (an ROI percentage). Formatting the sum of ROIs as currency
+  // produced nonsense like "RWF 47.00" for four investments at
+  // ~12% each.
+  const totalReturns  = useMemo(() => visibleInvestments.reduce((s: number, i: Investment) => s + (i.returnAmount || 0), 0), [visibleInvestments]);
 
   const openDetail = (inv: Investment) => { setSelected(inv); setShowDetail(true); };
 

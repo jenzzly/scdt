@@ -300,13 +300,27 @@ export default function ContributionsScreen() {
       ? perMemberTarget * activeMembers.length
       : perMemberTarget;
 
+    // Bound collected by the SAME window the target covers.
+    // Previously this was an all-time sum against a period target,
+    // so a member in the group for a year read ~1200% on the KPI
+    // while the goal-progress card right below correctly capped
+    // at 100%.
+    const periodStart = goalPeriod ? new Date(goalPeriod.periodStart) : null;
+    const periodEnd = goalPeriod ? new Date(goalPeriod.periodEnd) : null;
+
     const totalCollected = allContributions
-      .filter(
-        (c) =>
-          c.status === "approved" &&
-          c.contributionType === "regular" &&
-          (isGroupView || c.memberId === currentMember?.id)
-      )
+      .filter((c) => {
+        if (c.status !== "approved") return false;
+        if (c.contributionType !== "regular") return false;
+        if (!isGroupView && c.memberId !== currentMember?.id) return false;
+        if (periodStart && periodEnd) {
+          const cDate = new Date(c.date);
+          if (cDate < periodStart || cDate > periodEnd) return false;
+        }
+        // Awaiting approval is not the same as collected — the
+        // contribution row's own status gate handles that.
+        return true;
+      })
       .reduce((sum, c) => sum + (c.amount || 0), 0);
 
     const collectionRate =
@@ -665,6 +679,73 @@ export default function ContributionsScreen() {
   };
 
   const handleExport = async () => {
+    // The Late Fee tab has its own export path — its dataset is
+    // late fees, not contributions, and it sets
+    // statusFilter = "late_fee" (a contribution TYPE, not a
+    // status), so `filtered` on that tab is always []. Previously
+    // the export used `filtered` unconditionally and produced an
+    // empty file the moment you switched to that tab.
+    if (statusFilter === "late_fee") {
+      if (!filteredLateFees.length) {
+        show("No late fees to export");
+        return;
+      }
+
+      const lateFeeHeaders = [
+        "Member",
+        "Period",
+        "Due Date",
+        "Days Late",
+        "Days Newly Owed",
+        "Amount Due",
+        "Fee Amount",
+        "Status",
+        "ID",
+      ];
+
+      const lateFeeRows = filteredLateFees.map((f: any) => [
+        f.memberName ?? getMemberName(f.memberId),
+        f.periodLabel,
+        String(f.dueDate ?? f.periodStart ?? "").slice(0, 10),
+        f.daysLate ?? 0,
+        f.daysNewlyOwed ?? 0,
+        f.amountDue ?? 0,
+        f.feeAmount ?? 0,
+        f.applied ? "Applied" : "Accruing",
+        f.feeTxId ?? "",
+      ]);
+
+      const lateFeeFileName =
+        dateRangeStart || dateRangeEnd
+          ? `Late_Fees_${dateRangeStart || "start"}_to_${
+              dateRangeEnd || "end"
+            }`
+          : "Late_Fees";
+
+      try {
+        await exportXlsx(lateFeeFileName, lateFeeHeaders, lateFeeRows);
+        show("Late fees exported as Excel");
+      } catch (e: any) {
+        show(e?.message || "Failed to export", "error");
+      }
+      return;
+    }
+
+    if (!filtered.length) {
+      show("No contributions to export");
+      return;
+    }
+
+    // Column 6 (ID) is what makes an import a round-trip. On
+    // re-import, an existing contribution with the same ID is
+    // UPDATED in place (and its linked wallet tx synced); a row
+    // whose ID isn't found is treated as new and created with
+    // that same ID. Column order matches the parser in
+    // stores/slices/contributionSlice.ts.
+    //
+    // The Date column exports as ISO (YYYY-MM-DD) so the round
+    // trip is lossless — fmtDate output ("30 Sept 2026") is
+    // human-readable but can be ambiguous when re-parsed.
     const headers = [
       "Date",
       "Member",
@@ -672,15 +753,17 @@ export default function ContributionsScreen() {
       "Amount",
       "Status",
       "Description",
+      "ID",
     ];
 
     const rows = filtered.map((c) => [
-      fmtDate(c.date),
+      c.date.slice(0, 10),
       getMemberName(c.memberId),
       typeLabel(c.contributionType),
       c.amount,
       c.status,
       c.description ?? "",
+      c.id,
     ]);
 
     const fileName =
@@ -724,6 +807,8 @@ export default function ContributionsScreen() {
       }
 
       const result = await bulkImport(rows, activeGroupId);
+      const created = result?.created ?? 0;
+      const updated = result?.updated ?? 0;
       const count = result?.count ?? 0;
       const skipped = result?.skipped ?? 0;
       const firstError =
@@ -738,12 +823,12 @@ export default function ContributionsScreen() {
             : "Nothing imported — check the file format",
           "error"
         );
-      } else if (skipped > 0) {
-        show(
-          `Imported ${count} contribution${count !== 1 ? "s" : ""}, ${skipped} skipped`
-        );
       } else {
-        show(`Imported ${count} contribution${count !== 1 ? "s" : ""}`);
+        const parts: string[] = [];
+        if (created > 0) parts.push(`${created} new`);
+        if (updated > 0) parts.push(`${updated} updated`);
+        const tail = skipped > 0 ? `, ${skipped} skipped` : "";
+        show(`Imported ${parts.join(" · ")}${tail}`);
       }
 
       recalcTotals();

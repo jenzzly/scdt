@@ -228,7 +228,13 @@ export interface StoreState {
   bulkImportContributions: (
     rows: any[][],
     groupId: ID,
-  ) => Promise<{ count: number; skipped: number; errors: string[] }>;
+  ) => Promise<{
+    count: number;
+    created: number;
+    updated: number;
+    skipped: number;
+    errors: string[];
+  }>;
   
   approveContribution: (contributionId: ID) => Promise<void>;
   rejectContribution: (contributionId: ID, reason: string) => Promise<void>;

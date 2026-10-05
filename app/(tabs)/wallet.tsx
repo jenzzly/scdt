@@ -286,10 +286,14 @@ export default function WalletScreen() {
         <View style={[wt.block]}>
           <View style={wt.kpiGrid}>
             <KpiCard
-              label="Balance"
+              label={canSeeAll ? "Balance" : "My Contributions"}
               value={fmtCurrency(displayBalance)}
               icon="💰"
-              subtext={canSeeAll ? "Group vault balance" : "My savings"}
+              subtext={
+                canSeeAll
+                  ? "Group vault balance"
+                  : "Approved regular savings"
+              }
               accentColor={C.primary}
               onPress={() => {}}
             />

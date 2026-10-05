@@ -360,6 +360,15 @@ function LoanDetailModal({
   const isRB = loan.interestMethod === "reducing_balance";
   const todayAccrued = computeTodayAccrued(loan);
 
+  // Read the interest period from the loan's own snapshot,
+  // not the group's current settings — the group may have
+  // been reconfigured after this loan was submitted, and
+  // the loan keeps its original rate. Legacy loans without
+  // the field default to "per month", which was the only
+  // option before the field existed.
+  const ratePeriodLabel =
+    loan.interestRatePeriod === "annual" ? "per year" : "per month";
+
   const accruedInterestForDisplay = isRB
     ? todayAccrued?.total ?? round2(Number((loan as any).accruedInterest) || 0)
     : Math.max(
@@ -415,8 +424,8 @@ function LoanDetailModal({
               {member?.fullName ?? "Unknown"}
             </Text>
             <Text style={detailSt.memberMeta} numberOfLines={1}>
-              {loan.interestRate}%{" "}
-              {isRB ? "monthly · daily accrual" : "flat"} ·{" "}
+              {loan.interestRate}% {ratePeriodLabel} ·{" "}
+              {isRB ? "daily accrual" : "flat"} ·{" "}
               {loan.repaymentMonths} months
             </Text>
           </View>
@@ -910,11 +919,13 @@ function LoanDetailModal({
                 </Text>
               </View>
             ) : null}
-            {loan.firstPaymentDate ? (
+            {(loan.schedule?.[0]?.dueDate || loan.firstPaymentDate) ? (
               <View style={detailSt.detailRow}>
                 <Text style={detailSt.detailLbl}>First payment due</Text>
                 <Text style={detailSt.detailVal}>
-                  {fmtDate(loan.firstPaymentDate)}
+                  {fmtDate(
+                    loan.schedule?.[0]?.dueDate ?? loan.firstPaymentDate,
+                  )}
                 </Text>
               </View>
             ) : null}
@@ -2161,10 +2172,10 @@ export default function LoansScreen() {
               onPress={() => router.push("/(tabs)/loans")}
             />
             <KpiCard
-              label="Outstanding"
+              label="Outstanding Principal"
               value={fmtCurrency(outstanding)}
               icon="💳"
-              subtext={`${
+              subtext={`principal · ${
                 visibleLoans.filter((l) => l.status === "disbursed").length
               } active loans`}
               accentColor={C.error}
@@ -2494,8 +2505,11 @@ export default function LoansScreen() {
                   {fmtCurrency(selectedLoan.amount)}
                 </Text>
                 <Text style={styles.modalDetail}>
-                  {selectedLoan.interestRate}% interest ·{" "}
-                  {fmtCurrency(selectedLoan.totalInterest)} total
+                  {selectedLoan.interestRate}% interest{" "}
+                  {selectedLoan.interestRatePeriod === "annual"
+                    ? "per year"
+                    : "per month"}{" "}
+                  · {fmtCurrency(selectedLoan.totalInterest)} total
                   interest
                 </Text>
                 <Text style={styles.modalDetail}>

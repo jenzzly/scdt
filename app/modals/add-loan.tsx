@@ -233,6 +233,17 @@ export default function AddLoanModal() {
     Math.floor(Number(group?.loanFirstPaymentSkipMonths ?? 1)),
   );
 
+  // Computed OUTSIDE the useMemo so it can also be sent to
+  // submitLoan below as firstPaymentDate. Previously the submit
+  // call reused loanDate for firstPaymentDate, which disagreed
+  // with the schedule's first row and made the loan detail
+  // modal's "First payment due" row differ from the schedule
+  // modal.
+  const baseYmd = loanDate
+    ? loanDate.slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
+  const firstPaymentYmd = addMonthsToYmd(baseYmd, skipMonths);
+
   const {
     totalInterest,
     totalRepayable,
@@ -247,11 +258,6 @@ export default function AddLoanModal() {
         schedule: [] as any[],
       };
     }
-
-    const baseYmd = loanDate
-      ? loanDate.slice(0, 10)
-      : new Date().toISOString().slice(0, 10);
-    const firstPaymentYmd = addMonthsToYmd(baseYmd, skipMonths);
 
     return loanSchedule(
       {
@@ -269,8 +275,7 @@ export default function AddLoanModal() {
     monthsNum,
     interestMethod,
     interestRatePeriod,
-    loanDate,
-    skipMonths,
+    firstPaymentYmd,
   ]);
 
   const firstPaymentDue =
@@ -471,9 +476,13 @@ export default function AddLoanModal() {
           ? new Date(loanDate).toISOString()
           : new Date().toISOString(),
 
-        firstPaymentDate: loanDate
-          ? new Date(loanDate).toISOString()
-          : new Date().toISOString(),
+        // Matches schedule[0].dueDate so the "First payment
+        // due" row on the loan detail modal agrees with the
+        // schedule modal. Previously this sent loanDate, which
+        // made the detail modal show the application date.
+        firstPaymentDate: new Date(
+          `${firstPaymentYmd}T00:00:00`,
+        ).toISOString(),
       });
 
       show(

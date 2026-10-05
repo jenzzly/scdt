@@ -145,7 +145,11 @@ function parseContributionRow(
   row: any[],
   members: Member[],
   groupId: ID,
-): { contribution: Omit<Contribution, "id" | "createdAt">; status: ContributionStatus } | { error: string } {
+): {
+  contribution: Omit<Contribution, "id" | "createdAt">;
+  status: ContributionStatus;
+  id?: ID;
+} | { error: string } {
   if (!Array.isArray(row)) return { error: "Row is not an array" };
 
   const dateRaw = row[0];
@@ -154,6 +158,11 @@ function parseContributionRow(
   const amountRaw = row[3];
   const statusRaw = row[4];
   const descRaw = row[5];
+  // Optional 7th column: the contribution's own ID. Round-trips
+  // an exported sheet cleanly — a row whose ID matches an
+  // existing contribution is treated as an update by the
+  // caller; a row with no ID is treated as new.
+  const idRaw = row[6];
 
   const date = parseDate(dateRaw);
   if (!date) return { error: `Unreadable date: "${String(dateRaw ?? "")}"` };
@@ -183,6 +192,12 @@ function parseContributionRow(
           : undefined,
     } as any,
     status,
+    id:
+      typeof idRaw === "string" && idRaw.trim()
+        ? idRaw.trim()
+        : typeof idRaw === "number"
+        ? String(idRaw)
+        : undefined,
   };
 }
 
@@ -493,7 +508,17 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
       // ═══════════════════════════════════════════════════════════════════════
       //
       // Expected columns (in order):
-      //   Date | Member | Type | Amount | Status | Description
+      //   Date | Member | Type | Amount | Status | Description | ID
+      //
+      // The trailing ID column is OPTIONAL. Rows without it are new
+      // contributions with a fresh id. Rows whose ID matches an
+      // existing contribution in this group UPDATE that row in
+      // place (amount/date/description via updateContributionAndSync
+      // so the linked wallet tx stays in sync; status/type via
+      // updateContribution). Rows whose ID doesn't match are created
+      // with that same id. Member reassignment on an existing row is
+      // not honoured — the linked wallet tx keys off the original
+      // memberId.
       //
       // Row-level errors are collected and returned rather than aborting
       // the whole import. Approved rows also create the linked wallet
@@ -519,7 +544,13 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
 
         if (!groupId) throw new Error("No group id");
         if (!Array.isArray(rows) || rows.length === 0) {
-          return { count: 0, skipped: 0, errors: ["File is empty"] };
+          return {
+            count: 0,
+            created: 0,
+            updated: 0,
+            skipped: 0,
+            errors: ["File is empty"],
+          };
         }
 
         const now = new Date().toISOString();
@@ -533,6 +564,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
         }> = [];
 
         let skipped = 0;
+        let updated = 0;
 
         for (let i = startIndex; i < rows.length; i++) {
           const row = rows[i];
@@ -554,9 +586,63 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
             continue;
           }
 
+          // If the row carries an ID that matches an existing
+          // contribution in THIS group, treat it as an in-place
+          // update. Everything else is a create.
+          const existing = parsed.id
+            ? get().contributions.find(
+                (c) => c.id === parsed.id && c.groupId === groupId,
+              )
+            : undefined;
+
+          if (existing) {
+            try {
+              await get().updateContributionAndSync(existing.id, {
+                amount: parsed.contribution.amount,
+                date: parsed.contribution.date,
+                description: parsed.contribution.description,
+              });
+
+              // Status / type changes go through the general-purpose
+              // update — it also creates the wallet tx on a
+              // pending→approved transition.
+              if (
+                existing.status !== parsed.status ||
+                existing.contributionType !== parsed.contribution.contributionType
+              ) {
+                await get().updateContribution(existing.id, {
+                  status: parsed.status,
+                  contributionType: parsed.contribution.contributionType,
+                });
+              }
+
+              // Member reassignment on an existing contribution is
+              // deliberately not honoured — the linked wallet tx keys
+              // off the original memberId, and a silent reassignment
+              // would desync the ledger.
+              if (parsed.contribution.memberId !== existing.memberId) {
+                if (errors.length < 20) {
+                  errors.push(
+                    `Row ${i + 1}: ID ${existing.id} belongs to a different member — skipped member change`,
+                  );
+                }
+              }
+
+              updated++;
+            } catch (e: any) {
+              skipped++;
+              if (errors.length < 20) {
+                errors.push(
+                  `Row ${i + 1}: update failed — ${e?.message || "unknown error"}`,
+                );
+              }
+            }
+            continue;
+          }
+
           const contribution: Contribution = {
             ...parsed.contribution,
-            id: uid(),
+            id: parsed.id || uid(),
             status: parsed.status,
             createdAt: now,
           } as Contribution;
@@ -582,10 +668,26 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
         }
 
         if (toInsert.length === 0) {
+          set((s) => recalcGroupTotals(s));
+          get().recalcTotals();
+
+          if (updated > 0) {
+            get().setSyncStatus("synced");
+          } else if (skipped > 0) {
+            get().setSyncStatus("failed", "All rows failed to import");
+          }
+
           return {
-            count: 0,
+            count: updated,
+            created: 0,
+            updated,
             skipped,
-            errors: errors.length > 0 ? errors : ["No valid rows found"],
+            errors:
+              errors.length > 0
+                ? errors
+                : updated === 0 && skipped === 0
+                ? ["No valid rows found"]
+                : [],
           };
         }
 
@@ -619,13 +721,13 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
         );
 
         // ── 4. Roll back individual failures ──────────────────────────
-        let count = 0;
+        let created = 0;
         for (let i = 0; i < results.length; i++) {
           const r = results[i];
           const { contribution, walletTx } = toInsert[i];
 
           if (r.status === "fulfilled") {
-            count++;
+            created++;
             continue;
           }
 
@@ -647,12 +749,18 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
         set((s) => recalcGroupTotals(s));
         get().recalcTotals();
 
-        if (skipped > 0 && count === 0) {
+        if (skipped > 0 && created === 0 && updated === 0) {
           get().setSyncStatus("failed", "All rows failed to import");
         } else {
           get().setSyncStatus("synced");
         }
 
-        return { count, skipped, errors };
+        return {
+          count: created + updated,
+          created,
+          updated,
+          skipped,
+          errors,
+        };
       },
 });

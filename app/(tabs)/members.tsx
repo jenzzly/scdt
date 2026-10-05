@@ -1609,7 +1609,7 @@ export default function MembersScreen() {
             value={fmtCurrency(risk.totalContributions)}
           />
           <InfoRow
-            label="Pending / arrears"
+            label="Pending contributions"
             value={risk.arrears > 0 ? fmtCurrency(risk.arrears) : "None"}
           />
           <InfoRow

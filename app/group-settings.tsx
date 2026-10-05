@@ -2618,9 +2618,13 @@ They won't be able to sign in or participate in group activities, and any new la
                   </View>
                 </View>
                   {(() => {
+                    // Treat contributionDay = 1 (or unset) as
+                    // "last day of month" (31), matching what the
+                    // fee engine in utils/lateFees.ts actually uses.
+                    const rawDay = parseInt(contributionDay, 10) || 31;
                     const dueDay = Math.max(
                       1,
-                      Math.min(31, parseInt(contributionDay, 10) || 1),
+                      Math.min(31, rawDay === 1 ? 31 : rawDay),
                     );
                     const graceDays = Math.max(
                       0,
@@ -2682,9 +2686,13 @@ They won't be able to sign in or participate in group activities, and any new la
                   </View>
                 </View>
                   {(() => {
+                    // Treat contributionDay = 1 (or unset) as
+                    // "last day of month" (31), matching what the
+                    // fee engine in utils/lateFees.ts actually uses.
+                    const rawDay = parseInt(contributionDay, 10) || 31;
                     const dueDay = Math.max(
                       1,
-                      Math.min(31, parseInt(contributionDay, 10) || 1),
+                      Math.min(31, rawDay === 1 ? 31 : rawDay),
                     );
                     const graceDays = Math.max(
                       0,

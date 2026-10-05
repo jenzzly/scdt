@@ -68,6 +68,10 @@ import {
 
 import { computeTodayAccrued } from "../../utils/accrual";
 
+// Same goal-period fetcher the Contributions tab uses, so the
+// two screens agree on the collection rate when a goal is set.
+import { getCurrentGoalPeriod } from "../../lib/firestore/contributionGoals";
+
 // ─────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────
@@ -1388,11 +1392,38 @@ export default function ReportsScreen() {
   const [page, setPage] = useState(1);
   const [tableWidth, setTableWidth] = useState(0);
 
+  // Current goal period — the same one the Contributions tab
+  // reads, so the "Collection rate" card computes the same
+  // percentage on both screens when a goal is configured. Null
+  // when the group hasn't set up a goal, in which case the card
+  // falls back to the year-scoped calculation below.
+  const [goalPeriod, setGoalPeriod] = useState<{
+    periodStart: string;
+    periodEnd: string;
+    targetAmount: number;
+  } | null>(null);
+
   useEffect(() => {
     if (isPersonalView) {
       setMemberIdFilter("all");
     }
   }, [isPersonalView]);
+
+  useEffect(() => {
+    if (!group?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const period = await getCurrentGoalPeriod(group.id);
+        if (!cancelled) setGoalPeriod(period);
+      } catch (e) {
+        console.error("[reports] Failed to load goal period:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [group?.id]);
 
   // ───────────────────────────────────────────────────────────────────────
   // Scope
@@ -2284,13 +2315,56 @@ export default function ReportsScreen() {
     [allWalletYr, donutScale]
   );
 
+  // Two scopes:
+  //   • "goal" — when the group has a goal configured. Uses the
+  //     SAME bounds and target as the Contributions tab's
+  //     Collection Rate card, so both screens agree on the same
+  //     member and the same period.
+  //   • "year" — fallback when no goal exists. Uses the year
+  //     filter the rest of the page honours.
   const collection = useMemo(() => {
-    if (!group) return { pct: 0, collected: 0, expected: 0 };
-
-    const target = group.contributionAmount || 0;
-    if (target <= 0) return { pct: 0, collected: 0, expected: 0 };
+    if (!group) {
+      return { pct: 0, collected: 0, expected: 0, scope: "year" as const };
+    }
 
     const activeCount = allMembers.filter((m) => m.status === "active").length;
+
+    if (goalPeriod) {
+      const periodStart = new Date(goalPeriod.periodStart);
+      const periodEnd = new Date(goalPeriod.periodEnd);
+      const target = goalPeriod.targetAmount;
+
+      if (target > 0) {
+        const expected = isPersonalView
+          ? target
+          : target * Math.max(1, activeCount);
+
+        const collected = contributions
+          .filter((c) => {
+            if (c.status !== "approved") return false;
+            if (c.contributionType !== "regular") return false;
+            const d = new Date(c.date);
+            return d >= periodStart && d <= periodEnd;
+          })
+          .reduce((s, c) => s + (c.amount || 0), 0);
+
+        return {
+          pct:
+            expected > 0
+              ? Math.min(999, Math.round((collected / expected) * 100))
+              : 0,
+          collected: round2(collected),
+          expected: round2(expected),
+          scope: "goal" as const,
+        };
+      }
+    }
+
+    const target = group.contributionAmount || 0;
+    if (target <= 0) {
+      return { pct: 0, collected: 0, expected: 0, scope: "year" as const };
+    }
+
     const expected = isPersonalView ? target : target * Math.max(1, activeCount);
 
     const collected = contributionsYr
@@ -2301,8 +2375,16 @@ export default function ReportsScreen() {
       pct: expected > 0 ? Math.min(999, Math.round((collected / expected) * 100)) : 0,
       collected: round2(collected),
       expected: round2(expected),
+      scope: "year" as const,
     };
-  }, [group, allMembers, contributionsYr, isPersonalView]);
+  }, [
+    group,
+    allMembers,
+    contributionsYr,
+    contributions,
+    isPersonalView,
+    goalPeriod,
+  ]);
 
   const collectionRatePct = collection.pct;
 
@@ -3433,7 +3515,12 @@ export default function ReportsScreen() {
             <View style={[styles.chartCard, styles.ovMidCard, isWide && { flex: 1 }]}>
               <Text style={styles.chartTitle}>Collection rate</Text>
               <Text style={styles.chartSubtitle}>
-                {isPersonalView ? "My contributions vs my goal" : "Group contributions vs target"}
+                {isPersonalView
+                  ? "My contributions vs my goal"
+                  : "Group contributions vs target"}
+                {collection.scope === "goal"
+                  ? " · current period"
+                  : " · this year"}
               </Text>
 
               <View style={styles.collectionBody}>
@@ -3452,7 +3539,11 @@ export default function ReportsScreen() {
                   </View>
 
                   <View style={styles.collectionRow}>
-                    <Text style={styles.collectionLabel}>Target</Text>
+                    <Text style={styles.collectionLabel}>
+                      {collection.scope === "goal"
+                        ? "Goal target"
+                        : "Yearly target"}
+                    </Text>
                     <Text style={styles.collectionValue} numberOfLines={1}>
                       {fmtCurrency(collection.expected)}
                     </Text>
@@ -4426,8 +4517,8 @@ function MemberDetail({
       <View style={styles.lateFeeStatusSection}>
         <Text style={styles.cardTitle}>Late Fee Status</Text>
         <Text style={styles.lateFeeStatusSub}>
-          Every month since joining, and why each one does or doesn't
-          have an outstanding fee.
+          Every month since the financial year start, and why
+          each one does or doesn't have an outstanding fee.
         </Text>
         {(() => {
           const rows = buildLateFeeStatusRows(
@@ -6128,15 +6219,22 @@ function buildLateFeeStatusRows(
   if (!member || !group) return [];
 
   const ratePct = group.contributionLateFeeRatePct;
-  const startDateRaw = group.contributionLateFeeStartDate;
+  // contributionLateFeeStartDate is legacy; Group Settings now writes
+  // financialYearStartDate. Reading the wrong field left this widget
+  // empty on any group configured by the current UI, while the risk
+  // breakdown above it showed fees. Now matches the field
+  // findOverdueContributions reads.
+  const startDateRaw = group.financialYearStartDate;
   if (!ratePct || ratePct <= 0 || !startDateRaw) return [];
 
+  // Walk every month from the financial year start, NOT from the
+  // member's dateJoined. dateJoined records when the DOC was
+  // created — for migrated or re-added members it's routinely later
+  // than when fees actually began accruing, so clamping the walk to
+  // it hid every earlier month. findOverdueContributions already
+  // walks from the FY start; this must match.
   const policyStart = new Date(startDateRaw);
-  const joinDate = member.dateJoined ? new Date(member.dateJoined) : null;
-
-  let earliest = policyStart;
-  if (joinDate && joinDate > earliest) earliest = joinDate;
-  earliest = new Date(earliest);
+  const earliest = new Date(policyStart);
   earliest.setDate(1);
   earliest.setHours(0, 0, 0, 0);
 
