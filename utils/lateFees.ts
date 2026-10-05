@@ -151,11 +151,24 @@ function periodLabel(
       return `${periodStart.getFullYear()}`;
 
     case "monthly":
-    default:
-      return periodStart.toLocaleDateString(undefined, {
+    default: {
+      // The period that starts on the 1st of a calendar month is
+      // labeled by the month the payment is FOR — a monthly group
+      // with contributionDay = 5 treats the Oct 5 payment as
+      // covering September, and its 5-day grace pushes the first
+      // fee day to Oct 10. Show "September 2026" on that period,
+      // not "October 2026". Purely a display shift — the accrual
+      // math below still uses periodStart / periodEnd / dueDate
+      // exactly as before, so daysLate / daysPastGrace /
+      // feeAmount / feeTxId and every exemption comparison are
+      // unchanged.
+      const forMonth = new Date(periodStart);
+      forMonth.setMonth(forMonth.getMonth() - 1);
+      return forMonth.toLocaleDateString(undefined, {
         month: "long",
         year: "numeric",
       });
+    }
   }
 }
 

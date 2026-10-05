@@ -39,12 +39,14 @@
 //   against contributionSlice.ts.
 
 import { useMemo, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { useRouter } from "expo-router";
 
 import {
   useStore,
   useGroupMembers,
+  useGroupContributions,
+  useGroupWallet,
   useCurrentUserRole,
   useCurrentMember,
   useIsGroupView,
@@ -63,8 +65,10 @@ import {
 
 import { ModalShell } from "../../components/ui/ModalShell";
 import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
-import { type Palette, S } from "../../utils/theme";
+import { LateFeeWaiverModal } from "../../components/ui/LateFeeWaiverModal";
+import { type Palette, S, fmtCurrency, fmtDate } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
+import { findOverdueContributions } from "../../utils/lateFees";
 
 import type { ContributionType } from "../../types";
 
@@ -86,13 +90,20 @@ export default function AddContributionModal() {
   const router = useRouter();
 
   const allMembers = useGroupMembers();
+  const allContributions = useGroupContributions();
+  const allWallet = useGroupWallet();
   const group = useActiveGroup();
   const role = useCurrentUserRole();
   const currentMember = useCurrentMember();
   const isGroupView = useIsGroupView();
   const permissions = useCurrentMemberPermissions();
 
-  const { recordContribution, recalcTotals } = useStore();
+  const {
+    recordContribution,
+    recalcTotals,
+    addLateFeeExemption,
+    removeLateFeeExemption,
+  } = useStore();
   const { show, visible, msg, type } = useToast();
 
   const isAdmin = role === "admin";
@@ -118,6 +129,47 @@ export default function AddContributionModal() {
   const [date, setDate] = useState(todayIso());
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // ── Fee-freeze / resume state ────────────────────────────────────
+  const [waiverTarget, setWaiverTarget] = useState<any | null>(null);
+  const [waiverSaving, setWaiverSaving] = useState(false);
+
+  // The member this contribution is actually for. In personal view
+  // there's no picker, so we fall back to the signed-in member.
+  const effectiveMemberId = isGroupView
+    ? memberId
+    : currentMember?.id ?? "";
+
+  const effectiveMember = useMemo(
+    () => allMembers.find((m) => m.id === effectiveMemberId) ?? null,
+    [allMembers, effectiveMemberId]
+  );
+
+  // Outstanding (accrued-but-unpaid) contribution late fees for the
+  // member this contribution is for. Reuses findOverdueContributions —
+  // the same util the Contributions screen and the Late Fees report
+  // already call — so the numbers here match those exactly.
+  const outstandingFees = useMemo(() => {
+    if (!group || !effectiveMemberId) return [];
+    return findOverdueContributions(
+      group,
+      allMembers,
+      allContributions,
+      allWallet,
+    ).filter((f) => f.memberId === effectiveMemberId);
+  }, [group, allMembers, allContributions, allWallet, effectiveMemberId]);
+
+  // Exemptions already on this member, filtered to contribution scope.
+  // These are the "frozen months" — tapping Resume removes the
+  // exemption so accrual restarts from the next fee day.
+  const activeExemptions = useMemo(
+    () =>
+      (effectiveMember?.lateFeeExemptions ?? []).filter(
+        (ex: any) =>
+          ex.scope === "contribution" || ex.scope === "both",
+      ),
+    [effectiveMember],
+  );
 
   if (!canAdd) {
     return (
@@ -182,6 +234,50 @@ export default function AddContributionModal() {
     }
   };
 
+  // ── Fee freeze / resume handlers ───────────────────────────────────
+
+  const handleConfirmWaiver = async (
+    periodStart: string,
+    periodEnd: string,
+    reason: string,
+  ) => {
+    if (!waiverTarget || !effectiveMemberId) return;
+    setWaiverSaving(true);
+    try {
+      await addLateFeeExemption(
+        effectiveMemberId,
+        {
+          scope: "contribution",
+          periodStart,
+          periodEnd,
+          reason: reason || undefined,
+          // Capture the amount being frozen so the member
+          // risk view can display it later.
+          amount: waiverTarget.feeAmount,
+        } as any,
+        // Only pass the fee tx id when the fee is already on the
+        // ledger — accrued-but-unapplied fees have no tx to clear.
+        waiverTarget.applied ? waiverTarget.feeTxId : undefined,
+      );
+      show("Late fee frozen");
+      setWaiverTarget(null);
+    } catch (e: any) {
+      show(e?.message || "Failed to freeze late fee", "error");
+    } finally {
+      setWaiverSaving(false);
+    }
+  };
+
+  const handleRemoveExemption = async (exemptionId: string) => {
+    if (!effectiveMemberId) return;
+    try {
+      await removeLateFeeExemption(effectiveMemberId, exemptionId);
+      show("Late fee resumed");
+    } catch (e: any) {
+      show(e?.message || "Failed to resume late fee", "error");
+    }
+  };
+
   return (
     <ModalShell noScroll title="Add Contribution" onClose={() => router.back()}>
       <KeyboardAwareScrollView
@@ -235,6 +331,90 @@ export default function AddContributionModal() {
           placeholder="Contribution description"
         />
 
+        {/* ── Late-fee freeze / resume panel ─────────────────── */}
+        {effectiveMemberId ? (
+          <>
+            {outstandingFees.length > 0 && (
+              <View style={styles.feesSection}>
+                <Text style={styles.feesSectionTitle}>
+                  Outstanding Late Fees
+                </Text>
+                <Text style={styles.feesSectionHelp}>
+                  Freeze a month to waive its late fee before you
+                  record this payment. Frozen months stop accruing
+                  until you resume them.
+                </Text>
+
+                {outstandingFees.map((fee) => (
+                  <View key={fee.feeTxId} style={styles.feeRow}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text
+                        style={styles.feeRowPeriod}
+                        numberOfLines={1}
+                      >
+                        {fee.periodLabel}
+                      </Text>
+                      <Text
+                        style={styles.feeRowMeta}
+                        numberOfLines={1}
+                      >
+                        {fee.daysLate}d late · {fmtCurrency(fee.feeAmount)}
+                      </Text>
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.freezeBtn}
+                      onPress={() => setWaiverTarget(fee)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.freezeBtnText}>Freeze</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {activeExemptions.length > 0 && (
+              <View style={styles.feesSection}>
+                <Text style={styles.feesSectionTitle}>Frozen Months</Text>
+                <Text style={styles.feesSectionHelp}>
+                  Late fees are paused for these periods. Tap Resume
+                  to start accruing again from the next fee day.
+                </Text>
+
+                {activeExemptions.map((ex: any) => (
+                  <View key={ex.id} style={styles.feeRow}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text
+                        style={styles.feeRowPeriod}
+                        numberOfLines={1}
+                      >
+                        {fmtDate(ex.periodStart)} → {fmtDate(ex.periodEnd)}
+                      </Text>
+                      {ex.reason ? (
+                        <Text
+                          style={styles.feeRowMeta}
+                          numberOfLines={1}
+                        >
+                          {ex.reason}
+                        </Text>
+                      ) : null}
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.resumeBtn}
+                      onPress={() => handleRemoveExemption(ex.id)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.resumeBtnText}>Resume</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+          </>
+        ) : null}
+
         <View style={styles.noticeBox}>
           <Text style={styles.noticeTitle}>New contribution</Text>
           <Text style={styles.noticeText}>
@@ -256,6 +436,18 @@ export default function AddContributionModal() {
 
         <View style={styles.bottomSpacer} />
       </KeyboardAwareScrollView>
+
+      <LateFeeWaiverModal
+        visible={!!waiverTarget}
+        onClose={() => setWaiverTarget(null)}
+        target={waiverTarget}
+        member={effectiveMember}
+        group={group}
+        saving={waiverSaving}
+        context="contribution"
+        onConfirm={handleConfirmWaiver}
+        onRemoveExemption={handleRemoveExemption}
+      />
 
       <Toast visible={visible} msg={msg} type={type} />
     </ModalShell>
@@ -284,6 +476,76 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   noticeTitle: { fontSize: 12, fontWeight: "800", color: C.text, marginBottom: 4 },
   noticeText: { fontSize: 12, lineHeight: 18, color: C.text2 },
   errorText: { fontSize: 11, color: C.error, marginTop: -10, marginBottom: S.md },
+
+  // ── Late-fee freeze / resume panel ───────────────────────────────
+  feesSection: {
+    marginTop: S.md,
+    padding: S.md,
+    borderRadius: 10,
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.border,
+    gap: 8,
+  },
+  feesSectionTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: C.text,
+  },
+  feesSectionHelp: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: C.text3,
+    marginBottom: 4,
+  },
+  feeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.borderLight,
+  },
+  feeRowPeriod: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text,
+  },
+  feeRowMeta: {
+    fontSize: 10.5,
+    color: C.text3,
+    marginTop: 2,
+  },
+  freezeBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 7,
+    backgroundColor: C.goldBg,
+    borderWidth: 1,
+    borderColor: C.gold,
+  },
+  freezeBtnText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: C.goldText,
+  },
+  resumeBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 7,
+    backgroundColor: C.greenBg,
+    borderWidth: 1,
+    borderColor: C.success,
+  },
+  resumeBtnText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: C.greenText,
+  },
+
   spacer: { height: S.lg },
   bottomSpacer: { height: 12 },
 });

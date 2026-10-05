@@ -1,21 +1,28 @@
 // hooks/useInactivityLogout.ts
 //
-// Signs the user out after a period with no interaction (default 5 min).
+// Signs the user out after a period with no interaction (default 5
+// minutes), on web and mobile.
 //
-// "Activity" = any touch / click / key press / scroll, or the keyboard
-// opening. Sources:
-//   • Native : touch-capture handlers on the root view (see
-//              `activityTouchHandlers` / AutoLogoutGate). Capture handlers
-//              only observe — they never claim the gesture from children.
-//   • Web    : document-level listeners.
-//   • Native <Modal>s (e.g. BottomModal) render in their own window, so
-//     touches inside them never reach the root view — they call
-//     `markActivity()` directly.
+// MECHANISM
+//   A single setInterval polls Date.now() - lastActive every few
+//   seconds. When the gap reaches timeoutMs, it fires onTimeout.
+//   There is no one-shot setTimeout involved — the previous version
+//   relied on one and it could be silently dropped (hot reload
+//   mid-arm, effect teardown, stale deps) with no error, which is
+//   why the app sometimes never logged out.
 //
-// Backgrounding: JS timers are paused while the app is suspended, so the
-// timeout can't be trusted to fire. Instead we remember when the user was
-// last active and, when the app returns to the foreground, sign out
-// immediately if the gap is >= the timeout.
+// ACTIVITY SOURCES
+//   • Native : touch-capture handlers on the root View (via
+//              activityTouchHandlers / AutoLogoutGate). Capture
+//              handlers only observe; they never claim a gesture.
+//   • Web    : document-level mousedown, keydown, touchstart, wheel,
+//              scroll, mousemove listeners. All passive + capture.
+//   • Native <Modal>s render in their own window, so touches inside
+//     them never reach the root View — they call markActivity().
+//   • Backgrounding: JS timers pause while the app is suspended.
+//     On return to foreground, AppState compares wall-clock elapsed
+//     to lastActive and fires immediately if the gap is past the
+//     timeout.
 import { useCallback, useEffect, useRef } from "react";
 import { AppState, Keyboard, Platform } from "react-native";
 
@@ -29,10 +36,7 @@ export function markActivity() {
   listeners.forEach((fn) => fn());
 }
 
-/**
- * Spread onto the root <View>. Module-level constants, so nothing here
- * reads refs or impure values during render.
- */
+/** Spread onto the root <View>. Capture-only — never claims a gesture. */
 export const activityTouchHandlers = {
   onTouchStartCapture: markActivity,
   onTouchMoveCapture: markActivity,
@@ -42,82 +46,117 @@ export function useInactivityLogout({
   enabled,
   onTimeout,
   timeoutMs = INACTIVITY_TIMEOUT_MS,
+  debug = false,
 }: {
   enabled: boolean;
   onTimeout: () => void;
   timeoutMs?: number;
+  /** When true, logs arm / fire events to the console. */
+  debug?: boolean;
 }) {
-  // Real timestamps are assigned inside effects/handlers (never during render).
   const lastActive = useRef(0);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firedRef = useRef(false);
   const onTimeoutRef = useRef(onTimeout);
+
+  // Keep the latest callback without re-arming the interval every
+  // render the caller re-creates it (which is why the timeout used
+  // to disappear without warning).
   useEffect(() => {
     onTimeoutRef.current = onTimeout;
   }, [onTimeout]);
 
-  const clearTimer = () => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = null;
-  };
-
-  const fire = useCallback(() => {
-    if (firedRef.current) return;
-    firedRef.current = true;
-    clearTimer();
-    onTimeoutRef.current();
-  }, []);
-
-  const arm = useCallback(() => {
-    clearTimer();
-    const remaining = Math.max(0, timeoutMs - (Date.now() - lastActive.current));
-    timer.current = setTimeout(fire, remaining);
-  }, [timeoutMs, fire]);
+  const log = useCallback(
+    (...args: unknown[]) => {
+      if (debug) console.log("[inactivity]", ...args);
+    },
+    [debug],
+  );
 
   const touch = useCallback(() => {
-    if (!enabled || firedRef.current) return;
-    const now = Date.now();
-    // Throttle: high-frequency events (scroll/mousemove) only need to
-    // push the deadline out, not reset a timer 60 times a second.
-    if (now - lastActive.current < 1000 && timer.current) return;
-    lastActive.current = now;
-    arm();
-  }, [enabled, arm]);
+    if (firedRef.current) return;
+    lastActive.current = Date.now();
+  }, []);
 
   useEffect(() => {
     if (!enabled) {
-      clearTimer();
+      log("disabled");
       return;
     }
+
     firedRef.current = false;
     lastActive.current = Date.now();
-    arm();
+    log("armed, timeoutMs =", timeoutMs);
+
+    // Poll every few seconds. Two caps: never tick faster than 1s
+    // (avoids burning a timer on very short test timeouts), never
+    // slower than 5s (so a 5-minute timeout fires within 5s of the
+    // deadline in the worst case).
+    const tickMs = Math.min(5000, Math.max(1000, Math.floor(timeoutMs / 12)));
+
+    const interval = setInterval(() => {
+      if (firedRef.current) return;
+      const elapsed = Date.now() - lastActive.current;
+      if (elapsed >= timeoutMs) {
+        firedRef.current = true;
+        log("firing; elapsed =", elapsed);
+        try {
+          onTimeoutRef.current();
+        } catch (e) {
+          console.warn("[inactivity] onTimeout threw:", e);
+        }
+      }
+    }, tickMs);
 
     listeners.add(touch);
 
     const appSub = AppState.addEventListener("change", (state) => {
-      if (state === "active") {
-        if (Date.now() - lastActive.current >= timeoutMs) fire();
-        else arm();
+      if (state !== "active") return;
+      if (firedRef.current) return;
+      if (Date.now() - lastActive.current >= timeoutMs) {
+        firedRef.current = true;
+        log("firing on foreground; gap exceeded timeout");
+        try {
+          onTimeoutRef.current();
+        } catch (e) {
+          console.warn("[inactivity] onTimeout threw:", e);
+        }
       }
     });
 
     const kbSub = Keyboard.addListener("keyboardDidShow", touch);
 
-    const webEvents = ["mousedown", "keydown", "touchstart", "wheel", "scroll", "mousemove"];
+    const webEvents = [
+      "mousedown",
+      "keydown",
+      "touchstart",
+      "wheel",
+      "scroll",
+      "mousemove",
+    ];
     const onVisibility = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        if (Date.now() - lastActive.current >= timeoutMs) fire();
-        else arm();
+      if (typeof document === "undefined") return;
+      if (document.visibilityState !== "visible") return;
+      if (firedRef.current) return;
+      if (Date.now() - lastActive.current >= timeoutMs) {
+        firedRef.current = true;
+        log("firing on tab return; gap exceeded timeout");
+        try {
+          onTimeoutRef.current();
+        } catch (e) {
+          console.warn("[inactivity] onTimeout threw:", e);
+        }
       }
     };
+
     if (Platform.OS === "web" && typeof document !== "undefined") {
-      webEvents.forEach((e) => document.addEventListener(e, touch, { passive: true, capture: true }));
+      webEvents.forEach((e) =>
+        document.addEventListener(e, touch, { passive: true, capture: true }),
+      );
       document.addEventListener("visibilitychange", onVisibility);
     }
 
     return () => {
-      clearTimer();
+      clearInterval(interval);
       listeners.delete(touch);
       appSub.remove();
       kbSub.remove();
@@ -126,5 +165,5 @@ export function useInactivityLogout({
         document.removeEventListener("visibilitychange", onVisibility);
       }
     };
-  }, [enabled, timeoutMs, arm, fire, touch]);
+  }, [enabled, timeoutMs, touch, log]);
 }

@@ -121,6 +121,7 @@ const CATEGORIES: {
   { key: "loans", label: "Loans", icon: "🏦" },
   { key: "latefees", label: "Late Fees", icon: "⚠️" },
   { key: "members", label: "Members", icon: "👥" },
+  { key: "expenses", label: "Expenses", icon: "💸" },
   { key: "earnings", label: "Profits", icon: "💰" },
 ];
 
@@ -1726,14 +1727,15 @@ export default function ReportsScreen() {
   // Overview financial calculations
   // ───────────────────────────────────────────────────────────────────────
 
+  // Expenses (bank_fee / other_debit) are deliberately NOT here —
+  // they are debits, not earnings, and belong on the Expenses tab
+  // via groupExpenses below, not in a "wallet earnings" total.
   const EARNING_TYPES_OVERVIEW = [
     "loan_interest_income",
     "interest",
     "late_fee",
     "investment_return",
-    "bank_fee",
     "other_credit",
-    "other_debit",
   ];
 
   const groupWalletEarnings = useMemo(
@@ -1870,6 +1872,9 @@ export default function ReportsScreen() {
   );
 
   const groupOtherOnly = useMemo(() => {
+    // bank_fee and other_debit are expenses — they are tracked
+    // separately in groupExpenses and must not fall through into
+    // the "Other" bucket on the Profits view.
     const known = [
       "contribution",
       "loan_interest_income",
@@ -1879,6 +1884,8 @@ export default function ReportsScreen() {
       "loan_disbursement",
       "loan_repayment",
       "loan_principal_recovery",
+      "bank_fee",
+      "other_debit",
     ];
 
     return round2(
@@ -2197,6 +2204,8 @@ export default function ReportsScreen() {
 
   const donutOther = useMemo(
     () => {
+      // See groupOtherOnly — bank_fee / other_debit are expenses
+      // and must not appear as a "Profits by source" segment.
       const known = [
         "contribution",
         "loan_interest_income",
@@ -2206,6 +2215,8 @@ export default function ReportsScreen() {
         "loan_disbursement",
         "loan_repayment",
         "loan_principal_recovery",
+        "bank_fee",
+        "other_debit",
       ];
       return round2(
         allWalletYr
@@ -2690,14 +2701,16 @@ export default function ReportsScreen() {
     }
 
     // Earnings tab
+    // Expenses are shown on the Expenses tab, not here. Dropping
+    // bank_fee / other_debit from this list keeps negative debits
+    // out of the earnings rows and out of every earnings total
+    // derived from this list.
     const EARNING_TYPES = [
       "loan_interest_income",
       "interest",
       "late_fee",
       "investment_return",
-      "bank_fee",
       "other_credit",
-      "other_debit",
     ];
 
     const earningAmount = (t: any) => {
@@ -3183,7 +3196,7 @@ export default function ReportsScreen() {
     {
       label: "Other",
       value: fmtCurrency(groupOtherOnly),
-      sub: "bank fees, misc",
+      sub: "misc credits",
       onPress: () =>
         openReport("earnings", {
           earningsMode: "actual",
@@ -3480,7 +3493,7 @@ export default function ReportsScreen() {
                 <Dropdown label="Month" value={monthFilter} options={monthOptions} onChange={handleMonthChange} />
               </View>
 
-              {!isPersonalView && (
+              {!isPersonalView && category !== "expenses" && (
                 <View style={[styles.activityFilterItem, isMobile && styles.activityFilterItemMobile]}>
                   <Dropdown
                     label="Member"
@@ -4070,6 +4083,12 @@ function WaiverCard({
       <Text style={styles.waiverPeriod}>
         {fmtDate(exemption.periodStart)} → {fmtDate(exemption.periodEnd)}
       </Text>
+
+      {typeof exemption.amount === "number" && exemption.amount > 0 ? (
+        <Text style={styles.waiverAmount}>
+          {fmtCurrency(exemption.amount)} frozen
+        </Text>
+      ) : null}
 
       {exemption.reason ? (
         <Text style={styles.waiverReason}>{exemption.reason}</Text>
@@ -5699,6 +5718,7 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   waiverScopeBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, borderWidth: 1 },
   waiverScopeText: { fontSize: 9, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.4 },
   waiverPeriod: { fontSize: 12, fontWeight: "700", color: C.text, marginBottom: 3 },
+  waiverAmount: { fontSize: 12, fontWeight: "800", color: C.goldText, marginBottom: 5 },
   waiverReason: { fontSize: 11, color: C.text2, lineHeight: 15, marginBottom: 5 },
   waiverMeta: { fontSize: 9.5, color: C.text3, marginBottom: 8 },
   waiverRemoveBtn: { alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 7, borderWidth: 1, borderColor: C.error, backgroundColor: C.redBg },

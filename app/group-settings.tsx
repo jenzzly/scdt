@@ -73,10 +73,11 @@ const SYSTEM_ROLE_KEYS: MemberRole[] = ["admin", "accountant", "loan_officer", "
 // are just sensible starting defaults — adjust freely in the Permissions tab.
 const SYSTEM_ROLE_DEFAULT_PERMISSIONS: Record<MemberRole, MemberPermissions> = {
   admin: {
-    addContribution: true, addLoan: true, addInvestment: true,
-    approveContributions: true, approveLoans: true, approveInvestments: true,
-    viewAllReports: true, downloadReports: true,
-    manageMeetings: true, editMembers: true, deleteRecords: true, manageSettings: true,
+    manageContributions: true, manageLoans: true, manageInvestments: true,
+    applyLateFees: true, waiveLateFees: true, recordAttendance: true,
+    viewAuditLogs: true, revertAuditLogs: true,
+    manageRoles: true, manageBackup: true,
+  
   },
   accountant: {
     ...DEFAULT_MEMBER_PERMISSIONS,
@@ -99,8 +100,13 @@ const SYSTEM_ROLE_DEFAULT_PERMISSIONS: Record<MemberRole, MemberPermissions> = {
 const PERM_KEYS: (keyof MemberPermissions)[] = [
   "addContribution", "addLoan", "addInvestment",
   "approveContributions", "approveLoans", "approveInvestments",
+  "manageContributions", "manageLoans", "manageInvestments",
+  "applyLateFees", "waiveLateFees",
   "viewAllReports", "downloadReports",
-  "manageMeetings", "editMembers", "deleteRecords", "manageSettings",
+  "manageMeetings", "recordAttendance", "editMembers",
+  "viewAuditLogs", "revertAuditLogs",
+  "manageRoles", "manageBackup",
+  "deleteRecords", "manageSettings",
 ];
 const PERM_LABELS: Record<keyof MemberPermissions, string> = {
   addContribution: "Add Contributions",
@@ -109,18 +115,32 @@ const PERM_LABELS: Record<keyof MemberPermissions, string> = {
   approveContributions: "Approve Contributions",
   approveLoans: "Approve Loans",
   approveInvestments: "Approve Investments",
+  manageContributions: "Edit / Delete Contributions",
+  manageLoans: "Disburse & Manage Loans",
+  manageInvestments: "Manage Investments",
+  applyLateFees: "Apply Late Fees",
+  waiveLateFees: "Waive / Clear Late Fees",
   viewAllReports: "View All Reports",
   downloadReports: "Export Reports",
   manageMeetings: "Manage Meetings",
+  recordAttendance: "Record Attendance",
   editMembers: "Edit Members",
+  viewAuditLogs: "View Audit Logs",
+  revertAuditLogs: "Revert Audit Entries",
+  manageRoles: "Manage Roles & Permissions",
+  manageBackup: "Backup & Restore Data",
   deleteRecords: "Delete Records",
   manageSettings: "Manage Settings",
 };
 const PERM_GROUPS = [
   { label: "Create & Apply", keys: ["addContribution", "addLoan", "addInvestment"] as (keyof MemberPermissions)[] },
   { label: "Approvals", keys: ["approveContributions", "approveLoans", "approveInvestments"] as (keyof MemberPermissions)[] },
+  { label: "Operations", keys: ["manageContributions", "manageLoans", "manageInvestments"] as (keyof MemberPermissions)[] },
+  { label: "Late Fees", keys: ["applyLateFees", "waiveLateFees"] as (keyof MemberPermissions)[] },
   { label: "Reports & Visibility", keys: ["viewAllReports", "downloadReports"] as (keyof MemberPermissions)[] },
-  { label: "Management", keys: ["manageMeetings", "editMembers", "deleteRecords", "manageSettings"] as (keyof MemberPermissions)[] },
+  { label: "Meetings & Members", keys: ["manageMeetings", "recordAttendance", "editMembers"] as (keyof MemberPermissions)[] },
+  { label: "Audit & Security", keys: ["viewAuditLogs", "revertAuditLogs", "manageRoles", "manageBackup"] as (keyof MemberPermissions)[] },
+  { label: "Full Control", keys: ["deleteRecords", "manageSettings"] as (keyof MemberPermissions)[] },
 ];
 
 type AuditTab = "all" | "contributions" | "loans" | "members" | "investments" | "deletions" | "failed";
@@ -700,6 +720,14 @@ export default function GroupSettingsScreen() {
   const [goalPeriodMonths, setGoalPeriodMonths] = useState(String(group?.contributionGoalPeriodMonths ?? 6));
   const [goalTarget, setGoalTarget] = useState(String(group?.contributionGoalTargetAmount ?? 600000));
   const [goalAnchorDate, setGoalAnchorDate] = useState(group?.contributionGoalAnchorDate ?? "");
+
+
+  // ─── Global settings (financial year + contribution reminder) ──────────
+  const [financialYearStartMonth, setFinancialYearStartMonth] = useState(
+    String(group?.financialYearStartMonth ?? 1),
+  );
+  const [contributionReminderDaysBefore, setContributionReminderDaysBefore] =
+    useState(String(group?.contributionReminderDaysBefore ?? 3));
 
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -1402,6 +1430,9 @@ They won't be able to sign in or participate in group activities, and any new la
       }
     }
 
+    const financialYearStartMonthNum = parseNum(financialYearStartMonth);
+    const contributionReminderDaysBeforeNum = parseNum(contributionReminderDaysBefore);
+
     const trimmedStartDate = contribLateFeeStart.trim();
     if (trimmedStartDate && isNaN(new Date(trimmedStartDate).getTime())) {
       show("Contribution late fee start date is invalid — use YYYY-MM-DD", "error");
@@ -1431,6 +1462,16 @@ They won't be able to sign in or participate in group activities, and any new la
         contributionGoalTargetAmount,
         contributionGoalAnchorDate: trimmedGoalAnchor,
       }),
+          // ── Financial year & contribution reminder ──────────────────────
+      ...(Number.isFinite(financialYearStartMonthNum) &&
+        financialYearStartMonthNum >= 1 &&
+        financialYearStartMonthNum <= 12 && {
+          financialYearStartMonth: financialYearStartMonthNum,
+        }),
+      ...(Number.isFinite(contributionReminderDaysBeforeNum) &&
+        contributionReminderDaysBeforeNum >= 0 && {
+          contributionReminderDaysBefore: contributionReminderDaysBeforeNum,
+        }),
     };
 
     setSaving(true);
@@ -2318,6 +2359,48 @@ They won't be able to sign in or participate in group activities, and any new la
                   onChangeText={setLoanFirstPaymentSkipMonths}
                   keyboardType="numeric"
                   hint="Months between disbursement and the first installment due date. Default 1 (next month). Set 0 to make the first installment due on the disbursement date."
+                />
+              </SettingCard>
+
+              {/* Financial Year */}
+              <SectionHeading
+                label="Financial Year"
+                description="Which calendar month starts your fiscal year. Reports and yearly totals use this instead of January."
+                icon="📆"
+                accent={C.brandBlue}
+              />
+              <SettingCard>
+                <Select
+                  label="Year starts in"
+                  value={String(financialYearStartMonth)}
+                  options={MONTHS.map((m) => ({
+                    label: m.label,
+                    value: String(m.value),
+                  }))}
+                  onChange={(v) => setFinancialYearStartMonth(v)}
+                />
+                <Text style={styles.fieldHint}>
+                  Current year runs{" "}
+                  {MONTHS[(parseInt(financialYearStartMonth, 10) || 1) - 1]?.label ?? "January"}{" "}
+                  →{" "}
+                  {MONTHS[((parseInt(financialYearStartMonth, 10) || 1) + 10) % 12]?.label ?? "December"}
+                </Text>
+              </SettingCard>
+
+              {/* Member Onboarding */}
+              <SectionHeading
+                label="Member Onboarding"
+                description="How members are reminded to contribute."
+                icon="🚪"
+                accent={C.accent}
+              />
+              <SettingCard>
+                <Input
+                  label="Contribution reminder (days before)"
+                  value={contributionReminderDaysBefore}
+                  onChangeText={setContributionReminderDaysBefore}
+                  keyboardType="numeric"
+                  hint="Nudge members this many days before a contribution is due. Set 0 to disable reminders."
                 />
               </SettingCard>
             </View>

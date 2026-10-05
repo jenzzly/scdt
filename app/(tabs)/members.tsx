@@ -694,6 +694,18 @@ export default function MembersScreen() {
   const [creatingUser, setCreatingUser] = useState(false);
   const [resettingPassword, setResettingPassword] = useState(false);
 
+  // Edit-member modal state. Separate from `selectedMember` so
+  // the action modal can close with its animation intact while
+  // the edit modal opens on top of the same member.
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editForm, setEditForm] = useState({
+    fullName: "",
+    email: "",
+    phone: "",
+    role: "member",
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+
   const [createForm, setCreateForm] = useState({
     fullName: "",
     email: "",
@@ -990,6 +1002,49 @@ export default function MembersScreen() {
   const openDeleteConfirm = (member: Member) => {
     setSelectedMember(member);
     setShowDeleteModal(true);
+  };
+
+  // ── Edit member flow ──────────────────────────────────────────
+  // The action modal closes first (260ms matches its animation),
+  // then the edit modal opens over the SAME selectedMember — so
+  // there's never a moment where two BottomModals are mounted at
+  // once, which is what causes the modal flicker in the
+  // group-settings edit flow if not handled.
+  const handleEditPress = () => {
+    if (!selectedMember) return;
+    setEditForm({
+      fullName: selectedMember.fullName,
+      email: selectedMember.email || "",
+      phone: selectedMember.phone || "",
+      role: selectedMember.role,
+    });
+    setShowActionModal(false);
+    setTimeout(() => setShowEditModal(true), 260);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!selectedMember || !activeGroupId) return;
+    if (!editForm.fullName.trim()) {
+      show("Name is required", "error");
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      await FS.updateMember(activeGroupId, selectedMember.id, {
+        fullName: editForm.fullName.trim(),
+        email: editForm.email.trim() || undefined,
+        phone: editForm.phone.trim() || undefined,
+        role: editForm.role as any,
+        userId: selectedMember.userId,
+      });
+      show(`${editForm.fullName.trim()} updated`);
+      setShowEditModal(false);
+      setSelectedMember(null);
+    } catch (e: any) {
+      show(e.message || "Failed to update member", "error");
+    } finally {
+      setSavingEdit(false);
+    }
   };
 
   const handleExport = async (format: "csv" | "pdf") => {
@@ -1623,6 +1678,57 @@ export default function MembersScreen() {
           ) : null}
         </View>
 
+        {/* ── Waived Fees & Exemptions ────────────────────────
+            Every exemption an admin has recorded for this
+            member. The frozen amount is captured on the
+            exemption itself at the moment it was created —
+            for older exemptions that predate this field it
+            stays undefined and the row shows just the period. */}
+        {Array.isArray((member as any).lateFeeExemptions) &&
+          (member as any).lateFeeExemptions.length > 0 && (
+            <>
+              <Text style={[st.detailSectionLabel, { marginTop: 16 }]}>
+                Waived fees & exemptions
+              </Text>
+              {((member as any).lateFeeExemptions as any[]).map(
+                (ex: any) => (
+                  <View key={ex.id} style={st.waiverRow}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={st.waiverScope}>
+                        {ex.scope === "loan"
+                          ? "Loan"
+                          : ex.scope === "both"
+                          ? "Both"
+                          : "Contribution"}
+                      </Text>
+                      <Text style={st.waiverPeriod} numberOfLines={1}>
+                        {fmtDate(ex.periodStart)} → {fmtDate(ex.periodEnd)}
+                      </Text>
+                      {ex.reason ? (
+                        <Text
+                          style={st.waiverReason}
+                          numberOfLines={2}
+                        >
+                          {ex.reason}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {typeof ex.amount === "number" && ex.amount > 0 ? (
+                      <Text
+                        style={st.waiverAmount}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                      >
+                        {fmtCurrency(ex.amount)}
+                      </Text>
+                    ) : null}
+                  </View>
+                ),
+              )}
+            </>
+          )}
+
         {/* Actionable red flags */}
         {(risk.overdueInstallmentCount > 0 ||
           risk.unpaidFeesTotal > 0 ||
@@ -1763,6 +1869,21 @@ export default function MembersScreen() {
                 <View style={st.adminActionsSection}>
                   <Text style={st.adminActionsTitle}>Admin Actions</Text>
 
+                  <TouchableOpacity
+                    style={[st.actionButton, st.editButton]}
+                    onPress={handleEditPress}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        st.actionButtonText,
+                        { color: "#fff" },
+                      ]}
+                    >
+                      ✏️ Edit Member
+                    </Text>
+                  </TouchableOpacity>
+
                   {selectedMember.status === "pending" && (
                     <TouchableOpacity
                       style={[st.actionButton, st.approveButton]}
@@ -1867,6 +1988,60 @@ export default function MembersScreen() {
               </TouchableOpacity>
             </View>
           )}
+        </BottomModal>
+
+        <BottomModal
+          visible={showEditModal}
+          onClose={() => {
+            setShowEditModal(false);
+            setSelectedMember(null);
+          }}
+          title="Edit Member"
+        >
+          <View style={{ gap: 12, paddingHorizontal: 16, paddingBottom: 20 }}>
+            <Input
+              label="Full Name *"
+              value={editForm.fullName}
+              onChangeText={(t) =>
+                setEditForm((p) => ({ ...p, fullName: t }))
+              }
+              placeholder="Full name"
+            />
+            <Input
+              label="Email"
+              value={editForm.email}
+              onChangeText={(t) =>
+                setEditForm((p) => ({ ...p, email: t }))
+              }
+              placeholder="Email address"
+              keyboardType="email-address"
+            />
+            <Input
+              label="Phone"
+              value={editForm.phone}
+              onChangeText={(t) =>
+                setEditForm((p) => ({ ...p, phone: t }))
+              }
+              placeholder="Phone number"
+            />
+            <Select
+              label="Role"
+              value={editForm.role}
+              options={USER_ROLES.map((r) => ({
+                label: ROLE_LABELS[r],
+                value: r,
+              }))}
+              onChange={(v) =>
+                setEditForm((p) => ({ ...p, role: v }))
+              }
+            />
+            <Button
+              label="Save Changes"
+              onPress={handleSaveEdit}
+              loading={savingEdit}
+              fullWidth
+            />
+          </View>
         </BottomModal>
 
         <BottomModal
@@ -2014,6 +2189,13 @@ export default function MembersScreen() {
               <View style={st.adminActionsSection}>
                 <Text style={st.adminActionsTitle}>Admin Actions</Text>
 
+                <Button
+                  label="✏️ Edit Member"
+                  onPress={handleEditPress}
+                  size="sm"
+                  fullWidth
+                />
+
                 {selectedMember.status === "pending" && (
                   <Button
                     label="✓ Approve"
@@ -2070,6 +2252,58 @@ export default function MembersScreen() {
             )}
           </View>
         )}
+      </BottomModal>
+
+      <BottomModal
+        visible={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setSelectedMember(null);
+        }}
+        title="Edit Member"
+      >
+        <View style={{ gap: 12, paddingHorizontal: 16, paddingBottom: 20 }}>
+          <Input
+            label="Full Name *"
+            value={editForm.fullName}
+            onChangeText={(t) =>
+              setEditForm((p) => ({ ...p, fullName: t }))
+            }
+            placeholder="Full name"
+          />
+          <Input
+            label="Email"
+            value={editForm.email}
+            onChangeText={(t) =>
+              setEditForm((p) => ({ ...p, email: t }))
+            }
+            placeholder="Email address"
+            keyboardType="email-address"
+          />
+          <Input
+            label="Phone"
+            value={editForm.phone}
+            onChangeText={(t) =>
+              setEditForm((p) => ({ ...p, phone: t }))
+            }
+            placeholder="Phone number"
+          />
+          <Select
+            label="Role"
+            value={editForm.role}
+            options={USER_ROLES.map((r) => ({
+              label: ROLE_LABELS[r],
+              value: r,
+            }))}
+            onChange={(v) => setEditForm((p) => ({ ...p, role: v }))}
+          />
+          <Button
+            label="Save Changes"
+            onPress={handleSaveEdit}
+            loading={savingEdit}
+            fullWidth
+          />
+        </View>
       </BottomModal>
 
       <BottomModal
@@ -2608,6 +2842,44 @@ const makeSt = (C: Palette) => StyleSheet.create({
     lineHeight: 17,
   },
 
+  // ── Waived fees & exemptions ───────────────────────────────────
+  waiverRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: C.goldBg,
+    borderWidth: 1,
+    borderColor: C.gold,
+    marginBottom: 6,
+  },
+  waiverScope: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: C.goldText,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  waiverPeriod: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text,
+  },
+  waiverReason: {
+    fontSize: 10,
+    color: C.text3,
+    marginTop: 2,
+  },
+  waiverAmount: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: C.goldText,
+    flexShrink: 0,
+  },
+
   // ── Admin actions ──
   adminActionsSection: {
     gap: 8,
@@ -2655,6 +2927,10 @@ const makeSt = (C: Palette) => StyleSheet.create({
     borderColor: C.error,
   },
   passwordButton: {
+    backgroundColor: C.primary,
+    borderColor: C.primary,
+  },
+  editButton: {
     backgroundColor: C.primary,
     borderColor: C.primary,
   },

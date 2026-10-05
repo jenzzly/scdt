@@ -1,6 +1,7 @@
 // _layout.tsx - Update the RootLayout component
 import { useEffect } from "react";
 import { Stack } from "expo-router";
+import { AutoLogoutGate } from "../components/AutoLogoutGate";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
 import * as Font from "expo-font";
@@ -52,6 +53,7 @@ export default function RootLayout() {
   // we don't need to unmount the Stack to hide a flash of unstyled text.
 
   return (
+    <AutoLogoutGate>
     <SafeAreaProvider>
       <StatusBar style={themeMode === "dark" ? "light" : "dark"} />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg } }}>
@@ -67,5 +69,7 @@ export default function RootLayout() {
         <Stack.Screen name="group-settings" options={{ presentation: "modal" }} />
       </Stack>
     </SafeAreaProvider>
+  
+    </AutoLogoutGate>
   );
 }

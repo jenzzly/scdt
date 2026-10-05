@@ -60,6 +60,21 @@ export interface MemberPermissions {
   editMembers: boolean;
   deleteRecords: boolean;
   manageSettings: boolean;
+
+  // ── Fine-grained permissions — see PERM_GROUPS ──────────────────
+  // These split what used to be covered by deleteRecords /
+  // manageSettings. Optional: an existing MemberPermissions
+  // object stays valid, and undefined reads as false.
+  manageContributions?: boolean;   // edit / delete individual contributions
+  manageLoans?: boolean;           // disburse, record repayments, edit, reschedule
+  manageInvestments?: boolean;     // edit / close / delete investments
+  applyLateFees?: boolean;         // apply a late-fee charge
+  waiveLateFees?: boolean;         // freeze / waive / clear a late fee
+  recordAttendance?: boolean;      // mark meeting attendance (separate from manageMeetings)
+  viewAuditLogs?: boolean;         // read the audit trail
+  revertAuditLogs?: boolean;       // undo an audit entry
+  manageRoles?: boolean;           // create / edit roles and their permissions
+  manageBackup?: boolean;          // export / import full group data
 }
 
 export const DEFAULT_MEMBER_PERMISSIONS: MemberPermissions = {
@@ -169,6 +184,19 @@ export interface Group {
   rolePermissions?: Partial<Record<MemberRole, MemberPermissions>>; // per-system-role permission sets, editable
   customRoles?: GroupRole[]; // group-defined roles beyond the 5 built-in ones
   customRolePermissions?: Record<string, MemberPermissions>; // per-custom-role permission sets, keyed by roleId
+
+  // ── Global settings — financial year & reminders ────────────────
+  // Both optional. Existing groups keep working without them,
+  // and the app falls back to sensible defaults when absent.
+
+  /** 1-12. Reports and yearly totals bucket by fiscal year
+   *  starting in this month rather than January. Defaults to
+   *  January when unset. Display-only — no data is rewritten. */
+  financialYearStartMonth?: number;
+
+  /** How many days before a contribution is due to nudge the
+   *  member. 0 or unset disables reminders. */
+  contributionReminderDaysBefore?: number;
 }
 
 export interface ContributionGoalConfig {
@@ -318,6 +346,13 @@ export interface LateFeeExemption {
   createdBy: ID;
   createdByName: string;
   createdAt: string;
+  /**
+   * Amount frozen when this exemption was created. Purely
+   * informational — display only. The waiver logic itself
+   * never reads this; it exists so the member risk view can
+   * show how much was waived.
+   */
+  amount?: number;
 }
 
 export interface RepaymentScheduleItem {

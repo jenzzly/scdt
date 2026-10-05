@@ -44,6 +44,10 @@ export const createLateFeeExemptionSlice = (
       createdBy: authUid,
       createdByName: authName ?? "Admin",
       createdAt: new Date().toISOString(),
+      // Captured at freeze time so the member risk view can
+      // show how much was waived. Optional — older exemptions
+      // created before this field existed have it undefined.
+      amount: (data as any).amount,
     };
 
     const updatedExemptions = [

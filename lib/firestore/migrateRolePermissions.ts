@@ -30,22 +30,36 @@ const SYSTEM_ROLE_DEFAULT_PERMISSIONS: Record<MemberRole, MemberPermissions> = {
     approveContributions: true, approveLoans: true, approveInvestments: true,
     viewAllReports: true, downloadReports: true,
     manageMeetings: true, editMembers: true, deleteRecords: true, manageSettings: true,
+    manageContributions: true, manageLoans: true, manageInvestments: true,
+    applyLateFees: true, waiveLateFees: true, recordAttendance: true,
+    viewAuditLogs: true, revertAuditLogs: true,
+    manageRoles: true, manageBackup: true,
+  
   },
   accountant: {
     ...DEFAULT_MEMBER_PERMISSIONS,
     approveContributions: true, viewAllReports: true, downloadReports: true,
+    manageContributions: true, manageLoans: true, manageInvestments: true,
+    applyLateFees: true, waiveLateFees: true, recordAttendance: true,
+    viewAuditLogs: true, manageBackup: true,
+  
   },
   loan_officer: {
     ...DEFAULT_MEMBER_PERMISSIONS,
     addLoan: true, approveLoans: true, viewAllReports: true,
+    manageLoans: true, applyLateFees: true, recordAttendance: true,
+  
   },
   committee: {
     ...DEFAULT_MEMBER_PERMISSIONS,
     approveContributions: true, approveLoans: true, approveInvestments: true, viewAllReports: true,
+    recordAttendance: true, viewAuditLogs: true,
+  
   },
   member: {
     ...DEFAULT_MEMBER_PERMISSIONS,
     addContribution: true,
+  
   },
 };
 

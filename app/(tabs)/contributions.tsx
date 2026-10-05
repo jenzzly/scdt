@@ -535,7 +535,12 @@ export default function ContributionsScreen() {
           periodStart,
           periodEnd,
           reason: reason || undefined,
-        },
+          // Capture the amount being frozen so the member
+          // risk view can display it later. `as any` because
+          // the input type on addLateFeeExemption is narrower
+          // than the LateFeeExemption shape this produces.
+          amount: waiverTarget.feeAmount,
+        } as any,
         // Only pass the fee tx id when the fee is already on the ledger.
         // Accrued-but-not-yet-applied fees have no wallet tx to clear.
         waiverTarget.applied ? waiverTarget.feeTxId : undefined
