@@ -67,29 +67,81 @@ export function LateFeeWaiverModal({
     setReason("");
 
     const start = new Date(rawPeriodStart + "T00:00:00");
-    if (!isNaN(start.getTime())) {
-      const firstOfMonth = new Date(
-        start.getFullYear(),
-        start.getMonth(),
-        1
-      );
-      const lastOfMonth = new Date(
-        start.getFullYear(),
-        start.getMonth() + 1,
-        0
-      );
-      const iso = (d: Date) =>
-        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
-          2,
-          "0"
-        )}-${String(d.getDate()).padStart(2, "0")}`;
-      setPeriodStart(iso(firstOfMonth));
-      setPeriodEnd(iso(lastOfMonth));
-    } else {
+    if (isNaN(start.getTime())) {
       setPeriodStart(rawPeriodStart);
       setPeriodEnd(rawPeriodStart);
+      return;
     }
-  }, [visible, target?.feeTxId, target?.periodStart]);
+
+    // If the target already carries explicit label dates (recorded
+    // when the fee was computed), use those — they're
+    // authoritative and won't drift if the group's grace is
+    // changed later.
+    const explicitStart =
+      typeof target.labelPeriodStart === "string"
+        ? target.labelPeriodStart.slice(0, 10)
+        : null;
+    const explicitEnd =
+      typeof target.labelPeriodEnd === "string"
+        ? target.labelPeriodEnd.slice(0, 10)
+        : null;
+
+    // Otherwise compute the full period: 1st of the target month
+    // through deadline + grace, where deadline = contributionDay
+    // clamped to the real last day of the month.
+    // Same 1 → 31 treatment as utils/lateFees.ts, so the
+    // waiver period pre-fill matches the fee computation.
+    const rawDay = Number(group?.contributionDay ?? 31) || 31;
+    const dueDay = Math.max(
+      1,
+      Math.min(31, rawDay === 1 ? 31 : rawDay),
+    );
+    const lastDayOfMonth = new Date(
+      start.getFullYear(),
+      start.getMonth() + 1,
+      0,
+    ).getDate();
+    const dueDate = new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      Math.min(dueDay, lastDayOfMonth),
+    );
+
+    const graceDays =
+      context === "loan"
+        ? Math.max(0, Number(group?.loanLateFeeGraceDays ?? 0) || 0)
+        : Math.max(
+            0,
+            Number(group?.contributionLateFeeGraceDays ?? 0) || 0,
+          );
+    const graceEnd = new Date(dueDate);
+    graceEnd.setDate(graceEnd.getDate() + graceDays);
+
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+        2,
+        "0"
+      )}-${String(d.getDate()).padStart(2, "0")}`;
+
+    const firstOfMonth = new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      1,
+    );
+
+    setPeriodStart(explicitStart ?? iso(firstOfMonth));
+    setPeriodEnd(explicitEnd ?? iso(graceEnd));
+  }, [
+    visible,
+    target?.feeTxId,
+    target?.periodStart,
+    target?.labelPeriodStart,
+    target?.labelPeriodEnd,
+    group?.contributionDay,
+    group?.contributionLateFeeGraceDays,
+    group?.loanLateFeeGraceDays,
+    context,
+  ]);
 
   if (!member) return null;
 
@@ -128,7 +180,11 @@ export function LateFeeWaiverModal({
 
         <Text style={styles.waiverSectionTitle}>Period</Text>
         <Text style={styles.waiverSectionHelp}>
-          Defaults to the calendar month of the fee you clicked.
+          Spans the full period the fee covers: the 1st of the
+          month the payment is FOR, through the deadline plus
+          grace. When the deadline is the last day of the month,
+          the window extends into the next month by the number
+          of grace days.
         </Text>
 
         <DatePicker

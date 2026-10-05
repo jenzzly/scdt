@@ -83,6 +83,19 @@ const TYPE_OPTIONS = Object.entries(TYPE_LABELS).map(([value, label]) => ({
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
+// Formats a numeric string with thousand separators as the user
+// types. Keeps at most one decimal point and two decimal places.
+// "1234567.89" → "1,234,567.89". Strips any non-numeric input.
+const formatAmountInput = (raw: string): string => {
+  const cleaned = raw.replace(/[^0-9.]/g, "");
+  if (!cleaned) return "";
+  const parts = cleaned.split(".");
+  const intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  if (parts.length === 1) return intPart;
+  const decPart = (parts[1] ?? "").slice(0, 2);
+  return `${intPart}.${decPart}`;
+};
+
 export default function AddContributionModal() {
   const C = useTheme();
   const styles = useMemo(() => makeStyles(C), [C]);
@@ -156,7 +169,17 @@ export default function AddContributionModal() {
       allMembers,
       allContributions,
       allWallet,
-    ).filter((f) => f.memberId === effectiveMemberId);
+    ).filter((f) => {
+      if (f.memberId !== effectiveMemberId) return false;
+      // Hide any fee that already has a matching wallet tx
+      // marked paid. Matches the Contributions → Late Fee tab
+      // filter exactly, so the two views can't disagree on
+      // the same member and the same period.
+      const tx = allWallet.find(
+        (t) => t.id === f.feeTxId && t.type === "late_fee",
+      );
+      return !(tx && (tx as any).feePaid);
+    });
   }, [group, allMembers, allContributions, allWallet, effectiveMemberId]);
 
   // Exemptions already on this member, filtered to contribution scope.
@@ -306,7 +329,7 @@ export default function AddContributionModal() {
         <Input
           label="Amount *"
           value={amount}
-          onChangeText={setAmount}
+          onChangeText={(v) => setAmount(formatAmountInput(v))}
           keyboardType="numeric"
           prefix={group?.currency ?? "RWF"}
         />

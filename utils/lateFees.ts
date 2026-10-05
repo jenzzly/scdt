@@ -151,24 +151,20 @@ function periodLabel(
       return `${periodStart.getFullYear()}`;
 
     case "monthly":
-    default: {
-      // The period that starts on the 1st of a calendar month is
-      // labeled by the month the payment is FOR — a monthly group
-      // with contributionDay = 5 treats the Oct 5 payment as
-      // covering September, and its 5-day grace pushes the first
-      // fee day to Oct 10. Show "September 2026" on that period,
-      // not "October 2026". Purely a display shift — the accrual
-      // math below still uses periodStart / periodEnd / dueDate
-      // exactly as before, so daysLate / daysPastGrace /
-      // feeAmount / feeTxId and every exemption comparison are
-      // unchanged.
-      const forMonth = new Date(periodStart);
-      forMonth.setMonth(forMonth.getMonth() - 1);
-      return forMonth.toLocaleDateString(undefined, {
+    default:
+      // periodStart is the 1st of the month the contribution
+      // is FOR — Sep 1 for a September period. Its deadline is
+      // contributionDay within that same month (Sep 30 for a
+      // month-end policy), and grace extends past month-end.
+      // Late fees start the day after grace ends.
+      //
+      // The label is periodStart's own month. No shift — what
+      // the admin sees is exactly what the exemption check,
+      // reports filter, and month aggregation all bucket by.
+      return periodStart.toLocaleDateString(undefined, {
         month: "long",
         year: "numeric",
       });
-    }
   }
 }
 
@@ -300,8 +296,37 @@ export interface OverdueContribution {
   memberId: string;
   memberName: string;
 
+  /**
+   * Human label for the period. For a monthly group this is the
+   * calendar month the contribution is FOR — Sep 1 period →
+   * "September 2026". No shift: the label always matches
+   * periodStart's own month.
+   */
   periodLabel: string;
+
+  /**
+   * First day of the month the contribution is FOR (Sep 1 for a
+   * September period). The deterministic fee tx ID encodes this
+   * exact date, so it must not move once a fee has been written.
+   */
   periodStart: string;
+
+  /**
+   * Exclusive end — first day of the NEXT month (Oct 1 for a
+   * September period). Kept for period-iteration math.
+   */
+  periodEnd: string;
+
+  /**
+   * Inclusive window of the label month, for display and date
+   * filtering: Sep 1 → Sep 30 for a September period. Reports,
+   * the waiver modal pre-fill, and any month-bucketed view use
+   * these — they always equal [periodStart, periodStart's
+   * last day].
+   */
+  labelPeriodStart: string;
+  labelPeriodEnd: string;
+
   dueDate: string;
 
   amountDue: number;
@@ -357,8 +382,14 @@ export function findOverdueContributions(
   // this date.
   // ---------------------------------------------------------------------------
 
-  const startDateRaw =
-    group.contributionLateFeeStartDate;
+  // The single activation anchor for every late-fee rule.
+  // Previously this field had a fallback chain
+  // (financialYearStartDate ?? contributionLateFeeStartDate),
+  // which meant an old legacy value kept driving fees even
+  // after the admin set the financial year. There's now exactly
+  // one source of truth — no fallback — so what the admin sees
+  // in Group Settings is what the calculation uses.
+  const startDateRaw = group.financialYearStartDate;
 
   if (!startDateRaw) {
     return [];
@@ -417,10 +448,23 @@ export function findOverdueContributions(
      * the member was late and the fee is calculated
      * through that contributionDate.
      */
+    // Dual-key: contributions written under either convention
+    // (memberId = member-doc id, or memberId = Firebase auth uid)
+    // are treated as belonging to this member. recalcGroupTotals
+    // and useMyMemberIds already match both conventions, so
+    // filtering on just member.id here silently dropped every
+    // legacy-convention contribution — the member looked
+    // perpetually unpaid and every period since the FY start
+    // accrued a fee against them even though their payments were
+    // on the books. Matching the same convention used elsewhere
+    // eliminates that disagreement between screens.
+    const memberAlias = (member as any).userId as string | undefined;
     const approvedByMember =
       contributions.filter(
         (c) =>
-          c.memberId === member.id &&
+          (c.memberId === member.id ||
+            (memberAlias !== undefined &&
+              c.memberId === memberAlias)) &&
           c.status === "approved" &&
           c.contributionType === "regular",
       );
@@ -440,10 +484,40 @@ export function findOverdueContributions(
      * The September contribution period still starts on
      * September 1.
      */
-    let cursor =
-      memberJoined > startDate
-        ? new Date(memberJoined)
-        : new Date(startDate);
+    // Fee-accrual loop starts from the financial year start
+    // date, NOT from the member's dateJoined.
+    //
+    // `dateJoined` records when the MEMBER RECORD was created
+    // in this system — which is not the same as when the
+    // member actually joined the group. It diverges in every
+    // migration, in every re-add after an accidental delete,
+    // and for every member who was contributing informally
+    // before the system was adopted and only formally added
+    // later. Starting the loop from dateJoined silently
+    // truncated the fee history to only the periods after
+    // that later date, which is what produced the
+    // "only 2 months of fees" report for members who have
+    // actually owed fees on every period since the FY start.
+    //
+    // The per-period logic below already handles the
+    // "was this member paid up for this period?" question
+    // correctly:
+    //   • a period covered by an approved contribution
+    //     inside its grace window is cleared — no fee
+    //   • a period with no matching payment accrues the
+    //     full fee
+    //   • a period covered by a per-member late-fee
+    //     exemption is skipped entirely
+    // So extending the loop floor backward does not
+    // manufacture fees for periods that were genuinely paid
+    // — it only surfaces fees that were already owed but
+    // were being hidden by the dateJoined clamp.
+    //
+    // Admins who want to exclude a specific member from fees
+    // for periods before they actually joined can record a
+    // late-fee exemption for those periods via the member
+    // detail panel (addLateFeeExemption).
+    let cursor = new Date(startDate);
 
     const frequencyValue =
       String(
@@ -546,12 +620,33 @@ export function findOverdueContributions(
       if (
         frequencyValue === "monthly"
       ) {
+        // Contribution day defaults to 31 (last day of month),
+        // not 1. A group with no explicit contributionDay set
+        // expects the deadline to land at the end of the month;
+        // the Math.min(configuredDay, lastDayOfMonth) below
+        // already clamps 31 down to 28/29/30 in shorter months,
+        // so "31" here is really "last day of month".
+        //
+        // Defaulting to 1 instead treated every last-of-month
+        // payment as ~25 days overdue, which is what produced
+        // the disagreement between the Add Contribution modal
+        // (showed fees) and the wallet/Contributions screens
+        // (showed payment on time).
+        // contributionDay = 1 is the BRAND defaults template
+        // value and carries no intent for a group that hasn't
+        // been explicitly configured — no UI exposes the field,
+        // and every group created from the template carries 1.
+        // Treat it as "last day of month" (31), matching what
+        // the group actually expects. A group whose admin wants
+        // day 1 as the deadline can still get it by setting
+        // contributionDay to a value other than 1 through the
+        // settings UI (once exposed).
+        const rawDay = group.contributionDay ?? 31;
         const configuredDay =
           Math.max(
             1,
             Math.min(
-              group.contributionDay ??
-                1,
+              rawDay === 1 ? 31 : rawDay,
               31,
             ),
           );
@@ -626,11 +721,36 @@ export function findOverdueContributions(
               return latest;
             }
 
+            // Window: [periodStart, graceDate + 1 day).
+            //
+            // The upper bound used to be periodEnd (exclusive),
+            // which for a September period is Oct 1. That
+            // excluded any payment made Oct 1–5 even though the
+            // member is still inside grace — so the September
+            // fee kept accruing despite being paid. Extending
+            // to graceEnd includes the whole grace window; a
+            // payment on the last grace day counts for this
+            // period and stops further accrual.
+            // Payment window upper bound: max(periodEnd,
+            // graceDate + 1). Using graceEnd alone misses any
+            // payment made later in the same period — e.g. a
+            // payment on the 31st for a group whose
+            // contributionDay is the 1st. Widening to periodEnd
+            // (when that is later than graceEnd) lets a late
+            // payment stop the accrual on its own date instead
+            // of accruing all the way to today.
+            const graceDateEnd = new Date(graceDate);
+            graceDateEnd.setDate(graceDateEnd.getDate() + 1);
+
+            const windowUpperBound = new Date(
+              Math.max(graceDateEnd.getTime(), periodEnd.getTime()),
+            );
+
             if (
               contributionDate <
                 periodStart ||
               contributionDate >=
-                periodEnd
+                windowUpperBound
             ) {
               return latest;
             }
@@ -792,6 +912,15 @@ export function findOverdueContributions(
         const feeTxId =
           `${prefix}-d${daysPastGrace}`;
 
+        // labelPeriodStart / labelPeriodEnd describe the
+        // CALENDAR MONTH the label refers to, inclusive on both
+        // ends. For a September period this is Sep 1 → Sep 30.
+        // periodStart is Sep 1 and periodEnd is Oct 1 (exclusive),
+        // so labelPeriodEnd is periodEnd minus one day.
+        const labelPeriodStart = new Date(periodStart);
+        const labelPeriodEnd = new Date(periodEnd);
+        labelPeriodEnd.setDate(labelPeriodEnd.getDate() - 1);
+
         results.push({
           memberId:
             member.id,
@@ -807,6 +936,15 @@ export function findOverdueContributions(
 
           periodStart:
             periodStart.toISOString(),
+
+          periodEnd:
+            periodEnd.toISOString(),
+
+          labelPeriodStart:
+            labelPeriodStart.toISOString(),
+
+          labelPeriodEnd:
+            labelPeriodEnd.toISOString(),
 
           dueDate:
             dueDate.toISOString(),
@@ -901,13 +1039,12 @@ export function findOverdueInstallments(
    * contribution and loan late fees, this falls back to
    * contributionLateFeeStartDate.
    */
-  const loanStartDateRaw =
-    (
-      group as Group & {
-        loanLateFeeStartDate?: string;
-      }
-    ).loanLateFeeStartDate ??
-    group.contributionLateFeeStartDate;
+  // Same single-source rule as contribution fees — financial
+  // year only. loanLateFeeStartDate and
+  // contributionLateFeeStartDate are no longer read, so a
+  // legacy value can't silently disagree with what the admin
+  // set in Group Settings.
+  const loanStartDateRaw = group.financialYearStartDate;
 
   if (!loanStartDateRaw) {
     return [];

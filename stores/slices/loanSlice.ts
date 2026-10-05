@@ -91,19 +91,55 @@ export const createLoanSlice = (
   },
 
   submitLoan: async (data) => {
-    const { activeGroupId, members, groups } = get();
+    const { activeGroupId, members, groups, authUid } = get();
     if (!activeGroupId) throw new Error("No active group");
     const now = new Date().toISOString();
     const group = groups.find((g: Group) => g.id === activeGroupId);
-    const interestMethod = group?.loanInterestMethod || "flat";
-    const interestRatePeriod =
-      (data as any).interestRatePeriod ??
-      group?.loanInterestRatePeriod ??
-      "monthly";
-    const lateFeeRatePct =
-      (data as any).lateFeeRatePct ?? group?.loanLateFeeRatePct;
-    const lateFeeGraceDays =
-      (data as any).lateFeeGraceDays ?? group?.loanLateFeeGraceDays;
+
+    // ── Role-gated rate lock ────────────────────────────────────
+    // Plain members can't set their own interest rate, method,
+    // rate period, or late-fee terms — those are group-level
+    // financial policy and letting a member set them would
+    // allow a 0% loan to slip through. Staff roles (admin,
+    // accountant, loan_officer, committee) can override for
+    // one-off cases.
+    const requesterMember = members.find(
+      (m: Member) => m.userId === authUid,
+    );
+    const requesterRole = requesterMember?.role ?? "member";
+    const canOverrideRates =
+      requesterRole === "admin" ||
+      requesterRole === "accountant" ||
+      requesterRole === "loan_officer" ||
+      requesterRole === "committee";
+
+    const interestMethod = canOverrideRates
+      ? ((data as any).interestMethod ??
+          group?.loanInterestMethod ??
+          "flat")
+      : (group?.loanInterestMethod || "flat");
+
+    const interestRatePeriod = canOverrideRates
+      ? ((data as any).interestRatePeriod ??
+          group?.loanInterestRatePeriod ??
+          "monthly")
+      : (group?.loanInterestRatePeriod ?? "monthly");
+
+    const lateFeeRatePct = canOverrideRates
+      ? ((data as any).lateFeeRatePct ?? group?.loanLateFeeRatePct)
+      : group?.loanLateFeeRatePct;
+
+    const lateFeeGraceDays = canOverrideRates
+      ? ((data as any).lateFeeGraceDays ?? group?.loanLateFeeGraceDays)
+      : group?.loanLateFeeGraceDays;
+
+    // The interest RATE itself is also locked for members.
+    // Amount and term remain theirs to choose.
+    const effectiveInterestRate = canOverrideRates
+      ? Number(
+          (data as any).interestRate ?? group?.loanInterestRate ?? 0,
+        )
+      : Number(group?.loanInterestRate ?? 0);
 
     // Compute the actual first-payment date. The group setting
     // loanFirstPaymentSkipMonths (default 1) is the number of
@@ -131,7 +167,7 @@ export const createLoanSlice = (
     } = loanSchedule(
       {
         amount: data.amount,
-        interestRate: data.interestRate,
+        interestRate: effectiveInterestRate,
         repaymentMonths: data.repaymentMonths,
         firstPaymentDate,
       },
@@ -151,6 +187,10 @@ export const createLoanSlice = (
     const loan: Loan = {
       ...data,
       id: uid(),
+      // Pin the effective rate/method/period AFTER the spread,
+      // so a misbehaving caller can't smuggle a different value
+      // through `...data` and bypass the role gate above.
+      interestRate: effectiveInterestRate,
       interestMethod,
       interestRatePeriod,
       lateFeeRatePct,

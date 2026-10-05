@@ -18,6 +18,18 @@ const CATEGORIES = [
   { label: "Other", value: "other" },
 ];
 
+// Formats a numeric string with thousand separators as the user
+// types. Keeps at most one decimal point and two decimal places.
+const formatAmountInput = (raw: string): string => {
+  const cleaned = raw.replace(/[^0-9.]/g, "");
+  if (!cleaned) return "";
+  const parts = cleaned.split(".");
+  const intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  if (parts.length === 1) return intPart;
+  const decPart = (parts[1] ?? "").slice(0, 2);
+  return `${intPart}.${decPart}`;
+};
+
 export default function AddExpenseModal() {
   const router = useRouter();
   const C = useTheme();
@@ -35,7 +47,7 @@ export default function AddExpenseModal() {
   const [loading, setLoading] = useState(false);
 
   const handleSave = async () => {
-    const amtNum = parseFloat(amount);
+    const amtNum = parseFloat(amount.replace(/,/g, ""));
     if (!amtNum || amtNum <= 0) { show("Enter a valid amount", "error"); return; }
     if (!description.trim()) { show("Description required", "error"); return; }
     setLoading(true);
@@ -58,7 +70,7 @@ export default function AddExpenseModal() {
     <ModalShell noScroll title="Record Expense" onClose={() => router.back()}>
       <KeyboardAwareScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         <Select label="Category" value={category} options={CATEGORIES} onChange={setCategory} />
-        <Input label={`Amount (${group?.currency ?? "RWF"}) *`} value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="5000" prefix={group?.currency ?? "RWF"} />
+        <Input label={`Amount (${group?.currency ?? "RWF"}) *`} value={amount} onChangeText={(v) => setAmount(formatAmountInput(v))} keyboardType="numeric" placeholder="5,000" prefix={group?.currency ?? "RWF"} />
         <DatePicker label="Date *" value={date} onChange={setDate} placeholder="Select expense date" />
         <Input label="Description *" value={description} onChangeText={setDescription} placeholder="What was this expense for?" multiline />
         <Button label="Record Expense" onPress={handleSave} fullWidth loading={loading} size="lg" />

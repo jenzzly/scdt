@@ -699,6 +699,21 @@ export default function GroupSettingsScreen() {
   const [currency, setCurrency] = useState(group?.currency ?? "RWF");
   const [contribAmount, setContribAmount] = useState(String(group?.contributionAmount ?? 40000));
   const [freq, setFreq] = useState(group?.contributionFrequency ?? "monthly");
+
+  // Day of the month contributions are due. Stored as a string
+  // for the text input; parsed to a number on save. Consumers
+  // clamp it to the actual last day of shorter months (31 →
+  // 30 in April, 28 in February) — see the dueDay computation
+  // in the Late Payment Fees previews, LateFeeWaiverModal,
+  // and findOverdueContributions. Default 1 so a group with
+  // no explicit setting behaves as before: contribution
+  // period = calendar month, deadline = the 1st.
+  const [contributionDay, setContributionDay] = useState(
+    group?.contributionDay !== undefined
+      ? String(group.contributionDay)
+      : "1",
+  );
+
   const [loanRate, setLoanRate] = useState(String(group?.loanInterestRate ?? 2));
   const [loanMethod, setLoanMethod] = useState(group?.loanInterestMethod ?? "flat");
   const [ratePeriod, setRatePeriod] = useState<"monthly" | "annual">(group?.loanInterestRatePeriod ?? "monthly");
@@ -712,7 +727,6 @@ export default function GroupSettingsScreen() {
 
   const [contribLateFeePct, setContribLateFeePct] = useState(String(group?.contributionLateFeeRatePct ?? 5));
   const [contribLateFeeGrace, setContribLateFeeGrace] = useState(String(group?.contributionLateFeeGraceDays ?? 3));
-  const [contribLateFeeStart, setContribLateFeeStart] = useState(group?.contributionLateFeeStartDate ?? "");
   const [loanLateFeePct, setLoanLateFeePct] = useState(String(group?.loanLateFeeRatePct ?? 5));
   const [loanLateFeeGrace, setLoanLateFeeGrace] = useState(String(group?.loanLateFeeGraceDays ?? 3));
 
@@ -723,11 +737,39 @@ export default function GroupSettingsScreen() {
 
 
   // ─── Global settings (financial year + contribution reminder) ──────────
-  const [financialYearStartMonth, setFinancialYearStartMonth] = useState(
-    String(group?.financialYearStartMonth ?? 1),
-  );
   const [contributionReminderDaysBefore, setContributionReminderDaysBefore] =
     useState(String(group?.contributionReminderDaysBefore ?? 3));
+
+  // The single anchor for every date-gated calculation.
+  // YYYY-MM-DD, or empty when unset (late fees don't
+  // accrue until it's set).
+  const [financialYearStartDate, setFinancialYearStartDate] = useState(
+    group?.financialYearStartDate ?? "",
+  );
+
+  // Keep the picker in sync with the group document. The
+  // useState initializer above runs once — if the group doc
+  // arrived after first render (normal for a subscription-
+  // backed store), the picker shows "" even on a group that
+  // already has a value saved. Fill it from the group once it
+  // exists. Never overwrites admin input, because it only runs
+  // when the local field is still empty.
+  useEffect(() => {
+    if (group?.financialYearStartDate && !financialYearStartDate) {
+      setFinancialYearStartDate(group.financialYearStartDate);
+    }
+  }, [group?.financialYearStartDate]);
+
+  // Same treatment for contributionDay. Keyed on group?.id
+  // rather than on the value itself so it re-syncs on a group
+  // switch (the settings screen can stay mounted across one)
+  // but never overwrites admin input mid-edit on the current
+  // group.
+  useEffect(() => {
+    if (group?.contributionDay !== undefined) {
+      setContributionDay(String(group.contributionDay));
+    }
+  }, [group?.id]);
 
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -1383,6 +1425,7 @@ They won't be able to sign in or participate in group activities, and any new la
   const handleSave = async () => {
     if (!activeGroupId) { show("No active group", "error"); return; }
     const contributionAmount = parseNum(contribAmount);
+    const contributionDayNum = parseNum(contributionDay);
     const loanInterestRate = parseNum(loanRate);
     const latePenaltyRatePct = parseNum(lateRatePct);
     const absencePenaltyMemberRatePct = parseNum(absenceMemberPct);
@@ -1396,6 +1439,15 @@ They won't be able to sign in or participate in group activities, and any new la
     const trimmedGoalAnchor = goalEnabled ? goalAnchorDate.trim() : "";
 
     if (contributionAmount !== undefined && contributionAmount < 0) { show("Contribution amount cannot be negative", "error"); return; }
+    if (
+      contributionDayNum !== undefined &&
+      (contributionDayNum < 1 ||
+        contributionDayNum > 31 ||
+        !Number.isInteger(contributionDayNum))
+    ) {
+      show("Contribution day must be a whole number between 1 and 31", "error");
+      return;
+    }
     if (loanInterestRate !== undefined && (loanInterestRate < 0 || loanInterestRate > 100)) { show("Loan interest rate must be 0–100", "error"); return; }
     if (latePenaltyRatePct !== undefined && (latePenaltyRatePct < 0 || latePenaltyRatePct > 100)) { show("Late penalty rate must be 0–100%", "error"); return; }
     if (absencePenaltyMemberRatePct !== undefined && (absencePenaltyMemberRatePct < 0 || absencePenaltyMemberRatePct > 100)) { show("Absence penalty rate must be 0–100%", "error"); return; }
@@ -1430,14 +1482,7 @@ They won't be able to sign in or participate in group activities, and any new la
       }
     }
 
-    const financialYearStartMonthNum = parseNum(financialYearStartMonth);
     const contributionReminderDaysBeforeNum = parseNum(contributionReminderDaysBefore);
-
-    const trimmedStartDate = contribLateFeeStart.trim();
-    if (trimmedStartDate && isNaN(new Date(trimmedStartDate).getTime())) {
-      show("Contribution late fee start date is invalid — use YYYY-MM-DD", "error");
-      return;
-    }
 
     const patch: Parameters<typeof updateGroup>[1] = {
       currency,
@@ -1445,13 +1490,15 @@ They won't be able to sign in or participate in group activities, and any new la
       loanInterestMethod: loanMethod as any,
       loanInterestRatePeriod: ratePeriod,
       ...(contributionAmount !== undefined && { contributionAmount }),
+      ...(contributionDayNum !== undefined && {
+        contributionDay: contributionDayNum,
+      }),
       ...(loanInterestRate !== undefined && { loanInterestRate }),
       ...(latePenaltyRatePct !== undefined && { latePenaltyRatePct }),
       ...(absencePenaltyMemberRatePct !== undefined && { absencePenaltyMemberRatePct }),
       ...(absencePenaltyOfficerRatePct !== undefined && { absencePenaltyOfficerRatePct }),
       ...(contributionLateFeeRatePct !== undefined && { contributionLateFeeRatePct }),
       ...(contributionLateFeeGraceDays !== undefined && { contributionLateFeeGraceDays }),
-      contributionLateFeeStartDate: trimmedStartDate || undefined,
       ...(loanLateFeeRatePct !== undefined && { loanLateFeeRatePct }),
       ...(loanLateFeeGraceDays !== undefined && { loanLateFeeGraceDays }),
       ...(loanFirstPaymentSkipMonthsNum !== undefined && {
@@ -1462,16 +1509,17 @@ They won't be able to sign in or participate in group activities, and any new la
         contributionGoalTargetAmount,
         contributionGoalAnchorDate: trimmedGoalAnchor,
       }),
-          // ── Financial year & contribution reminder ──────────────────────
-      ...(Number.isFinite(financialYearStartMonthNum) &&
-        financialYearStartMonthNum >= 1 &&
-        financialYearStartMonthNum <= 12 && {
-          financialYearStartMonth: financialYearStartMonthNum,
-        }),
+          // ── Contribution reminder ───────────────────────────────────────
       ...(Number.isFinite(contributionReminderDaysBeforeNum) &&
         contributionReminderDaysBeforeNum >= 0 && {
           contributionReminderDaysBefore: contributionReminderDaysBeforeNum,
         }),
+      // ── Financial year anchor ───────────────────────────────────────
+      // The single date every date-gated rule reads. Written as
+      // undefined when empty so stripUndefined drops the field
+      // rather than leaving a stale value behind.
+      financialYearStartDate:
+        financialYearStartDate.trim() || undefined,
     };
 
     setSaving(true);
@@ -2249,8 +2297,29 @@ They won't be able to sign in or participate in group activities, and any new la
                     <Select label="Frequency" value={freq} options={FREQ} onChange={(v) => setFreq(v as any)} />
                   </View>
                 </View>
+
+                {/* Only meaningful for a monthly cadence — daily,
+                    weekly, and yearly groups don't have a "day of
+                    month" concept. */}
+                {freq === "monthly" && (
+                  <View style={styles.row}>
+                    <View style={{ flex: 1 }}>
+                      <Input
+                        label="Contribution day (1–31)"
+                        value={contributionDay}
+                        onChangeText={setContributionDay}
+                        keyboardType="numeric"
+                        hint="Day of the month contributions are due. Clamped to the last day of shorter months (31 → 30 in April, 28 in February)."
+                      />
+                    </View>
+                  </View>
+                )}
+
                 <Text style={styles.fieldHint}>
                   Each member contributes {fmtCurrency(contribAmountNum)} {freq === "monthly" ? "per month" : freq === "weekly" ? "per week" : freq === "yearly" ? "per year" : "per year"}
+                  {freq === "monthly" && parseInt(contributionDay, 10) > 0
+                    ? `, due on day ${Math.min(31, Math.max(1, parseInt(contributionDay, 10) || 1))}`
+                    : ""}
                 </Text>
               </SettingCard>
 
@@ -2362,29 +2431,93 @@ They won't be able to sign in or participate in group activities, and any new la
                 />
               </SettingCard>
 
-              {/* Financial Year */}
+              {/* Financial Year — single date, single source of truth */}
               <SectionHeading
                 label="Financial Year"
-                description="Which calendar month starts your fiscal year. Reports and yearly totals use this instead of January."
+                description="The one date every calculation starts from. Late fees (contributions + loans), goal periods, and yearly reporting all anchor here."
                 icon="📆"
                 accent={C.brandBlue}
               />
               <SettingCard>
-                <Select
-                  label="Year starts in"
-                  value={String(financialYearStartMonth)}
-                  options={MONTHS.map((m) => ({
-                    label: m.label,
-                    value: String(m.value),
-                  }))}
-                  onChange={(v) => setFinancialYearStartMonth(v)}
+                <DatePicker
+                  label="Financial year starts on *"
+                  value={financialYearStartDate}
+                  onChange={setFinancialYearStartDate}
+                  placeholder="Pick the first day of the financial year"
                 />
                 <Text style={styles.fieldHint}>
-                  Current year runs{" "}
-                  {MONTHS[(parseInt(financialYearStartMonth, 10) || 1) - 1]?.label ?? "January"}{" "}
-                  →{" "}
-                  {MONTHS[((parseInt(financialYearStartMonth, 10) || 1) + 10) % 12]?.label ?? "December"}
+                  Required. Late-fee accrual, goal periods, and yearly
+                  reports all start from this date. Unset means no late
+                  fees accrue — set it before recording contributions.
                 </Text>
+
+                {/* Effective start panel — confirms which date each
+                    calculation is ACTUALLY using. That way an admin who
+                    changes the picker can see the change take effect
+                    instead of guessing. */}
+                {financialYearStartDate ? (
+                  <View style={styles.effectiveStartPanel}>
+                    <Text style={styles.effectiveStartTitle}>
+                      Currently in use
+                    </Text>
+
+                    <View style={styles.effectiveStartRow}>
+                      <Text style={styles.effectiveStartLabel}>
+                        Contribution fees
+                      </Text>
+                      <Text
+                        style={[
+                          styles.effectiveStartValue,
+                          { color: C.success },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {financialYearStartDate}
+                      </Text>
+                    </View>
+
+                    <View style={styles.effectiveStartRow}>
+                      <Text style={styles.effectiveStartLabel}>
+                        Loan fees
+                      </Text>
+                      <Text
+                        style={[
+                          styles.effectiveStartValue,
+                          { color: C.success },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {financialYearStartDate}
+                      </Text>
+                    </View>
+
+                    <View style={styles.effectiveStartRow}>
+                      <Text style={styles.effectiveStartLabel}>
+                        Goal periods start
+                      </Text>
+                      <Text
+                        style={[
+                          styles.effectiveStartValue,
+                          { color: C.success },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {goalAnchorDate || financialYearStartDate}
+                        {goalAnchorDate ? " (explicit)" : ""}
+                      </Text>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.effectiveStartPanel}>
+                    <Text style={styles.effectiveStartTitle}>
+                      Currently in use
+                    </Text>
+                    <Text style={styles.effectiveStartWarning}>
+                      ⚠ No financial year date is set. Late fees will not
+                      accrue until you set one and save.
+                    </Text>
+                  </View>
+                )}
               </SettingCard>
 
               {/* Member Onboarding */}
@@ -2484,12 +2617,48 @@ They won't be able to sign in or participate in group activities, and any new la
                     />
                   </View>
                 </View>
-                <DatePicker
-                  label="Start calculating from"
-                  value={contribLateFeeStart}
-                  onChange={setContribLateFeeStart}
-                  placeholder="Select start date (leave blank to disable)"
-                />
+                  {(() => {
+                    const dueDay = Math.max(
+                      1,
+                      Math.min(31, parseInt(contributionDay, 10) || 1),
+                    );
+                    const graceDays = Math.max(
+                      0,
+                      parseInt(contribLateFeeGrace, 10) || 0,
+                    );
+                    const now = new Date();
+                    const y = now.getFullYear();
+                    const m = now.getMonth();
+                    const lastDay = new Date(y, m + 1, 0).getDate();
+                    const dueDate = new Date(y, m, Math.min(dueDay, lastDay));
+                    const graceEnd = new Date(dueDate);
+                    graceEnd.setDate(graceEnd.getDate() + graceDays);
+                    const feeStart = new Date(graceEnd);
+                    feeStart.setDate(feeStart.getDate() + 1);
+                    const monthShort = new Date(y, m, 1).toLocaleDateString("en", { month: "short" });
+                    const endMonthShort = graceEnd.toLocaleDateString("en", { month: "short" });
+                    const crossesMonth =
+                      graceEnd.getMonth() !== m ||
+                      graceEnd.getFullYear() !== y;
+                    return (
+                      <View style={styles.deadlinePreview}>
+                        <Text style={styles.deadlinePreviewTitle}>
+                          Contributions — this month
+                        </Text>
+                        <Text style={styles.deadlinePreviewLine}>
+                          1 {monthShort} → {graceEnd.getDate()} {endMonthShort} {graceEnd.getFullYear()} · {graceDays}d grace
+                        </Text>
+                        <Text style={styles.deadlinePreviewLine}>
+                          Deadline {dueDate.toLocaleDateString()}
+                          {crossesMonth ? ` — grace extends into ${endMonthShort}` : ""}
+                        </Text>
+                        <Text style={styles.deadlinePreviewLine}>
+                          Late fees start {feeStart.toLocaleDateString()}
+                        </Text>
+                      </View>
+                    );
+                  })()}
+
 
                 <Divider />
 
@@ -2512,6 +2681,48 @@ They won't be able to sign in or participate in group activities, and any new la
                     />
                   </View>
                 </View>
+                  {(() => {
+                    const dueDay = Math.max(
+                      1,
+                      Math.min(31, parseInt(contributionDay, 10) || 1),
+                    );
+                    const graceDays = Math.max(
+                      0,
+                      parseInt(loanLateFeeGrace, 10) || 0,
+                    );
+                    const now = new Date();
+                    const y = now.getFullYear();
+                    const m = now.getMonth();
+                    const lastDay = new Date(y, m + 1, 0).getDate();
+                    const dueDate = new Date(y, m, Math.min(dueDay, lastDay));
+                    const graceEnd = new Date(dueDate);
+                    graceEnd.setDate(graceEnd.getDate() + graceDays);
+                    const feeStart = new Date(graceEnd);
+                    feeStart.setDate(feeStart.getDate() + 1);
+                    const monthShort = new Date(y, m, 1).toLocaleDateString("en", { month: "short" });
+                    const endMonthShort = graceEnd.toLocaleDateString("en", { month: "short" });
+                    const crossesMonth =
+                      graceEnd.getMonth() !== m ||
+                      graceEnd.getFullYear() !== y;
+                    return (
+                      <View style={styles.deadlinePreview}>
+                        <Text style={styles.deadlinePreviewTitle}>
+                          Loan repayments — this month
+                        </Text>
+                        <Text style={styles.deadlinePreviewLine}>
+                          1 {monthShort} → {graceEnd.getDate()} {endMonthShort} {graceEnd.getFullYear()} · {graceDays}d grace
+                        </Text>
+                        <Text style={styles.deadlinePreviewLine}>
+                          Deadline {dueDate.toLocaleDateString()}
+                          {crossesMonth ? ` — grace extends into ${endMonthShort}` : ""}
+                        </Text>
+                        <Text style={styles.deadlinePreviewLine}>
+                          Late fees start {feeStart.toLocaleDateString()}
+                        </Text>
+                      </View>
+                    );
+                  })()}
+
               </SettingCard>
 
               {/* Data Management */}
@@ -4071,6 +4282,49 @@ const makeStyles = (C: Palette) => StyleSheet.create({
 
   row: { flexDirection: "row", gap: 8 },
   fieldHint: { fontSize: 10, color: C.text3, marginTop: 3, paddingHorizontal: 4 },
+  effectiveStartPanel: {
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.borderLight,
+  },
+  effectiveStartTitle: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+  effectiveStartRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 6,
+    gap: 10,
+  },
+  effectiveStartLabel: {
+    fontSize: 12,
+    color: C.text2,
+    flexShrink: 0,
+  },
+  effectiveStartValue: {
+    fontSize: 12,
+    fontWeight: "700",
+    flexShrink: 1,
+    textAlign: "right",
+  },
+  effectiveStartWarning: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: C.gold,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: C.borderLight,
+  },
 
   // Highlighted preview chip — used under the rate inputs to surface
   // the actual currency amount a percentage translates to. Reads as

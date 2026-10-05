@@ -42,6 +42,7 @@ import {
   Select,
   DatePicker,
 } from "../../components/ui";
+import { LateFeeWaiverModal } from "../../components/ui/LateFeeWaiverModal";
 
 import {
   C as LightPalette,
@@ -241,11 +242,67 @@ function monthLabel(key: string) {
   });
 }
 
+/**
+ * Label a month key with the ACTUAL contribution period it covers,
+ * including the grace window. For a monthly group with contributionDay
+ * = 30 and grace = 5 days, key "2026-09" produces "1 Sep → 5 Oct 2026".
+ * Falls back to plain "Sep 2026" when the group's config isn't
+ * available, or when the grace period is 0 (in which case the period
+ * is just the calendar month).
+ */
+function periodLabelForMonth(
+  key: string,
+  group: { contributionDay?: number; contributionLateFeeGraceDays?: number } | null | undefined,
+): string {
+  const [y, m] = key.split("-").map(Number);
+  if (!y || !m) return key;
+
+  const monthShort = new Date(y, m - 1, 1).toLocaleDateString("en", {
+    month: "short",
+  });
+
+  if (!group) return `${monthShort} ${y}`;
+
+  // Same 1 → 31 treatment as utils/lateFees.ts, so the
+  // period label matches the fee computation.
+  const rawDay = group.contributionDay ?? 31;
+  const dueDay = Math.max(1, Math.min(31, rawDay === 1 ? 31 : rawDay));
+  const lastDay = new Date(y, m, 0).getDate();
+  const dueDate = new Date(y, m - 1, Math.min(dueDay, lastDay));
+
+  const graceDays = Math.max(0, group.contributionLateFeeGraceDays ?? 0);
+  if (graceDays === 0) {
+    return `${monthShort} ${y}`;
+  }
+
+  const graceEnd = new Date(dueDate);
+  graceEnd.setDate(graceEnd.getDate() + graceDays);
+
+  const endDay = String(graceEnd.getDate());
+  const endMonth = graceEnd.toLocaleDateString("en", { month: "short" });
+  const endYear = graceEnd.getFullYear();
+
+  // Include the year once, after the range, so it reads naturally.
+  const yearSuffix = endYear !== y ? ` ${y} → ${endYear}` : ` ${y}`;
+  return `1 ${monthShort} → ${endDay} ${endMonth}${yearSuffix}`;
+}
+
 function monthBounds(key: string) {
   const [y, m] = key.split("-").map(Number);
   const start = new Date(y, m - 1, 1);
+  // `new Date(y, m, 0)` is the last day of month m-1, in LOCAL
+  // time. Its calendar day is what we want — Sep 30 for
+  // September, not Sep 29. Using toISOString().slice(0,10)
+  // would convert to UTC and push the day backward in any
+  // timezone east of Greenwich, silently excluding the last
+  // day of the month from every filter. Format from local
+  // date parts instead.
   const end = new Date(y, m, 0);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+      2,
+      "0",
+    )}-${String(d.getDate()).padStart(2, "0")}`;
   return { from: iso(start), to: iso(end) };
 }
 
@@ -2355,9 +2412,15 @@ export default function ReportsScreen() {
 
     return [
       { label: "All Months", value: "all" },
-      ...sorted.map((k) => ({ label: monthLabel(k), value: k })),
+      ...sorted.map((k) => ({
+        // Show the period range ("1 Sep → 5 Oct 2026") so the
+        // admin sees exactly which day-window each month covers,
+        // rather than guessing where the grace boundary lands.
+        label: periodLabelForMonth(k, group),
+        value: k,
+      })),
     ];
-  }, [category, contributions, loans, allLateFeesCombined, members, wallet, investments]);
+  }, [category, contributions, loans, allLateFeesCombined, members, wallet, investments, group]);
 
   const memberOptions = useMemo(
     () => [
@@ -4133,6 +4196,44 @@ function MemberDetail({
 
   const [removingId, setRemovingId] = useState<string | null>(null);
 
+  // Waiver creation state — lets an admin record a new
+  // contribution- or loan-scope exemption directly from the
+  // member detail, alongside seeing the existing ones.
+  const [waiverOpen, setWaiverOpen] = useState(false);
+  const [waiverContext, setWaiverContext] = useState<
+    "contribution" | "loan"
+  >("contribution");
+  const [waiverSaving, setWaiverSaving] = useState(false);
+  const addLateFeeExemption = useStore((s) => s.addLateFeeExemption);
+
+  // Full pools for the per-month late-fee status view below.
+  // The `contributions` prop only carries APPROVED rows and the
+  // `wallet` prop only carries this member's txs — the status
+  // helper needs the group's overdue pool plus the member's
+  // exemption list, which the hooks give us.
+  const groupForStatus = useActiveGroup();
+  const allMembersForStatus = useGroupMembers();
+  const allContribsGlobal = useGroupContributions();
+  const allWalletGlobal = useGroupWallet();
+  const overdueContributionsForStatus = useMemo(() => {
+    if (!groupForStatus) return [];
+    try {
+      return findOverdueContributions(
+        groupForStatus,
+        allMembersForStatus,
+        allContribsGlobal,
+        allWalletGlobal,
+      );
+    } catch {
+      return [];
+    }
+  }, [
+    groupForStatus,
+    allMembersForStatus,
+    allContribsGlobal,
+    allWalletGlobal,
+  ]);
+
   const totalContributions = contributions.reduce((s: number, c: any) => s + c.amount, 0);
 
   const loanBalance = loans
@@ -4187,6 +4288,37 @@ function MemberDetail({
   const loanWaivers = exemptions.filter(
     (e) => e.scope === "loan" || e.scope === "both",
   );
+
+  const openCreateWaiver = (kind: "contribution" | "loan") => {
+    setWaiverContext(kind);
+    setWaiverOpen(true);
+  };
+
+  const handleCreateWaiver = async (
+    periodStart: string,
+    periodEnd: string,
+    reason: string,
+  ) => {
+    setWaiverSaving(true);
+    try {
+      await addLateFeeExemption(
+        member.id,
+        {
+          scope: waiverContext,
+          periodStart,
+          periodEnd,
+          reason: reason || undefined,
+        } as any,
+        undefined,
+      );
+      show("Waiver recorded");
+      setWaiverOpen(false);
+    } catch (e: any) {
+      show(e?.message || "Failed to record waiver", "error");
+    } finally {
+      setWaiverSaving(false);
+    }
+  };
 
   const handleRemove = (exemptionId: string) => {
     showConfirm(
@@ -4287,6 +4419,92 @@ function MemberDetail({
         </View>
       </View>
 
+      {/* ── Late Fee Status per month ─────────────────────────────
+          Every contribution month since the member joined, labelled
+          with why they do or don't have a fee. Answers the "why isn't
+          my late fee showing up" question directly. */}
+      <View style={styles.lateFeeStatusSection}>
+        <Text style={styles.cardTitle}>Late Fee Status</Text>
+        <Text style={styles.lateFeeStatusSub}>
+          Every month since joining, and why each one does or doesn't
+          have an outstanding fee.
+        </Text>
+        {(() => {
+          const rows = buildLateFeeStatusRows(
+            member,
+            groupForStatus,
+            overdueContributionsForStatus,
+            allWalletGlobal,
+          );
+          if (rows.length === 0) {
+            return (
+              <Text style={styles.lateFeeStatusEmpty}>
+                No late-fee policy is configured for this group.
+              </Text>
+            );
+          }
+          return rows.map((row, i) => {
+            const meta =
+              row.status === "paid"
+                ? { label: "Paid", color: C.success, bg: C.greenBg }
+                : row.status === "waived"
+                ? { label: "Waived", color: C.info, bg: C.infoBg }
+                : row.status === "outstanding"
+                ? { label: "Outstanding", color: C.error, bg: C.redBg }
+                : row.status === "accruing"
+                ? { label: "Accruing", color: C.gold, bg: C.goldBg }
+                : { label: "On time", color: C.success, bg: C.greenBg };
+            return (
+              <View
+                key={row.periodLabel + i}
+                style={styles.lateFeeStatusRow}
+              >
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text
+                    style={styles.lateFeeStatusMonth}
+                    numberOfLines={1}
+                  >
+                    {row.periodLabel}
+                  </Text>
+                  <Text
+                    style={styles.lateFeeStatusDetail}
+                    numberOfLines={1}
+                  >
+                    {row.detail}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.lateFeeStatusBadge,
+                    {
+                      backgroundColor: meta.bg,
+                      borderColor: meta.color,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.lateFeeStatusBadgeText,
+                      { color: meta.color },
+                    ]}
+                  >
+                    {meta.label}
+                  </Text>
+                </View>
+                {row.amount > 0 ? (
+                  <Text
+                    style={styles.lateFeeStatusAmount}
+                    numberOfLines={1}
+                  >
+                    {fmtCurrency(row.amount)}
+                  </Text>
+                ) : null}
+              </View>
+            );
+          });
+        })()}
+      </View>
+
       <View style={styles.waiverSection}>
         <View style={styles.waiverHeader}>
           <View style={styles.waiverTitleRow}>
@@ -4296,6 +4514,34 @@ function MemberDetail({
                 <Text style={styles.waiverCountText}>{exemptions.length}</Text>
               </View>
             )}
+          </View>
+        </View>
+
+        <View style={styles.waiverCreateRow}>
+          <Text style={styles.waiverCreateHint}>
+            Create a waiver for either fee type. The period
+            spans the 1st of the month through its deadline
+            plus grace.
+          </Text>
+          <View style={styles.waiverCreateButtons}>
+            <TouchableOpacity
+              style={[styles.waiverCreateBtn, styles.waiverCreateBtnContribution]}
+              onPress={() => openCreateWaiver("contribution")}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.waiverCreateBtnText}>
+                + Contribution Waiver
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.waiverCreateBtn, styles.waiverCreateBtnLoan]}
+              onPress={() => openCreateWaiver("loan")}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.waiverCreateBtnText}>
+                + Loan Waiver
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -4469,6 +4715,26 @@ function MemberDetail({
           </Card>
         </>
       )}
+
+      <LateFeeWaiverModal
+        visible={waiverOpen}
+        onClose={() => setWaiverOpen(false)}
+        target={{
+          memberId: member.id,
+          periodStart: new Date().toISOString().slice(0, 10),
+          periodLabel: new Date().toLocaleDateString(undefined, {
+            month: "long",
+            year: "numeric",
+          }),
+          applied: false,
+        }}
+        member={member}
+        group={groupForStatus}
+        saving={waiverSaving}
+        context={waiverContext}
+        onConfirm={handleCreateWaiver}
+        onRemoveExemption={handleRemove}
+      />
     </View>
   );
 }
@@ -5706,6 +5972,99 @@ const makeStyles = (C: Palette) => StyleSheet.create({
 
   modalApplyBtnText: { fontSize: 13, fontWeight: "700", color: "#fff" },
 
+  // ── Late fee status (per-month breakdown) ────────────────────────────
+  lateFeeStatusSection: { marginBottom: 18 },
+  lateFeeStatusSub: {
+    fontSize: 11,
+    color: C.text3,
+    lineHeight: 15,
+    marginTop: 2,
+    marginBottom: 8,
+  },
+  lateFeeStatusEmpty: {
+    fontSize: 11,
+    color: C.text3,
+    textAlign: "center",
+    paddingVertical: 12,
+  },
+  lateFeeStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.borderLight,
+    marginBottom: 6,
+  },
+  lateFeeStatusMonth: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.text,
+  },
+  lateFeeStatusDetail: {
+    fontSize: 10,
+    color: C.text3,
+    marginTop: 1,
+  },
+  lateFeeStatusBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 5,
+    borderWidth: 1,
+  },
+  lateFeeStatusBadgeText: {
+    fontSize: 9,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  lateFeeStatusAmount: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: C.error,
+    flexShrink: 0,
+  },
+
+  // ── Waiver creation row (member detail) ───────────────────────────────
+  waiverCreateRow: {
+    marginBottom: 10,
+  },
+  waiverCreateHint: {
+    fontSize: 11,
+    lineHeight: 15,
+    color: C.text3,
+    marginBottom: 8,
+  },
+  waiverCreateButtons: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  waiverCreateBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  waiverCreateBtnContribution: {
+    backgroundColor: C.infoBg,
+    borderColor: C.info,
+  },
+  waiverCreateBtnLoan: {
+    backgroundColor: C.goldBg,
+    borderColor: C.gold,
+  },
+  waiverCreateBtnText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: C.text,
+  },
+
   // ── Waiver section ────────────────────────────────────────────────────
   waiverSection: { marginBottom: 18 },
   waiverHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
@@ -5727,6 +6086,164 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   memberWaiverPill: { marginTop: 3, alignSelf: "flex-start", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5, backgroundColor: C.goldBg, borderWidth: 1, borderColor: C.gold },
   memberWaiverPillText: { fontSize: 9, fontWeight: "800", color: C.goldText, letterSpacing: 0.2 },
 });
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// Late-fee status history for one member
+//
+// Walks every contribution month from the member's join date (or the
+// fee policy's start date, whichever is later) through today, and
+// labels each one with its status:
+//
+//   "waived"      — a late-fee exemption covers this month
+//   "paid"        — a fee was applied and marked paid
+//   "outstanding" — a fee is on the ledger, unpaid
+//   "accruing"    — days of lateness have accrued, not yet applied
+//   "on_time"     — nothing owed for this month
+//
+// This is what answers "why isn't this member's late fee showing up?" —
+// the admin sees the reason per month instead of guessing.
+// ─────────────────────────────────────────────────────────────────────────
+type LateFeeStatus =
+  | "waived"
+  | "paid"
+  | "outstanding"
+  | "accruing"
+  | "on_time";
+
+interface LateFeeStatusRow {
+  periodLabel: string;
+  monthStart: Date;
+  status: LateFeeStatus;
+  amount: number;
+  detail: string;
+}
+
+function buildLateFeeStatusRows(
+  member: any,
+  group: any,
+  overdueContributions: any[],
+  wallet: any[],
+): LateFeeStatusRow[] {
+  if (!member || !group) return [];
+
+  const ratePct = group.contributionLateFeeRatePct;
+  const startDateRaw = group.contributionLateFeeStartDate;
+  if (!ratePct || ratePct <= 0 || !startDateRaw) return [];
+
+  const policyStart = new Date(startDateRaw);
+  const joinDate = member.dateJoined ? new Date(member.dateJoined) : null;
+
+  let earliest = policyStart;
+  if (joinDate && joinDate > earliest) earliest = joinDate;
+  earliest = new Date(earliest);
+  earliest.setDate(1);
+  earliest.setHours(0, 0, 0, 0);
+
+  const exemptions = (member.lateFeeExemptions ?? []).filter(
+    (e: any) => e.scope === "contribution" || e.scope === "both",
+  );
+
+  // Fee tx lookup so we can tell paid from unpaid.
+  const walletByFeeTxId = new Map<string, any>();
+  for (const t of wallet) {
+    if (t.type === "late_fee") walletByFeeTxId.set(t.id, t);
+  }
+
+  // Overdue fees indexed by the calendar month they belong to.
+  const overdueByMonthKey = new Map<string, any>();
+  for (const o of overdueContributions) {
+    if (o.memberId !== member.id) continue;
+    const d = new Date(o.labelPeriodStart ?? o.periodStart);
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    overdueByMonthKey.set(key, o);
+  }
+
+  const rows: LateFeeStatusRow[] = [];
+  const now = new Date();
+  const cursor = new Date(earliest);
+  let guard = 0;
+  while (cursor <= now && guard < 240) {
+    guard++;
+    const monthStart = new Date(cursor);
+    const monthKey = `${monthStart.getFullYear()}-${monthStart.getMonth()}`;
+    const label = monthStart.toLocaleDateString(undefined, {
+      month: "long",
+      year: "numeric",
+    });
+
+    // Waived — an exemption window covers this month.
+    const exempted = exemptions.some((e: any) => {
+      const eStart = new Date(e.periodStart);
+      const eEnd = new Date(e.periodEnd);
+      return monthStart >= eStart && monthStart <= eEnd;
+    });
+
+    if (exempted) {
+      rows.push({
+        periodLabel: label,
+        monthStart,
+        status: "waived",
+        amount: 0,
+        detail: "Late fee waived for this period",
+      });
+      cursor.setMonth(cursor.getMonth() + 1);
+      continue;
+    }
+
+    const overdue = overdueByMonthKey.get(monthKey);
+
+    if (overdue) {
+      const tx = walletByFeeTxId.get(overdue.feeTxId);
+      const applied = !!tx;
+      const paid = !!(tx as any)?.feePaid;
+
+      if (paid) {
+        rows.push({
+          periodLabel: label,
+          monthStart,
+          status: "paid",
+          amount: Math.abs(tx?.amount ?? overdue.feeAmount ?? 0),
+          detail: "Fee collected",
+        });
+      } else if (applied) {
+        rows.push({
+          periodLabel: label,
+          monthStart,
+          status: "outstanding",
+          amount: Math.abs(tx?.amount ?? overdue.feeAmount ?? 0),
+          detail: `${overdue.daysLate ?? 0} day${
+            overdue.daysLate === 1 ? "" : "s"
+          } late`,
+        });
+      } else {
+        rows.push({
+          periodLabel: label,
+          monthStart,
+          status: "accruing",
+          amount: overdue.feeAmount ?? 0,
+          detail: `${overdue.daysNewlyOwed ?? 0} day${
+            overdue.daysNewlyOwed === 1 ? "" : "s"
+          } newly owed`,
+        });
+      }
+    } else {
+      rows.push({
+        periodLabel: label,
+        monthStart,
+        status: "on_time",
+        amount: 0,
+        detail: "No fee — paid on time or within grace",
+      });
+    }
+
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  // Most recent first.
+  rows.reverse();
+  return rows;
+}
 
 const lightStyles = makeStyles(LightPalette);
 const darkStyles = makeStyles(DarkPalette);

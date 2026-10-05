@@ -2,6 +2,7 @@
 import { useEffect } from "react";
 import { Stack } from "expo-router";
 import { AutoLogoutGate } from "../components/AutoLogoutGate";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
 import * as Font from "expo-font";
@@ -56,7 +57,8 @@ export default function RootLayout() {
     <AutoLogoutGate>
     <SafeAreaProvider>
       <StatusBar style={themeMode === "dark" ? "light" : "dark"} />
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg } }}>
+      <ErrorBoundary>
+        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg } }}>
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="modals/add-contribution" options={{ presentation: "modal" }} />
@@ -66,8 +68,9 @@ export default function RootLayout() {
         <Stack.Screen name="modals/add-meeting" options={{ presentation: "modal" }} />
         <Stack.Screen name="modals/record-repayment" options={{ presentation: "modal" }} />
         <Stack.Screen name="notifications" options={{ presentation: "modal" }} />
-        <Stack.Screen name="group-settings" options={{ presentation: "modal" }} />
-      </Stack>
+          <Stack.Screen name="group-settings" options={{ presentation: "modal" }} />
+        </Stack>
+      </ErrorBoundary>
     </SafeAreaProvider>
   
     </AutoLogoutGate>

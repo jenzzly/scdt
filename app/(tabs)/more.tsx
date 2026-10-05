@@ -33,7 +33,7 @@ import {
   InfoRow,
 } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
-import { type Palette, R, S, fmtCurrency, round2, showConfirm, Layout } from "../../utils/theme";
+import { type Palette, R, S, fmtCurrency, fmtDate, round2, showConfirm, Layout } from "../../utils/theme";
 import { useTheme, useThemeMode } from "../../hooks/useTheme";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -286,6 +286,21 @@ export default function MoreScreen() {
               }`}
             />
             <InfoRow label="Late Penalty" value={latePenaltyLabel} />
+            <InfoRow
+              label="Financial Year"
+              value={
+                group?.financialYearStartDate
+                  ? fmtDate(group.financialYearStartDate)
+                  : "Not set"
+              }
+              accent={!!group?.financialYearStartDate}
+            />
+            {!group?.financialYearStartDate ? (
+              <Text style={st.financialYearWarning}>
+                Late fees will not accrue until a financial year
+                start date is set in Group Settings.
+              </Text>
+            ) : null}
           </View>
         </Card>
 
@@ -530,6 +545,12 @@ const makeSt = (C: Palette) => StyleSheet.create({
   mbLg: { marginBottom: S.lg },
   cardBody: { padding: S.lg },
   cardFooter: { paddingHorizontal: S.lg, paddingBottom: S.md },
+  financialYearWarning: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: C.gold,
+    paddingTop: 8,
+  },
 
   // ── Group card ──
   groupName: {

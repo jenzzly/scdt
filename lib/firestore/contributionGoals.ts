@@ -62,11 +62,21 @@ function getContributionGoalConfig(
     return null;
   }
 
-  if (!anchorDate) {
+  // Fallback anchor: the group's financial-year start. When the
+  // admin has set a financial year but left the goal's explicit
+  // anchor empty, the goal periods tile forward from the
+  // financial year's first day — which is what "every 6 months"
+  // means in a fiscal-year model. When the admin has explicitly
+  // set a goal anchor, that wins, because it's a more specific
+  // intent than the general-purpose financial year.
+  const effectiveAnchor =
+    anchorDate || group.financialYearStartDate;
+
+  if (!effectiveAnchor) {
     return null;
   }
 
-  const anchor = new Date(anchorDate);
+  const anchor = new Date(effectiveAnchor);
 
   if (Number.isNaN(anchor.getTime())) {
     return null;
@@ -75,7 +85,7 @@ function getContributionGoalConfig(
   return {
     periodMonths,
     targetAmount,
-    anchorDate,
+    anchorDate: effectiveAnchor,
   };
 }
 
