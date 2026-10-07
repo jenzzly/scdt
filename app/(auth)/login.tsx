@@ -142,14 +142,30 @@ export default function LoginScreen() {
     } catch (e: any) {
       const code = e?.code ?? "";
 
+      // `auth/invalid-credential` and `auth/wrong-password` are
+      // the same failure from Firebase's perspective — the
+      // email/password pair is rejected. With email enumeration
+      // protection ON (the default on new Firebase projects),
+      // `auth/user-not-found` is collapsed into the same code.
+      //
+      // That means "Invalid email or password" is technically
+      // accurate but useless when the real cause is "this member
+      // was added but never received a working password". Wording
+      // below names the recovery path so a member who IS in the
+      // system isn't told they don't exist.
       const msg =
-        code === "auth/invalid-credential"
-          ? "Invalid email or password"
+        code === "auth/invalid-credential" ||
+        code === "auth/wrong-password"
+          ? "The email or password is incorrect. If an admin just created this account, tap \"Forgot password?\" below to set a password, then sign in again."
           : code === "auth/user-not-found"
-            ? "No account found with this email"
+            ? "No account exists for this email. Ask your group admin to send you an invite."
             : code === "auth/too-many-requests"
-              ? "Too many failed attempts. Try again later"
-              : "Login failed. Please try again.";
+              ? "Too many failed attempts. Try again in a few minutes."
+              : code === "auth/network-request-failed"
+                ? "Network request failed. Check your connection and try again."
+                : code === "auth/user-disabled"
+                  ? "This account has been disabled. Contact your group admin."
+                  : "Login failed. Please try again.";
 
       show(msg, "error");
       passwordRef.current?.focus();
@@ -286,22 +302,12 @@ export default function LoginScreen() {
     </View>
   );
 
-  const registerLinkJsx = (
-    <View style={f.registerRow}>
-      <Text style={f.registerText}>
-        Don't have an account?{" "}
-      </Text>
-
-      <TouchableOpacity
-        onPress={() => router.push("/(auth)/register")}
-        activeOpacity={0.7}
-      >
-        <Text style={f.registerLink}>
-          Create Account
-        </Text>
-      </TouchableOpacity>
-    </View>
-  );
+  // Public self-registration is disabled. Account creation is
+  // admin-initiated: an admin adds the member, then sends the
+  // member a password-reset email from the Members screen. The
+  // member sets a password and signs in normally. Kept as an
+  // empty fragment so the two call sites below still compile.
+  const registerLinkJsx = null;
 
   // Desktop: two-column
   if (isXWide) {

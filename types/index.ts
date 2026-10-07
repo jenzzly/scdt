@@ -148,6 +148,19 @@ export interface Group {
   contributionGoalAnchorDate?: string;
 
   /**
+   * Fraction of the goal target a member must reach in the first
+   * half of each goal period. Below this at the midpoint triggers
+   * the "half-target" compliance fee at period end. Default 50.
+   */
+  contributionGoalMinPct?: number;
+
+  /**
+   * Rate applied to the shortfall (both the half-target shortfall
+   * and the full-target shortfall at period end). Default 2.
+   */
+  contributionGoalLateFeeRatePct?: number;
+
+  /**
    * How many months after the loan is disbursed the FIRST
    * installment is due. Default 1 — a loan disbursed on Oct 15
    * has its first installment due Nov 15. Set to 0 to make the
@@ -245,6 +258,14 @@ export interface Member {
   exitNotes?: string;
   permissions?: MemberPermissions;
   lateFeeExemptions?: LateFeeExemption[];
+  /**
+   * Waiver requests awaiting an approver. Populated by
+   * `addLateFeeExemption`; moved into `lateFeeExemptions` by
+   * `approveLateFeeExemption`, or dropped by
+   * `rejectLateFeeExemption`. Nothing in `pendingExemptions`
+   * affects fee accrual — only approved entries do.
+   */
+  pendingExemptions?: LateFeeExemption[];
   loginToken?: string;
   loginTokenExpiry?: string;
   customRoleId?: ID; 

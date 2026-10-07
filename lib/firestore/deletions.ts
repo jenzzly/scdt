@@ -180,10 +180,28 @@ export async function deleteContributionWithRelations(gId: string, contributionI
     const userInfo = await getCurrentUserInfo();
     if (!userInfo) throw new Error("User not authenticated");
 
+    // [orphan-server-contrib] missing server doc tolerated.
+    //
+    // A contribution that exists only in the local store is a
+    // real state: an offline create whose Firestore write never
+    // landed, or a doc removed server-side by an earlier cascade
+    // (e.g. deleting the loan), whose local cache did not
+    // refresh. Throwing here rolls back the client's optimistic
+    // local delete, re-adds the ghost row to the UI, and blocks
+    // the user from ever clearing it.
+    //
+    // What we still do:
+    //   • delete every wallet tx linked by contributionId
+    //   • write an audit entry marked as "local-only cleanup"
+    //   • recompute member totals when the member doc exists
+    // A real transport failure (network, permission) still
+    // throws — that is what the outer catch is for.
     const contributionRef = doc(contribsCol(gId), contributionId);
     const contributionSnap = await getDoc(contributionRef);
-    if (!contributionSnap.exists()) throw new Error("Contribution not found");
-    const contribution = fromSnap<Contribution>(contributionSnap);
+    const contributionExists = contributionSnap.exists();
+    const contribution = contributionExists
+      ? fromSnap<Contribution>(contributionSnap)
+      : null;
 
     // ── Every wallet tx tied to this contribution ─────────────────
     //
@@ -212,40 +230,46 @@ export async function deleteContributionWithRelations(gId: string, contributionI
         "monthly",
     );
 
-    const canonicalMemberId = await resolveCanonicalMemberId(
-      gId,
-      contribution.memberId,
-    );
-    const memberFeePrefix = `late-fee-contrib-${canonicalMemberId}-`;
-    const contributionYmd = String(contribution.date ?? "").slice(0, 10);
-
-    const memberLateFeeSnap = await getDocs(
-      query(walletCol(gId), where("sourceId", "==", canonicalMemberId)),
-    );
-
-    const matchedLateFeeDocs = memberLateFeeSnap.docs.filter((d) => {
-      if (!d.id.startsWith(memberFeePrefix)) return false;
-
-      const data = d.data() as Record<string, unknown>;
-      if (data.type !== "late_fee") return false;
-      if ((data as any).feePaid === true) return false;
-
-      // Period start is encoded in the ID right after the member
-      // prefix: `late-fee-contrib-{memberId}-YYYY-MM-DD-d{N}`.
-      const periodStartYmd = d.id.slice(
-        memberFeePrefix.length,
-        memberFeePrefix.length + 10,
+    // Period/late-fee matching needs the contribution record
+    // (member + date). When the doc is missing server-side, skip
+    // this branch entirely — there is nothing to match against.
+    let matchedLateFeeDocs: any[] = [];
+    if (contribution) {
+      const canonicalMemberId = await resolveCanonicalMemberId(
+        gId,
+        contribution.memberId,
       );
-      const periodEndYmd = contributionPeriodEnd(
-        periodStartYmd,
-        groupFrequency,
+      const memberFeePrefix = `late-fee-contrib-${canonicalMemberId}-`;
+      const contributionYmd = String(contribution.date ?? "").slice(0, 10);
+
+      const memberLateFeeSnap = await getDocs(
+        query(walletCol(gId), where("sourceId", "==", canonicalMemberId)),
       );
 
-      return (
-        contributionYmd >= periodStartYmd &&
-        contributionYmd < periodEndYmd
-      );
-    });
+      matchedLateFeeDocs = memberLateFeeSnap.docs.filter((d) => {
+        if (!d.id.startsWith(memberFeePrefix)) return false;
+
+        const data = d.data() as Record<string, unknown>;
+        if (data.type !== "late_fee") return false;
+        if ((data as any).feePaid === true) return false;
+
+        // Period start is encoded in the ID right after the member
+        // prefix: `late-fee-contrib-{memberId}-YYYY-MM-DD-d{N}`.
+        const periodStartYmd = d.id.slice(
+          memberFeePrefix.length,
+          memberFeePrefix.length + 10,
+        );
+        const periodEndYmd = contributionPeriodEnd(
+          periodStartYmd,
+          groupFrequency,
+        );
+
+        return (
+          contributionYmd >= periodStartYmd &&
+          contributionYmd < periodEndYmd
+        );
+      });
+    }
 
     // Dedupe: a late fee should never overlap with the direct query,
     // but Map by id makes that impossible to get wrong.
@@ -256,9 +280,13 @@ export async function deleteContributionWithRelations(gId: string, contributionI
 
     const batch = writeBatch((contributionRef as any).firestore);
 
-    // 1. Delete the contribution itself
-    batch.delete(contributionRef);
-    batchRecordDeletion(batch, gId, "contribution", contributionId, contribution as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+    // 1. Delete the contribution itself — only when it exists on
+    //    the server. A local-only orphan skips this step; the
+    //    wallet cascades below still run.
+    if (contributionExists && contribution) {
+      batch.delete(contributionRef);
+      batchRecordDeletion(batch, gId, "contribution", contributionId, contribution as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+    }
 
     // 2. Delete every related wallet transaction (direct + period-matched fees)
     allWalletDocs.forEach((walletDoc) => {
@@ -266,22 +294,45 @@ export async function deleteContributionWithRelations(gId: string, contributionI
       batchRecordDeletion(batch, gId, "wallet_transaction", walletDoc.id, walletDoc.data() as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
     });
 
-    // 3. Recompute the member's total contributions (excluding the deleted one)
-    const memberId = contribution.memberId;
-    const remainingContributions = await getDocs(
-      query(contribsCol(gId), where("memberId", "==", memberId), where("status", "==", "approved"))
-    );
-    const totalAmount = round2(
-      remainingContributions.docs.reduce((sum, d) => {
-        if (d.id === contributionId) return sum; // safety: exclude self if not yet removed from query cache
-        return sum + (d.data().amount || 0);
-      }, 0)
-    );
-    batch.update(doc(membersCol(gId), memberId), {
-      totalContributions: totalAmount,
-      totalSavings: totalAmount,
-      updatedAt: new Date().toISOString(),
-    });
+    // 3. Recompute the member's total contributions (excluding the deleted one).
+    //
+    // [orphan-contrib] skip member-total update when the member doc
+    // does not exist. Firestore rejects the whole batch on an
+    // update against a missing document, so a contribution whose
+    // member was deleted (or never created — imported legacy rows)
+    // could never be removed. We still delete the contribution and
+    // every related wallet tx; we just skip the member-totals write
+    // that has no target.
+    //
+    // [orphan-server-contrib] also skip when the contribution
+    // itself was missing server-side — there is no memberId to
+    // target.
+    const memberId = contribution?.memberId;
+    const memberRef = memberId
+      ? doc(membersCol(gId), memberId)
+      : null;
+    const memberSnap = memberRef ? await getDoc(memberRef) : null;
+    if (memberRef && memberSnap && memberSnap.exists() && memberId) {
+      const remainingContributions = await getDocs(
+        query(contribsCol(gId), where("memberId", "==", memberId), where("status", "==", "approved"))
+      );
+      const totalAmount = round2(
+        remainingContributions.docs.reduce((sum, d) => {
+          if (d.id === contributionId) return sum; // safety: exclude self if not yet removed from query cache
+          return sum + (d.data().amount || 0);
+        }, 0)
+      );
+      batch.update(memberRef, {
+        totalContributions: totalAmount,
+        totalSavings: totalAmount,
+        updatedAt: new Date().toISOString(),
+      });
+    } else {
+      console.warn(
+        "[deleteContributionWithRelations] member not found; skipping totals update",
+        { memberId, contributionId },
+      );
+    }
 
     await batch.commit();
 
@@ -292,8 +343,10 @@ export async function deleteContributionWithRelations(gId: string, contributionI
       action: "deleted",
       entityType: "contribution",
       entityId: contributionId,
-      before: contribution as unknown as Record<string, unknown>,
-      reason: `${reason} (cascaded to ${allWalletDocs.length} wallet transaction${allWalletDocs.length !== 1 ? "s" : ""})`,
+      before: (contribution ?? {}) as unknown as Record<string, unknown>,
+      reason: contributionExists
+        ? `${reason} (cascaded to ${allWalletDocs.length} wallet transaction${allWalletDocs.length !== 1 ? "s" : ""})`
+        : `${reason} (local-only cleanup — contribution was not present on the server; cascaded to ${allWalletDocs.length} wallet transaction${allWalletDocs.length !== 1 ? "s" : ""})`,
     });
   } catch (error) {
     logError("deleteContributionWithRelations", "contribution", error, { groupId: gId, id: contributionId });
@@ -360,15 +413,39 @@ export async function deleteWalletTransactionWithRelations(gId: string, transact
     const userInfo = await getCurrentUserInfo();
     if (!userInfo) throw new Error("User not authenticated");
 
+    // [orphan-server-wallet] missing server doc tolerated.
+    //
+    // Same reasoning as the contribution path above. If the doc
+    // isn't on the server but the client asked us to delete it
+    // (because it was in local state), we still want to clean up
+    // any SIBLING wallet txs referencing the same entity id, and
+    // return success so the local delete sticks.
+    //
+    // We require the caller to have known something about the tx
+    // (id at minimum). Building a shim from just the id lets us
+    // proceed; the cascade queries below run against that id and
+    // any wallet txs it finds get removed.
     const walletRef = doc(walletCol(gId), transactionId);
     const walletSnap = await getDoc(walletRef);
-    if (!walletSnap.exists()) throw new Error("Wallet transaction not found");
-    const walletTx = fromSnap<WalletTransaction>(walletSnap);
+    const walletTxExists = walletSnap.exists();
+    const walletTx: WalletTransaction = walletTxExists
+      ? fromSnap<WalletTransaction>(walletSnap)
+      : ({
+          id: transactionId,
+          groupId: gId,
+          type: "other_debit" as any,
+          amount: 0,
+          description: "",
+          date: "",
+          createdAt: new Date().toISOString(),
+        } as unknown as WalletTransaction);
 
     const batch = writeBatch((walletRef as any).firestore);
 
-    batch.delete(walletRef);
-    batchRecordDeletion(batch, gId, "wallet_transaction", transactionId, walletTx as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+    if (walletTxExists) {
+      batch.delete(walletRef);
+      batchRecordDeletion(batch, gId, "wallet_transaction", transactionId, walletTx as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
+    }
 
     // Track deleted tx IDs to avoid duplicate deletion calls in batch
     const deletedTxIds = new Set<string>([transactionId]);
@@ -635,20 +712,32 @@ export async function deleteWalletTransactionWithRelations(gId: string, transact
         batch.delete(contributionRef);
         batchRecordDeletion(batch, gId, "contribution", contributionId, contribution as unknown as Record<string, unknown>, reason, userInfo.userId, userInfo.userName);
 
-        const remainingContributions = await getDocs(
-          query(contribsCol(gId), where("memberId", "==", contribution.memberId), where("status", "==", "approved"))
-        );
-        const totalAmount = round2(
-          remainingContributions.docs.reduce((sum, d) => {
-            if (d.id === contributionId) return sum;
-            return sum + (d.data().amount || 0);
-          }, 0)
-        );
-        batch.update(doc(membersCol(gId), contribution.memberId), {
-          totalContributions: totalAmount,
-          totalSavings: totalAmount,
-          updatedAt: new Date().toISOString(),
-        });
+        // [orphan-contrib-wallet] Only enqueue the member-totals write
+        // when the target member doc exists. See the parallel fix in
+        // deleteContributionWithRelations for the full reasoning.
+        const memberRef = doc(membersCol(gId), contribution.memberId);
+        const memberSnap = await getDoc(memberRef);
+        if (memberSnap.exists()) {
+          const remainingContributions = await getDocs(
+            query(contribsCol(gId), where("memberId", "==", contribution.memberId), where("status", "==", "approved"))
+          );
+          const totalAmount = round2(
+            remainingContributions.docs.reduce((sum, d) => {
+              if (d.id === contributionId) return sum;
+              return sum + (d.data().amount || 0);
+            }, 0)
+          );
+          batch.update(memberRef, {
+            totalContributions: totalAmount,
+            totalSavings: totalAmount,
+            updatedAt: new Date().toISOString(),
+          });
+        } else {
+          console.warn(
+            "[deleteWalletTransactionWithRelations] member not found; skipping totals update",
+            { memberId: contribution.memberId, contributionId },
+          );
+        }
       }
 
       // Delete any sibling transactions linked to this contribution
@@ -751,7 +840,9 @@ export async function deleteWalletTransactionWithRelations(gId: string, transact
       entityType: "wallet_transaction",
       entityId: transactionId,
       before: walletTx as unknown as Record<string, unknown>,
-      reason,
+      reason: walletTxExists
+        ? reason
+        : `${reason} (local-only cleanup — wallet transaction was not present on the server)`,
     });
 
     // One audit entry per cascade-deleted entity. Without these, a

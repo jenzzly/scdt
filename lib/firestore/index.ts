@@ -36,7 +36,11 @@ export * from "./meetings";
 export * from "./notifications";
 export * from "./groupInit";
 export * from "./deletions";
-export * from "./tokenRequests";
+// tokenRequests removed — the token-based invite flow is gone.
+// Account creation now goes through lib/auth/adminUsers.ts
+// (createUserAsAdmin / resetUserPasswordAsAdmin). The module file
+// is left on disk as an empty stub so any stale import path still
+// resolves without a build error.
 
 // getMembershipId is defined in core.ts (used internally by several domain
 // modules) but screens also import it directly off the FS namespace.

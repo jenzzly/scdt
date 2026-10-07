@@ -297,21 +297,45 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
             get().addWalletTxLocal(tx);
             FS.addWalletTx(activeGroupId, tx).catch(console.warn);
           } else {
-            // Needs approval — notify whoever can approve contributions:
-            // admin, accountant, and loan_officer always can (see
-            // firestore rules canApproveContributions); committee only
-            // with an explicit permission, which isn't checked here
-            // since it's a per-member flag rather than a role — the
-            // small risk of notifying a committee member who then
-            // can't actually act is preferable to silently notifying
-            // no one when a committee member DOES have the permission.
+            // Needs approval — notify whoever can approve contributions.
+            // Admin, accountant, and loan_officer always can (see
+            // firestore rules canApproveContributions); committee and
+            // any custom role can too when their `permissions` object
+            // carries approveContributions: true. Both paths are
+            // covered here so a permissioned committee member isn't
+            // silently left off the notification list.
             const submitter = members.find((m) => m.id === data.memberId);
+
+            // Notify the submitter that their contribution was received.
+            // Previously approvers were told but the member saw nothing
+            // come back until the row was actually approved or rejected,
+            // so the app looked broken in the meantime.
+            if (submitter?.userId) {
+              FS.addNotification(
+                submitter.userId,
+                {
+                  userId: submitter.userId,
+                  groupId: activeGroupId,
+                  type: "contribution_submitted",
+                  title: "Contribution Submitted",
+                  message: `Your contribution of ${data.amount} RWF was submitted and is awaiting approval.`,
+                  read: false,
+                  metadata: { contributionId: contribution.id },
+                  createdAt: now,
+                },
+                submitter.email,
+              ).catch(console.warn);
+            }
+
             const approvers = members.filter(
               (m) =>
                 m.groupId === activeGroupId &&
                 m.status === "active" &&
-                ["admin", "accountant", "loan_officer"].includes(m.role) &&
-                !!m.userId
+                !!m.userId &&
+                (
+                  ["admin", "accountant", "loan_officer"].includes(m.role) ||
+                  m.permissions?.approveContributions === true
+                ),
             );
             for (const approver of approvers) {
               FS.addNotification(approver.userId!, {
@@ -326,6 +350,18 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
               }, approver.email).catch(console.warn);
             }
           }
+
+          // Meeting penalties are collected here — the moment money is
+          // actually moving. Wrapped in catch so a settlement failure
+          // doesn't fail the contribution the member just made.
+          await get()
+            .settleMeetingPenalties(data.memberId)
+            .catch((e) =>
+              console.warn(
+                "[recordContribution] settleMeetingPenalties failed:",
+                e,
+              ),
+            );
 
           get().setSyncStatus("synced");
         } catch (e) {
@@ -348,6 +384,8 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
           id: uid(),
           groupId: activeGroupId,
           type: "contribution",
+          sourceType: "contribution",
+          sourceId: c.id,
           amount: c.amount,
           description: c.description || "Contribution",
           date: c.date,
@@ -373,6 +411,17 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
             createdAt: new Date().toISOString(),
           }, submitter.email).catch(console.warn);
         }
+
+        // Meeting penalties are collected on approval too — same
+        // "money is moving" boundary as recordContribution.
+        await get()
+          .settleMeetingPenalties(c.memberId)
+          .catch((e) =>
+            console.warn(
+              "[approveContribution] settleMeetingPenalties failed:",
+              e,
+            ),
+          );
       },
 
       rejectContribution: async (contributionId, reason) => {

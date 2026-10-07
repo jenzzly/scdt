@@ -12,6 +12,7 @@ export const createMemberSlice = (
   StoreState,
   | "addMemberLocal"
   | "approveMember"
+  | "bulkImportMembers"
   | "createMember"
   | "deleteMember"
   | "deleteMemberLocal"
@@ -503,6 +504,115 @@ export const createMemberSlice = (
 
       throw e;
     }
+  },
+
+  // ═══════════════════════════════════════════════════════════════════
+  // BULK IMPORT MEMBERS
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // Parses rows from a .xlsx / .csv produced (ideally) by the
+  // matching "Export members" button. Expected columns:
+  //
+  //   Full Name | Email | Phone | National ID | Role | Status | Date Joined
+  //
+  // Rows only create Firestore member docs. No Firebase Auth
+  // accounts are made here — a 200-row import would otherwise
+  // spin up 200 temp-password Auth users, each requiring a
+  // separate secondary-auth round-trip. Instead, every row is
+  // created with status "pending" and no userId; the admin
+  // follows up per member with "Send login link" (which now
+  // creates the Auth account on demand — see adminUsers.ts).
+  //
+  // Existing members (matched by lowercased email) are skipped
+  // rather than duplicated. A row that fails validation does not
+  // abort the batch — its error is collected and the next row
+  // runs. Same shape as bulkImportContributions.
+  bulkImportMembers: async (rows, groupId) => {
+    const errors: string[] = [];
+    if (!groupId) throw new Error("No group id");
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return { created: 0, skipped: 0, errors: ["File is empty"] };
+    }
+
+    const now = new Date().toISOString();
+    const existingEmails = new Set(
+      get()
+        .members.filter((m) => m.groupId === groupId)
+        .map((m) => (m.email ?? "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+
+    // Skip a leading header row — the export produces one and
+    // re-importing the file straight from the export is common.
+    const firstRow = rows[0];
+    const startIndex =
+      Array.isArray(firstRow) &&
+      String(firstRow[0] ?? "").trim().toLowerCase() === "full name"
+        ? 1
+        : 0;
+
+    let created = 0;
+    let skipped = 0;
+
+    for (let i = startIndex; i < rows.length; i++) {
+      const row = rows[i];
+      if (!Array.isArray(row)) continue;
+      if (row.every((c) => c === "" || c == null)) continue;
+
+      const fullName = String(row[0] ?? "").trim();
+      const email = String(row[1] ?? "").trim();
+      const phone = String(row[2] ?? "").trim();
+      const nationalId = String(row[3] ?? "").trim();
+      const roleRaw = String(row[4] ?? "member").trim().toLowerCase();
+
+      if (!fullName) {
+        skipped++;
+        if (errors.length < 20) errors.push(`Row ${i + 1}: missing Full Name`);
+        continue;
+      }
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        skipped++;
+        if (errors.length < 20) errors.push(`Row ${i + 1}: invalid Email "${email}"`);
+        continue;
+      }
+      if (existingEmails.has(email.toLowerCase())) {
+        skipped++;
+        if (errors.length < 20)
+          errors.push(`Row ${i + 1}: email ${email} already a member — skipped`);
+        continue;
+      }
+
+      const role = ["admin", "accountant", "loan_officer", "committee", "member", "audit", "groups"].includes(
+        roleRaw,
+      )
+        ? (roleRaw as any)
+        : "member";
+
+      try {
+        await FS.addMember(groupId, {
+          groupId,
+          fullName,
+          email,
+          phone,
+          nationalId: nationalId || undefined,
+          role,
+          status: "pending",
+          dateJoined: now,
+          totalContributions: 0,
+          totalSavings: 0,
+          loanEarnings: 0,
+        } as any);
+
+        existingEmails.add(email.toLowerCase());
+        created++;
+      } catch (e: any) {
+        skipped++;
+        if (errors.length < 20)
+          errors.push(`Row ${i + 1}: ${e?.message || "unknown error"}`);
+      }
+    }
+
+    return { created, skipped, errors };
   },
 
   // ─────────────────────────────

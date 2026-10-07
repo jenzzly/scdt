@@ -23,7 +23,7 @@
 // group-settings.tsx) rather than running it automatically, since
 // scanning N members means N membership-doc reads and a mismatch is
 // rare enough that it doesn't need constant background checking.
-import { doc, getDoc } from "./core";
+import { doc, getDoc, writeBatch, auth } from "./core";
 import { db } from "./core";
 import type { Member } from "./core";
 import { getMembershipId } from "./core";
@@ -108,6 +108,43 @@ export async function fixMembershipDrift(
   groupId: string,
   drift: MembershipDrift,
 ): Promise<void> {
+  const user = auth.currentUser;
+
+  // When the drift is on the CURRENT user, `updateMember` cannot
+  // fix it. updateMember writes role/status via updateDoc against
+  // groupMemberships, and the rules require `isAdmin(groupId)`
+  // for that update. If the caller IS the drifted admin, the
+  // server sees them as a non-admin and rejects — the exact
+  // deadlock this is meant to break.
+  //
+  // The rules DO allow a user to delete and re-create their OWN
+  // membership doc (see `allow delete: if resource.data.userId ==
+  // uid()` and `allow create: if request.resource.data.userId ==
+  // uid()`). An atomic batch gives us both operations in one
+  // round-trip and one rule evaluation each — no window where
+  // the user has no membership at all.
+  if (user && drift.userId === user.uid) {
+    const membershipId = getMembershipId(groupId, user.uid);
+    const membershipRef = doc(db, "groupMemberships", membershipId);
+
+    const batch = writeBatch(db);
+    batch.delete(membershipRef);
+    batch.set(membershipRef, {
+      id: membershipId,
+      userId: user.uid,
+      groupId,
+      memberId: drift.memberId,
+      role: drift.memberRole,
+      status: drift.memberStatus,
+      email: (user.email ?? "").toLowerCase(),
+      createdAt: new Date().toISOString(),
+    });
+    await batch.commit();
+    return;
+  }
+
+  // Everyone else: the standard path, which updates both the
+  // members doc and the groupMemberships doc in one call.
   await updateMember(groupId, drift.memberId, {
     role: drift.memberRole as any,
     status: drift.memberStatus as any,
@@ -129,4 +166,73 @@ export async function reconcileAllMemberships(
     await fixMembershipDrift(groupId, d);
   }
   return drift;
+}
+
+/**
+ * Detects and repairs drift on the CURRENT user's own
+ * groupMemberships doc, using the delete + recreate path the
+ * rules allow for a user's own membership.
+ *
+ * Called at the START of the drift-check flow, before anything
+ * tries to read OTHER members' membership docs. Reason: every
+ * one of those reads evaluates `isAdmin(groupId)`, which reads
+ * the caller's OWN membership. If the caller's membership is
+ * out of sync, every subsequent read is denied — so drift on
+ * other members is never even detected. Fixing the caller first
+ * is what makes the rest of the flow work.
+ *
+ * Returns true when a repair was made, false when there was
+ * nothing to fix (or the current user has no linked account).
+ */
+export async function repairOwnMembershipIfDrifted(
+  groupId: string,
+  member: Member,
+): Promise<boolean> {
+  const user = auth.currentUser;
+  if (!user) return false;
+  if (!member.userId || member.userId !== user.uid) return false;
+
+  const membershipId = getMembershipId(groupId, user.uid);
+  const membershipRef = doc(db, "groupMemberships", membershipId);
+
+  let snapExists = false;
+  let snapRole: string | null = null;
+  let snapStatus: string | null = null;
+  try {
+    const snap = await getDoc(membershipRef);
+    if (snap.exists()) {
+      snapExists = true;
+      snapRole = snap.data()?.role ?? null;
+      snapStatus = snap.data()?.status ?? null;
+    }
+  } catch (readErr) {
+    // Reading your own membership is always allowed by the
+    // rules, but if for any reason it fails, treat it as
+    // drifted and try the delete+recreate path anyway.
+    console.warn(
+      "[repairOwnMembershipIfDrifted] read failed:",
+      readErr,
+    );
+  }
+
+  const roleMatches = snapExists && snapRole === member.role;
+  const statusMatches = snapExists && snapStatus === member.status;
+  if (roleMatches && statusMatches) return false;
+
+  const batch = writeBatch(db);
+  batch.delete(membershipRef);
+  batch.set(membershipRef, {
+    id: membershipId,
+    userId: user.uid,
+    groupId,
+    memberId: member.id,
+    role: member.role,
+    status: member.status,
+    email:
+      (member.email ?? user.email ?? "").toLowerCase(),
+    createdAt: new Date().toISOString(),
+  });
+  await batch.commit();
+
+  return true;
 }

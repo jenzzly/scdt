@@ -402,7 +402,11 @@ export default function DashboardScreen() {
 
   const QUICK_ACTIONS = [
     { label: "Contribute", icon: "↑",  route: "/modals/add-contribution", show: permissions.addContribution },
-    { label: "New Loan",   icon: "₣",  route: "/modals/add-loan",         show: permissions.addLoan },
+    // A plain member can always request a loan for themselves —
+    // the server rules accept it, and add-loan.tsx locks the
+    // member picker to the caller when they are not staff. Same
+    // defensive gate as the Loans screen button.
+    { label: "New Loan",   icon: "₣",  route: "/modals/add-loan",         show: permissions.addLoan || role === "member" },
     { label: "Invest",     icon: "◈",  route: "/modals/add-investment",   show: permissions.addInvestment },
     { label: "Expense",    icon: "↓",  route: "/modals/add-expense",      show: isAdmin },
   ].filter(a => a.show);

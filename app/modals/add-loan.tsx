@@ -30,12 +30,19 @@ import {
 } from "../../components/ui";
 
 import { ModalShell } from "../../components/ui/ModalShell";
+import { LateFeeWaiverModal } from "../../components/ui/LateFeeWaiverModal";
 import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 
 import { type Palette, R, S, addMonthsToYmd, fmtCurrency, loanSchedule, round2, showConfirm, formatAmountInput, padAmountOnBlur, parseFormattedAmount } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 
 import { useUnpaidPenalties } from "../../hooks/useUnpaidPenalties";
+
+// Minimum outstanding (in the group currency) before the "Waive"
+// action appears on the Outstanding Obligations panel. Chosen so a
+// trivial fee can't be waived in bulk — the admin has to actively
+// decide to forgive a non-trivial amount.
+const WAIVE_THRESHOLD = 30000;
 
 // Months are free-typed by the user.
 
@@ -53,6 +60,8 @@ export default function AddLoanModal() {
     activeGroupId,
     clearAllMemberPenalties,
     clearStandaloneLateFee,
+    addLateFeeExemption,
+    removeLateFeeExemption,
   } = useStore();
 
   const role = useCurrentUserRole();
@@ -135,6 +144,14 @@ export default function AddLoanModal() {
 
   const [showPenaltyDetails, setShowPenaltyDetails] =
     useState(false);
+
+  // Aggregate waiver target — set when the admin clicks "Waive"
+  // on the Outstanding Obligations panel. Shape matches what
+  // LateFeeWaiverModal expects (memberId, periodStart, periodLabel,
+  // applied, feeTxId), plus we carry feeAmount for the exemption
+  // record's informational amount field.
+  const [waiverTarget, setWaiverTarget] = useState<any | null>(null);
+  const [waiverSaving, setWaiverSaving] = useState(false);
 
   const [clearingPenalties, setClearingPenalties] =
     useState(false);
@@ -507,6 +524,140 @@ export default function AddLoanModal() {
   // ------------------------------------------------------------
 
   const canClearPenalties = canManageLoans;
+
+  // Waive authority is a bit broader than "clear": admin,
+  // accountant, and loan_officer all get it per the default
+  // role-permissions map. Committee needs the explicit
+  // waiveLateFees bit.
+  const canWaiveFees =
+    role === "admin" ||
+    role === "accountant" ||
+    role === "loan_officer";
+
+  // Build an aggregate target spanning every outstanding item and
+  // open the shared waiver modal. The modal itself provides the
+  // period and reason inputs; the aggregate just seeds the period
+  // to cover the widest window of what's currently owed.
+  const openAggregateWaiver = () => {
+    if (!selectedId) return;
+
+    const dates: string[] = [];
+    unpaidPenalties.penalties.forEach((p: any) => {
+      if (p?.meetingDate) dates.push(String(p.meetingDate).slice(0, 10));
+    });
+    unpaidPenalties.walletPenalties.forEach((p: any) => {
+      if (p?.date) dates.push(String(p.date).slice(0, 10));
+    });
+    (unpaidPenalties.liveLateContributions ?? []).forEach((f: any) => {
+      if (f?.dueDate) dates.push(String(f.dueDate).slice(0, 10));
+    });
+    (unpaidPenalties.liveLateInstallments ?? []).forEach((f: any) => {
+      if (f?.dueDate) dates.push(String(f.dueDate).slice(0, 10));
+    });
+    (unpaidPenalties.unpaidContributions ?? []).forEach((c: any) => {
+      if (c?.date) dates.push(String(c.date).slice(0, 10));
+    });
+    (unpaidPenalties.overdueLoans ?? []).forEach((l: any) => {
+      if (l?.applicationDate) dates.push(String(l.applicationDate).slice(0, 10));
+    });
+
+    const clean = dates.filter(Boolean).sort();
+    const today = new Date().toISOString().slice(0, 10);
+    const earliest = clean[0] ?? today;
+    const latest = clean[clean.length - 1] ?? today;
+
+    setWaiverTarget({
+      memberId: selectedId,
+      periodStart: earliest,
+      periodEnd: latest,
+      periodLabel: `${unpaidPenalties.count} outstanding item${
+        unpaidPenalties.count !== 1 ? "s" : ""
+      }`,
+      applied: false,
+      feeAmount: penaltyAmount,
+    });
+  };
+
+  const handleConfirmWaiver = async (
+    periodStart: string,
+    periodEnd: string,
+    reason: string,
+  ) => {
+    if (!waiverTarget?.memberId) return;
+    if (typeof addLateFeeExemption !== "function") {
+      show("Waiver store action is not wired up yet", "error");
+      return;
+    }
+
+    setWaiverSaving(true);
+    try {
+      // (1) Record the exemption. Scope "both" so it covers
+      // contribution AND loan fees for the period — an aggregate
+      // waiver is by definition not specific to one fee type.
+      await addLateFeeExemption(
+        waiverTarget.memberId,
+        {
+          scope: "both",
+          periodStart,
+          periodEnd,
+          reason: reason || undefined,
+          amount: penaltyAmount,
+        } as any,
+        undefined,
+      );
+
+      // (2) Sweep the ledger — mark every outstanding penalty as
+      // paid so the panel actually goes to zero. Principal and
+      // contributions owed are deliberately NOT touched; a waiver
+      // forgives FEES, not money the member borrowed or owes
+      // against a goal.
+      const walletFeeIds = unpaidPenalties.walletPenalties.map(
+        (p: any) => p.id,
+      );
+      for (const id of walletFeeIds) {
+        try {
+          await clearStandaloneLateFee(id);
+        } catch (e) {
+          console.warn("[waive] failed to clear fee tx", id, e);
+        }
+      }
+
+      if (
+        unpaidPenalties.penalties.length > 0 &&
+        typeof clearAllMemberPenalties === "function"
+      ) {
+        try {
+          await clearAllMemberPenalties(waiverTarget.memberId);
+        } catch (e) {
+          console.warn("[waive] failed to clear meeting penalties", e);
+        }
+      }
+
+      show(
+        `Waiver recorded — ${fmtCurrency(penaltyAmount)} in fees cleared`,
+      );
+      setWaiverTarget(null);
+      setShowPenaltyDetails(false);
+    } catch (e: any) {
+      show(e?.message || "Failed to record waiver", "error");
+    } finally {
+      setWaiverSaving(false);
+    }
+  };
+
+  const handleRemoveWaiverExemption = async (exemptionId: string) => {
+    if (!waiverTarget?.memberId) return;
+    if (typeof removeLateFeeExemption !== "function") return;
+    try {
+      await removeLateFeeExemption(
+        waiverTarget.memberId,
+        exemptionId,
+      );
+      show("Exemption removed");
+    } catch (e: any) {
+      show(e?.message || "Failed to remove exemption", "error");
+    }
+  };
 
   // ------------------------------------------------------------
   // CLEAR ALL MEETING PENALTIES
@@ -1018,6 +1169,63 @@ export default function AddLoanModal() {
             )
           )}
         </ScrollView>
+
+        {/* ---------------------------------------------------- */}
+        {/* WAIVE OUTSTANDING — only when a non-trivial amount is */}
+        {/* owed AND the signed-in user has waive authority.     */}
+        {/* ---------------------------------------------------- */}
+
+        {canWaiveFees && penaltyAmount >= WAIVE_THRESHOLD && (
+          <TouchableOpacity
+            style={{
+              marginTop: S.md,
+              paddingVertical: 12,
+              paddingHorizontal: S.md,
+              borderRadius: R.md,
+              backgroundColor: C.goldBg,
+              borderWidth: 1,
+              borderColor: C.gold,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+            }}
+            onPress={openAggregateWaiver}
+            activeOpacity={0.85}
+          >
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text
+                style={{
+                  fontSize: 13,
+                  fontWeight: "800",
+                  color: C.goldText,
+                }}
+              >
+                Waive Outstanding
+              </Text>
+              <Text
+                style={{
+                  fontSize: 11,
+                  color: C.goldText,
+                  marginTop: 2,
+                  lineHeight: 15,
+                }}
+              >
+                Forgive {fmtCurrency(penaltyAmount)} in fees and record an
+                exemption so no new fees accrue for this period.
+              </Text>
+            </View>
+            <Text
+              style={{
+                fontSize: 16,
+                fontWeight: "800",
+                color: C.goldText,
+              }}
+            >
+              ›
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {/* ---------------------------------------------------- */}
         {/* MODAL FOOTER */}
@@ -1615,6 +1823,23 @@ export default function AddLoanModal() {
       {showPenaltyDetails && (
         <PenaltyDetailsModal />
       )}
+
+      {/* Aggregate waiver modal. Opened from the "Waive
+          Outstanding" action in the penalty panel above. The
+          modal provides period + reason; the confirm handler
+          records the exemption and sweeps currently-outstanding
+          fees. */}
+      <LateFeeWaiverModal
+        visible={!!waiverTarget}
+        onClose={() => setWaiverTarget(null)}
+        target={waiverTarget}
+        member={selectedMember ?? null}
+        group={group}
+        saving={waiverSaving}
+        context="contribution"
+        onConfirm={handleConfirmWaiver}
+        onRemoveExemption={handleRemoveWaiverExemption}
+      />
 
       <Toast
         visible={visible}

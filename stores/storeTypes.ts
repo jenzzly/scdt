@@ -10,7 +10,11 @@ import type {
   WalletTransaction, Expense, Meeting, AppNotification,
   SyncStatus, ID, DeletionRecord, AuditLog, LateFeeExemption,
 } from "../types";
-import type { OverdueContribution, OverdueInstallment } from "../utils/lateFees";
+import type {
+  OverdueContribution,
+  OverdueInstallment,
+  OverdueGoalFee,
+} from "../utils/lateFees";
 
 export type DataViewMode = "personal" | "group" | "admin" | "mine";
 
@@ -171,11 +175,33 @@ export interface StoreState {
   deleteWalletTransaction: (transactionId: ID, reason: string) => Promise<void>;
   applyContributionLateFee: (overdue: OverdueContribution, customAmount?: number) => Promise<void>;
   applyLoanLateFee: (overdue: OverdueInstallment, customAmount?: number) => Promise<void>;
+  /**
+   * Apply a contribution-goal compliance fee. Called from the
+   * Late Fees tab / Members risk view for a specific
+   * OverdueGoalFee returned by findGoalComplianceFees.
+   */
+  applyGoalLateFee: (overdue: OverdueGoalFee, customAmount?: number) => Promise<void>;
   clearStandaloneLateFee: (transactionId: ID) => Promise<void>;
   updateWalletTransaction: (transactionId: ID, data: Partial<WalletTransaction>, reason?: string) => Promise<void>;
 
   // High-level actions
   createMember: (data: Omit<Member, "id" | "totalContributions" | "totalSavings" | "loanEarnings">) => Promise<ID>;
+  /**
+   * Bulk-import members from a parsed .xlsx / .csv.
+   *
+   * `rows` is the array-of-arrays from importXlsx(). Columns:
+   *   Full Name | Email | Phone | National ID | Role | Status | Date Joined
+   * (a leading header row is skipped automatically).
+   *
+   * Creates Firestore member docs only — NO Firebase Auth accounts.
+   * Members land with status "pending"; the admin follows up with
+   * "Send login link" per member (which now creates the Auth
+   * account on demand). Duplicate emails are skipped.
+   */
+  bulkImportMembers: (
+    rows: any[][],
+    groupId: ID,
+  ) => Promise<{ created: number; skipped: number; errors: string[] }>;
   updateMember: (memberId: ID, data: Partial<Member>) => Promise<void>;
   approveMember: (memberId: ID) => Promise<void>;
   deleteMember: (memberId: ID) => Promise<void>;
@@ -203,6 +229,27 @@ export interface StoreState {
    * ledger; the exemption is only about preventing new accrual.
    */
   removeLateFeeExemption: (memberId: ID, exemptionId: ID) => Promise<void>;
+  /**
+   * Promote a pending exemption to the active `lateFeeExemptions`
+   * array, and (when `feeTxIdToClear` is provided) mark the linked
+   * wallet fee as paid in the same transaction. Only approvers
+   * (admin / accountant / loan_officer / permissions.waiveLateFees)
+   * should call this.
+   */
+  approveLateFeeExemption: (
+    memberId: ID,
+    exemptionId: ID,
+    feeTxIdToClear?: ID,
+  ) => Promise<void>;
+  /**
+   * Drop a pending exemption. Notifies the requester. Does not
+   * affect any wallet tx.
+   */
+  rejectLateFeeExemption: (
+    memberId: ID,
+    exemptionId: ID,
+    reason?: string,
+  ) => Promise<void>;
   recordContribution: (data: Omit<Contribution, "id" | "createdAt" | "status">, autoApprove?: boolean) => Promise<ID>;
   /**
    * Bulk import of contributions from a parsed .xlsx (or .csv) file.
@@ -274,6 +321,12 @@ export interface StoreState {
   deleteWalletTx: (id: ID, reason: string) => Promise<void>;
   scheduleMeeting: (data: Omit<Meeting, "id" | "createdAt">) => Promise<ID>;
   recordAttendance: (meetingId: ID, memberId: ID, attended: boolean, lateMinutes?: number) => Promise<void>;
+  /**
+   * Converts a member's unpaid meeting penalties into wallet txs.
+   * Called by the contribution and loan flows when the member is
+   * actually transacting — meetings themselves never touch the wallet.
+   */
+  settleMeetingPenalties: (memberId: ID) => Promise<void>;
   reset: () => void;
 }
 

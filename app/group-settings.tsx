@@ -13,13 +13,22 @@ import { KeyboardAwareScrollView } from "../components/ui/KeyboardAwareScrollVie
 import { C as LightPalette, D as DarkPalette, fmtCurrency, fmtDate, showConfirm, round2, uid, type Palette } from "../utils/theme";
 import { useTheme, useThemeMode } from "../hooks/useTheme";
 import { exportFullData, importFullData } from "../utils/importExport";
+import { exportXlsx, importXlsx } from "../utils/export";
 import * as FS from "../lib/firestore";
 import type { AuditLog, MemberPermissions, Member, GroupRole, MemberRole } from "../types";
 import { DEFAULT_MEMBER_PERMISSIONS } from "../types";
 import { ROLE_LABELS } from "../types/roles";
-import { createUserAsAdmin } from "../lib/auth/adminUsers";
+import {
+  createUserAsAdmin,
+  resetUserPasswordAsAdmin,
+} from "../lib/auth/adminUsers";
 import { generateLoginToken } from "../utils/authTokens";
-import { findMembershipDrift, fixMembershipDrift, type MembershipDrift } from "../lib/firestore/reconcileMemberships";
+import {
+  findMembershipDrift,
+  fixMembershipDrift,
+  repairOwnMembershipIfDrifted,
+  type MembershipDrift,
+} from "../lib/firestore/reconcileMemberships";
 
 // ─────────────────────────────────────────────
 // Constants
@@ -77,7 +86,7 @@ const SYSTEM_ROLE_DEFAULT_PERMISSIONS: Record<MemberRole, MemberPermissions> = {
     applyLateFees: true, waiveLateFees: true, recordAttendance: true,
     viewAuditLogs: true, revertAuditLogs: true,
     manageRoles: true, manageBackup: true,
-  
+
   },
   accountant: {
     ...DEFAULT_MEMBER_PERMISSIONS,
@@ -93,7 +102,9 @@ const SYSTEM_ROLE_DEFAULT_PERMISSIONS: Record<MemberRole, MemberPermissions> = {
   },
   member: {
     ...DEFAULT_MEMBER_PERMISSIONS,
+    // member role: can apply for their own loan
     addContribution: true,
+    addLoan: true,
   },
 };
 
@@ -672,8 +683,63 @@ export default function GroupSettingsScreen() {
   const [memberToDelete, setMemberToDelete] = useState<Member | null>(
     null,
   );
+  // Inline error shown INSIDE the delete modal. Previously every
+  // block reason (has-history, permission-denied, offline) fired
+  // a Toast that rendered BEHIND the still-open modal, so the
+  // admin saw the modal refuse to close with no visible reason.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Spinner flag for the confirm button during the async delete.
+  const [deletingMember, setDeletingMember] = useState(false);
   const [creatingMember, setCreatingMember] = useState(false);
   const [savingMember, setSavingMember] = useState(false);
+  const [importingMembers, setImportingMembers] = useState(false);
+  const [exportingMembers, setExportingMembers] = useState(false);
+  const [bulkInviting, setBulkInviting] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
+  const [showWaiverModal, setShowWaiverModal] = useState(false);
+  const [waiverBusyId, setWaiverBusyId] = useState<string | null>(null);
+  // Inline error for the Add New Member modal. Every failure
+  // path previously fired a Toast via show() — which rendered
+  // BEHIND the still-open modal and was never seen. The modal
+  // then appeared to freeze on submit.
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  // ─── Admin self-heal on mount ──────────────────────────────────────────
+  //
+  // Runs once when this screen mounts. If the current user's own
+  // groupMemberships doc disagrees with their members doc (which
+  // happens after a restore-from-backup, a manual console edit, or
+  // the duplicate-member bug), every admin-only write fails with
+  // permission-denied. Heal it proactively here so the admin can
+  // act without first discovering the drift.
+  //
+  // Uses the delete+recreate path the rules allow for a user's own
+  // membership doc — no admin gate needed to run it.
+  useEffect(() => {
+    if (!activeGroupId || !currentMember?.userId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const fixed = await repairOwnMembershipIfDrifted(
+          activeGroupId,
+          currentMember,
+        );
+        if (fixed && !cancelled) {
+          // The rules engine needs a moment to observe the new
+          // doc; the very next admin action will pick it up.
+          console.log(
+            "[group-settings] selfHealOnMount: own membership repaired",
+          );
+        }
+      } catch (e) {
+        console.warn("[group-settings] selfHealOnMount failed:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeGroupId, currentMember?.userId]);
 
   // ─── Membership Reconciliation State ────────────────────────────────────
   const [checkingDrift, setCheckingDrift] = useState(false);
@@ -734,6 +800,13 @@ export default function GroupSettingsScreen() {
   const [goalPeriodMonths, setGoalPeriodMonths] = useState(String(group?.contributionGoalPeriodMonths ?? 6));
   const [goalTarget, setGoalTarget] = useState(String(group?.contributionGoalTargetAmount ?? 600000));
   const [goalAnchorDate, setGoalAnchorDate] = useState(group?.contributionGoalAnchorDate ?? "");
+  // Compliance thresholds — see utils/lateFees.ts findGoalComplianceFees.
+  const [goalMinPct, setGoalMinPct] = useState(
+    String((group as any)?.contributionGoalMinPct ?? 50),
+  );
+  const [goalLateFeeRatePct, setGoalLateFeeRatePct] = useState(
+    String((group as any)?.contributionGoalLateFeeRatePct ?? 2),
+  );
 
 
   // ─── Global settings (financial year + contribution reminder) ──────────
@@ -1050,6 +1123,128 @@ This token will expire in 24 hours. Use it on the login screen to access your ac
     return { total, active, pending, inactive };
   }, [members]);
 
+  // ── Pending waiver approvals ────────────────────────────────────
+  const pendingWaivers = useMemo(() => {
+    const out: Array<{
+      memberId: string;
+      memberName: string;
+      exemption: any;
+    }> = [];
+    for (const m of members) {
+      for (const ex of ((m as any).pendingExemptions ?? []) as any[]) {
+        out.push({ memberId: m.id, memberName: m.fullName, exemption: ex });
+      }
+    }
+    return out;
+  }, [members]);
+
+  // ── Members with no Firebase Auth account yet ───────────────────
+  const membersWithoutAccounts = useMemo(
+    () =>
+      members.filter(
+        (m) =>
+          !m.userId &&
+          !!m.email &&
+          (m.status === "active" || m.status === "pending"),
+      ),
+    [members],
+  );
+
+  const handleApproveWaiver = async (
+    memberId: string,
+    exemptionId: string,
+  ) => {
+    setWaiverBusyId(exemptionId);
+    try {
+      const fn = (useStore.getState() as any).approveLateFeeExemption;
+      if (typeof fn !== "function") {
+        show("Waiver approval is not wired up yet", "error");
+        return;
+      }
+      await fn(memberId, exemptionId);
+      show("Waiver approved");
+    } catch (e: any) {
+      show(e?.message || "Failed to approve waiver", "error");
+    } finally {
+      setWaiverBusyId(null);
+    }
+  };
+
+  const handleRejectWaiver = async (
+    memberId: string,
+    exemptionId: string,
+  ) => {
+    setWaiverBusyId(exemptionId);
+    try {
+      const fn = (useStore.getState() as any).rejectLateFeeExemption;
+      if (typeof fn !== "function") {
+        show("Waiver rejection is not wired up yet", "error");
+        return;
+      }
+      await fn(memberId, exemptionId, "Rejected by admin");
+      show("Waiver rejected");
+    } catch (e: any) {
+      show(e?.message || "Failed to reject waiver", "error");
+    } finally {
+      setWaiverBusyId(null);
+    }
+  };
+
+  // ── Bulk invite ─────────────────────────────────────────────────
+  const handleBulkInvite = () => {
+    if (bulkInviting) return;
+    if (!activeGroupId || !currentMember?.userId) {
+      show("Group or user not loaded", "error");
+      return;
+    }
+    const targets = membersWithoutAccounts;
+    if (targets.length === 0) return;
+
+    showConfirm(
+      "Send Login Invites",
+      `Send password-setup emails to ${targets.length} member${
+        targets.length !== 1 ? "s" : ""
+      }? Each will receive a link to set their password. This can take up to a minute — do not close the page.`,
+      async () => {
+        setBulkInviting(true);
+        setBulkProgress({ done: 0, total: targets.length });
+
+        let sent = 0;
+        let failed = 0;
+
+        for (let i = 0; i < targets.length; i++) {
+          const m = targets[i];
+          setBulkProgress({ done: i + 1, total: targets.length });
+          try {
+            const r = await resetUserPasswordAsAdmin(
+              m.email!,
+              currentMember.userId,
+              currentMember.fullName || "Admin",
+              activeGroupId,
+              currentMember,
+            );
+            if (r.success) sent++;
+            else failed++;
+          } catch (e) {
+            console.warn("[bulkInvite] failed for", m.email, e);
+            failed++;
+          }
+        }
+
+        setBulkInviting(false);
+        setBulkProgress({ done: 0, total: 0 });
+
+        if (failed === 0) {
+          show(`Sent ${sent} invite${sent !== 1 ? "s" : ""}`);
+        } else if (sent === 0) {
+          show(`No invites sent — ${failed} failed`, "error");
+        } else {
+          show(`Sent ${sent}, ${failed} failed`);
+        }
+      },
+    );
+  };
+
   const filteredMembers = useMemo(() => {
     let list = [...members];
     if (memberTab === "Active") list = list.filter(m => m.status === "active");
@@ -1079,12 +1274,16 @@ This token will expire in 24 hours. Use it on the login screen to access your ac
 
   // ─── Member Management Handlers ────────────────────────────────────────
   const handleCreateMember = async () => {
+    setCreateError(null);
+
     if (!createForm.fullName.trim() || !createForm.email.trim()) {
-      show("Name and email are required", "error");
+      setCreateError("Name and email are both required.");
       return;
     }
     if (!activeGroupId || !currentMember?.userId) {
-      show("Group or user not loaded", "error");
+      setCreateError(
+        "Group or user not loaded yet. Refresh the page and try again.",
+      );
       return;
     }
 
@@ -1103,33 +1302,45 @@ This token will expire in 24 hours. Use it on the login screen to access your ac
           groupId: activeGroupId,
         },
         currentMember.userId,
-        currentMember.fullName || "Admin"
+        currentMember.fullName || "Admin",
+        currentMember,
       );
 
       if (!result.success) {
-        show(result.error || "Failed to create user", "error");
+        setCreateError(
+          result.error || "Failed to create user. Please try again.",
+        );
         return;
       }
 
-      // NOTE: createUserAsAdmin's return shape isn't something I can verify
-      // here — if it exposes the new member's id (e.g. result.memberId),
-      // this finishes wiring up the custom role immediately. If it doesn't,
-      // the member is created with the base "member" role and you'll need
-      // to open Edit Member afterward to assign the custom role — that path
-      // is fully wired below.
       if (isCustom && (result as any).memberId) {
-        const customRole = (group?.customRoles ?? []).find((r) => r.id === customId);
+        const customRole = (group?.customRoles ?? []).find(
+          (r) => r.id === customId,
+        );
         await updateMember((result as any).memberId, {
           customRoleId: customId,
-          permissions: customRole?.permissions ?? DEFAULT_MEMBER_PERMISSIONS,
+          permissions:
+            customRole?.permissions ?? DEFAULT_MEMBER_PERMISSIONS,
         });
       }
 
-      show(`User ${createForm.fullName} created! Password reset email sent.`);
+      // Success. Close the modal so the toast is visible, reset
+      // the form for the next add, and clear any stale error.
+      show(
+        `User ${createForm.fullName} created! Password reset email sent.`,
+      );
       setShowCreateMember(false);
-      setCreateForm({ fullName: "", email: "", phone: "", role: "member" });
+      setCreateError(null);
+      setCreateForm({
+        fullName: "",
+        email: "",
+        phone: "",
+        role: "member",
+      });
     } catch (e: any) {
-      show(e.message || "Failed to create user", "error");
+      setCreateError(
+        e?.message || "Failed to create user. Please try again.",
+      );
     } finally {
       setCreatingMember(false);
     }
@@ -1203,26 +1414,184 @@ They won't be able to sign in or participate in group activities, and any new la
     );
   };
 
+  // ── Bulk export / import ────────────────────────────────────────
+  //
+  // Export produces the same column set Import reads, so a file
+  // straight from Export round-trips through Import cleanly.
+  const handleExportMembers = async () => {
+    if (!members.length) {
+      show("No members to export");
+      return;
+    }
+    setExportingMembers(true);
+    try {
+      const headers = [
+        "Full Name",
+        "Email",
+        "Phone",
+        "National ID",
+        "Role",
+        "Status",
+        "Date Joined",
+      ];
+      const rows = members.map((m) => [
+        m.fullName,
+        m.email ?? "",
+        m.phone ?? "",
+        m.nationalId ?? "",
+        m.role,
+        m.status,
+        (m.dateJoined ?? "").slice(0, 10),
+      ]);
+      await exportXlsx(
+        `Members_${new Date().toISOString().slice(0, 10)}`,
+        headers,
+        rows,
+      );
+      show(`Exported ${rows.length} member${rows.length !== 1 ? "s" : ""}`);
+    } catch (e: any) {
+      show(e?.message || "Failed to export members", "error");
+    } finally {
+      setExportingMembers(false);
+    }
+  };
+
+  const handleImportMembers = async () => {
+    if (!activeGroupId) {
+      show("No active group", "error");
+      return;
+    }
+    setImportingMembers(true);
+    try {
+      const rows = await importXlsx();
+      if (!rows || rows.length === 0) {
+        show("No data found in file", "error");
+        return;
+      }
+      const bulk = (useStore.getState() as any).bulkImportMembers;
+      if (typeof bulk !== "function") {
+        show("Bulk import is not wired up yet", "error");
+        return;
+      }
+      const result = await bulk(rows, activeGroupId);
+      const created = result?.created ?? 0;
+      const skipped = result?.skipped ?? 0;
+      const firstError =
+        Array.isArray(result?.errors) && result.errors.length > 0
+          ? result.errors[0]
+          : null;
+      if (created === 0) {
+        show(
+          firstError
+            ? `Nothing imported — ${firstError}`
+            : "Nothing imported — check the file format",
+          "error",
+        );
+      } else {
+        show(
+          `Imported ${created} member${created !== 1 ? "s" : ""}${
+            skipped > 0 ? `, ${skipped} skipped` : ""
+          }`,
+        );
+      }
+    } catch (e: any) {
+      if (e?.message !== "Cancelled") {
+        show(e?.message || "Failed to import members", "error");
+      }
+    } finally {
+      setImportingMembers(false);
+    }
+  };
+
   const handleDeleteMember = async (member: Member) => {
+    setDeleteError(null);
+
+    // Widen the "has history" check beyond contributions and
+    // wallet txs. FS.deleteMember does not cascade — it deletes
+    // only the members/{id} doc and the groupMemberships row.
+    // If the member has loans or meeting attendance, deleting the
+    // member doc orphans those references and breaks every screen
+    // that resolves the member name.
+    const state = useStore.getState();
+    const relatedContributions = contributions.filter(
+      (c) => c.memberId === member.id,
+    );
+    const relatedWallet = wallet.filter(
+      (w) => w.memberId === member.id,
+    );
+    const relatedLoans = (state.loans ?? []).filter(
+      (l: any) => l.memberId === member.id,
+    );
+    const relatedMeetings = (state.meetings ?? []).filter(
+      (m: any) =>
+        m.attendees?.some(
+          (a: any) => a.memberId === member.id,
+        ),
+    );
+
     const hasHistory =
-      contributions.some((c) => c.memberId === member.id) ||
-      wallet.some((w) => w.memberId === member.id);
+      relatedContributions.length > 0 ||
+      relatedWallet.length > 0 ||
+      relatedLoans.length > 0 ||
+      relatedMeetings.length > 0;
 
     if (hasHistory) {
-      show(
-        "Cannot delete member with financial history. Deactivate instead.",
-        "error"
+      const parts: string[] = [];
+      if (relatedContributions.length > 0)
+        parts.push(
+          `${relatedContributions.length} contribution${
+            relatedContributions.length !== 1 ? "s" : ""
+          }`,
+        );
+      if (relatedWallet.length > 0)
+        parts.push(
+          `${relatedWallet.length} wallet transaction${
+            relatedWallet.length !== 1 ? "s" : ""
+          }`,
+        );
+      if (relatedLoans.length > 0)
+        parts.push(
+          `${relatedLoans.length} loan${
+            relatedLoans.length !== 1 ? "s" : ""
+          }`,
+        );
+      if (relatedMeetings.length > 0)
+        parts.push(
+          `${relatedMeetings.length} meeting${
+            relatedMeetings.length !== 1 ? "s" : ""
+          } attendance record${
+            relatedMeetings.length !== 1 ? "s" : ""
+          }`,
+        );
+
+      setDeleteError(
+        `${member.fullName} has ${parts.join(
+          ", ",
+        )} on record. Deleting this member would orphan those records and break every screen that shows their name. Use "Deactivate instead" to revoke access while keeping their history.`,
       );
       return;
     }
 
+    setDeletingMember(true);
     try {
       await deleteMember(member.id);
       show(`Member ${member.fullName} removed`, "success");
       setShowDeleteConfirm(false);
       setMemberToDelete(null);
+      setDeleteError(null);
     } catch (e: any) {
-      show(e.message || "Failed to delete member", "error");
+      // The modal stays open on failure so the admin can retry
+      // or switch to Deactivate. The error surfaces inline, not
+      // as a Toast hidden behind the modal.
+      const raw = e?.message || "Failed to delete member";
+      const msg =
+        /insufficient permissions/i.test(raw) ||
+        /permission-denied/i.test(raw)
+          ? "The server rejected this delete. Your admin role may be out of sync — open Group Settings \u2192 Members \u2192 \"Verify access\" to re-sync, then retry."
+          : raw;
+      setDeleteError(msg);
+    } finally {
+      setDeletingMember(false);
     }
   };
 
@@ -1283,9 +1652,50 @@ They won't be able to sign in or participate in group activities, and any new la
 
   // ─── Membership Reconciliation Handlers ─────────────────────────────────
   const handleCheckMembershipDrift = async () => {
-    if (!activeGroupId) { show("No active group", "error"); return; }
+    if (!activeGroupId) {
+      show("No active group", "error");
+      return;
+    }
     setCheckingDrift(true);
     try {
+      // Step 1 — self-heal the CURRENT user first.
+      //
+      // Every read of another member's membership doc evaluates
+      // `isAdmin(groupId)` server-side, and that in turn reads
+      // the CALLER's own membership doc. If the caller's own
+      // membership is out of sync, those reads are denied —
+      // findMembershipDrift then reports nothing (either empty
+      // or an error), and drift on other members is never
+      // surfaced. So we have to fix our own membership BEFORE
+      // we can even detect anyone else's.
+      //
+      // Uses the delete + recreate path the rules allow for a
+      // user's own membership doc. See
+      // reconcileMemberships.ts for the full rationale.
+      if (currentMember?.userId) {
+        try {
+          const fixed = await repairOwnMembershipIfDrifted(
+            activeGroupId,
+            currentMember,
+          );
+          if (fixed) {
+            // Give the rules engine a moment to observe the new
+            // doc before the drift check runs.
+            await new Promise((r) => setTimeout(r, 700));
+            show(
+              "Your own admin access was out of sync and has been repaired.",
+              "success",
+            );
+          }
+        } catch (selfErr: any) {
+          console.warn(
+            "[drift] self-heal failed:",
+            selfErr,
+          );
+        }
+      }
+
+      // Step 2 — the drift check on everyone else.
       const drift = await findMembershipDrift(activeGroupId, members);
       setDriftResults(drift);
       setShowDriftModal(true);
@@ -1508,6 +1918,14 @@ They won't be able to sign in or participate in group activities, and any new la
         contributionGoalPeriodMonths,
         contributionGoalTargetAmount,
         contributionGoalAnchorDate: trimmedGoalAnchor,
+        contributionGoalMinPct: (() => {
+          const n = parseNum(goalMinPct);
+          return n !== undefined && n > 0 && n <= 100 ? n : 50;
+        })(),
+        contributionGoalLateFeeRatePct: (() => {
+          const n = parseNum(goalLateFeeRatePct);
+          return n !== undefined && n >= 0 && n <= 100 ? n : 2;
+        })(),
       }),
           // ── Contribution reminder ───────────────────────────────────────
       ...(Number.isFinite(contributionReminderDaysBeforeNum) &&
@@ -2371,6 +2789,26 @@ They won't be able to sign in or participate in group activities, and any new la
                       onChange={setGoalAnchorDate}
                       placeholder="Select start date"
                     />
+                    <View style={styles.row}>
+                      <View style={{ flex: 1 }}>
+                        <Input
+                          label="Min % by midpoint"
+                          value={goalMinPct}
+                          onChangeText={setGoalMinPct}
+                          keyboardType="numeric"
+                          hint="How much of the target must be in by the midpoint of each period. Default 50."
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Input
+                          label="Fee on shortfall (%)"
+                          value={goalLateFeeRatePct}
+                          onChangeText={setGoalLateFeeRatePct}
+                          keyboardType="numeric"
+                          hint="Applied to the shortfall (midpoint and full-period). Default 2."
+                        />
+                      </View>
+                    </View>
                     {!!goalTarget && !!goalPeriodMonths && (
                       <Text style={styles.goalPreview}>
                         {fmtCurrency(parseFloat(goalTarget) || 0)} every {goalPeriodMonths} month{goalPeriodMonths === "1" ? "" : "s"}
@@ -2829,6 +3267,84 @@ They won't be able to sign in or participate in group activities, and any new la
             </TouchableOpacity>
           )}
 
+          {/* Pending waiver approvals banner */}
+          {pendingWaivers.length > 0 && (
+            <TouchableOpacity
+              style={[
+                memberStyles.pendingAlert,
+                { backgroundColor: C.infoBg, borderColor: "rgba(59,130,246,0.35)" },
+              ]}
+              activeOpacity={0.85}
+              onPress={() => setShowWaiverModal(true)}
+            >
+              <View
+                style={[
+                  memberStyles.pendingAlertIcon,
+                  { backgroundColor: "rgba(59,130,246,0.15)" },
+                ]}
+              >
+                <Text style={{ fontSize: 16 }}>🕓</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[memberStyles.pendingAlertTitle, { color: C.infoText }]}>
+                  {pendingWaivers.length} late-fee waiver
+                  {pendingWaivers.length !== 1 ? "s" : ""} awaiting review
+                </Text>
+                <Text style={[memberStyles.pendingAlertHint, { color: C.infoText }]}>
+                  Tap to approve or reject
+                </Text>
+              </View>
+              <Text style={[memberStyles.pendingAlertCta, { color: C.infoText }]}>
+                Review →
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Bulk-invite banner */}
+          {membersWithoutAccounts.length > 0 && (
+            <TouchableOpacity
+              style={[
+                memberStyles.pendingAlert,
+                {
+                  backgroundColor: "rgba(59,130,246,0.06)",
+                  borderColor: "rgba(59,130,246,0.35)",
+                  opacity: bulkInviting ? 0.7 : 1,
+                },
+              ]}
+              activeOpacity={0.85}
+              onPress={handleBulkInvite}
+              disabled={bulkInviting}
+            >
+              <View
+                style={[
+                  memberStyles.pendingAlertIcon,
+                  { backgroundColor: "rgba(59,130,246,0.15)" },
+                ]}
+              >
+                <Text style={{ fontSize: 16 }}>📧</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[memberStyles.pendingAlertTitle, { color: C.infoText }]}>
+                  {bulkInviting
+                    ? `Sending invites… ${bulkProgress.done} / ${bulkProgress.total}`
+                    : `${membersWithoutAccounts.length} member${
+                        membersWithoutAccounts.length !== 1 ? "s" : ""
+                      } have no login yet`}
+                </Text>
+                <Text style={[memberStyles.pendingAlertHint, { color: C.infoText }]}>
+                  {bulkInviting
+                    ? "Do not close this page"
+                    : "Tap to send password-setup emails"}
+                </Text>
+              </View>
+              {!bulkInviting && (
+                <Text style={[memberStyles.pendingAlertCta, { color: C.infoText }]}>
+                  Send invites →
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
+
           {/* ── Summary stats — colored tiles, informational ──────── */}
           <View style={memberStyles.statGrid}>
             <View
@@ -2951,6 +3467,36 @@ They won't be able to sign in or participate in group activities, and any new la
 
             <TouchableOpacity
               style={memberStyles.toolbarBtnGhost}
+              onPress={handleExportMembers}
+              activeOpacity={0.7}
+              disabled={exportingMembers || !members.length}
+            >
+              {exportingMembers ? (
+                <ActivityIndicator size="small" color={C.text2} />
+              ) : (
+                <Text style={memberStyles.toolbarBtnGhostText}>
+                  ⬇ Export
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={memberStyles.toolbarBtnGhost}
+              onPress={handleImportMembers}
+              activeOpacity={0.7}
+              disabled={importingMembers}
+            >
+              {importingMembers ? (
+                <ActivityIndicator size="small" color={C.text2} />
+              ) : (
+                <Text style={memberStyles.toolbarBtnGhostText}>
+                  ⬆ Import
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={memberStyles.toolbarBtnGhost}
               onPress={handleCheckMembershipDrift}
               activeOpacity={0.7}
               disabled={checkingDrift}
@@ -2959,7 +3505,7 @@ They won't be able to sign in or participate in group activities, and any new la
                 <ActivityIndicator size="small" color={C.text2} />
               ) : (
                 <Text style={memberStyles.toolbarBtnGhostText}>
-                  🔍 Verify access
+                  🔍 Verify
                 </Text>
               )}
             </TouchableOpacity>
@@ -3047,6 +3593,31 @@ They won't be able to sign in or participate in group activities, and any new la
                           >
                             {roleLabel}
                           </Text>
+                          {((m as any).pendingExemptions?.length ?? 0) > 0 && (
+                            <>
+                              <Text style={memberStyles.metaDot}>·</Text>
+                              <View
+                                style={{
+                                  paddingHorizontal: 6,
+                                  paddingVertical: 1,
+                                  borderRadius: 6,
+                                  backgroundColor: C.infoBg,
+                                  borderWidth: 1,
+                                  borderColor: "rgba(59,130,246,0.35)",
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    fontSize: 9,
+                                    fontWeight: "800",
+                                    color: C.infoText,
+                                  }}
+                                >
+                                  ⏳ {(m as any).pendingExemptions.length}
+                                </Text>
+                              </View>
+                            </>
+                          )}
                         </View>
                       </View>
 
@@ -3586,6 +4157,109 @@ They won't be able to sign in or participate in group activities, and any new la
 
       {/* ─── Modals ───────────────────────────────────────────────────────── */}
 
+      {/* Pending Waiver Review Modal */}
+      <BottomModal
+        visible={showWaiverModal}
+        onClose={() => setShowWaiverModal(false)}
+        title="Late-Fee Waiver Requests"
+      >
+        <View style={{ padding: 16, gap: 12, paddingBottom: 24 }}>
+          {pendingWaivers.length === 0 ? (
+            <Text
+              style={{
+                fontSize: 13,
+                color: C.text3,
+                textAlign: "center",
+                paddingVertical: 20,
+              }}
+            >
+              No pending waiver requests.
+            </Text>
+          ) : (
+            pendingWaivers.map(({ memberId, memberName, exemption }) => {
+              const busy = waiverBusyId === exemption.id;
+              const scopeLabel =
+                exemption.scope === "loan"
+                  ? "Loan"
+                  : exemption.scope === "both"
+                  ? "Both"
+                  : "Contribution";
+              return (
+                <View
+                  key={exemption.id}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: C.border,
+                    borderRadius: 10,
+                    padding: 12,
+                    gap: 6,
+                    backgroundColor: C.surface,
+                  }}
+                >
+                  <Text
+                    style={{ fontSize: 14, fontWeight: "800", color: C.text }}
+                    numberOfLines={1}
+                  >
+                    {memberName}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: C.text2 }}>
+                    {scopeLabel} fee · {exemption.periodStart} → {exemption.periodEnd}
+                  </Text>
+                  {exemption.reason ? (
+                    <Text
+                      style={{ fontSize: 11, color: C.text3, fontStyle: "italic" }}
+                      numberOfLines={2}
+                    >
+                      {exemption.reason}
+                    </Text>
+                  ) : null}
+                  <Text style={{ fontSize: 10, color: C.text3 }}>
+                    Requested by {exemption.createdByName || "—"}
+                  </Text>
+
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: "rgba(239,68,68,0.3)",
+                        backgroundColor: C.redBg,
+                        alignItems: "center",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                      onPress={() => handleRejectWaiver(memberId, exemption.id)}
+                      disabled={busy}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: "700", color: C.error }}>
+                        {busy ? "Working…" : "Reject"}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 8,
+                        backgroundColor: C.success,
+                        alignItems: "center",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                      onPress={() => handleApproveWaiver(memberId, exemption.id)}
+                      disabled={busy}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: "700", color: "#fff" }}>
+                        {busy ? "Working…" : "Approve"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
+      </BottomModal>
+
       {/* Create Role Modal */}
       <BottomModal visible={showCreateRole} onClose={() => { setShowCreateRole(false); setNewRoleName(""); }} title="Create New Role">
         <View style={{ padding: 16, gap: 12 }}>
@@ -3603,28 +4277,80 @@ They won't be able to sign in or participate in group activities, and any new la
       </BottomModal>
 
       {/* Create Member Modal */}
-      <BottomModal visible={showCreateMember} onClose={() => setShowCreateMember(false)} title="Add New Member">
+      <BottomModal
+        visible={showCreateMember}
+        onClose={() => {
+          setShowCreateMember(false);
+          setCreateError(null);
+        }}
+        title="Add New Member"
+      >
         <View style={{ padding: 16, gap: 12 }}>
+          {createError ? (
+            <View
+              style={{
+                backgroundColor: "rgba(220,38,38,0.08)",
+                borderWidth: 1,
+                borderColor: "rgba(220,38,38,0.25)",
+                borderRadius: 10,
+                padding: 12,
+                gap: 4,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: "800",
+                  color: C.error,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.4,
+                }}
+              >
+                Cannot create this user
+              </Text>
+              <Text
+                style={{
+                  fontSize: 12,
+                  lineHeight: 17,
+                  color: C.text,
+                }}
+              >
+                {createError}
+              </Text>
+            </View>
+          ) : null}
+
           <Input
             label="Full Name *"
             value={createForm.fullName}
-            onChangeText={(t) => setCreateForm(p => ({ ...p, fullName: t }))}
+            onChangeText={(t) => {
+              setCreateForm((p) => ({ ...p, fullName: t }));
+              if (createError) setCreateError(null);
+            }}
             placeholder="John Doe"
           />
           <Input
             label="Email *"
             value={createForm.email}
-            onChangeText={(t) => setCreateForm(p => ({ ...p, email: t }))}
+            onChangeText={(t) => {
+              setCreateForm((p) => ({ ...p, email: t }));
+              if (createError) setCreateError(null);
+            }}
             placeholder="john@example.com"
             keyboardType="email-address"
           />
           <Input
             label="Phone"
             value={createForm.phone}
-            onChangeText={(t) => setCreateForm(p => ({ ...p, phone: t }))}
+            onChangeText={(t) =>
+              setCreateForm((p) => ({ ...p, phone: t }))
+            }
             placeholder="+250-7XX-XXX-XXX"
           />
-          <RolePicker value={createForm.role} onChange={(v) => setCreateForm(p => ({ ...p, role: v }))} />
+          <RolePicker
+            value={createForm.role}
+            onChange={(v) => setCreateForm((p) => ({ ...p, role: v }))}
+          />
           <Button
             label="Create User"
             onPress={handleCreateMember}
@@ -3715,50 +4441,101 @@ They won't be able to sign in or participate in group activities, and any new la
         onClose={() => {
           setShowDeleteConfirm(false);
           setMemberToDelete(null);
+          setDeleteError(null);
         }}
-        title="Delete member?"
+        title={deleteError ? "Cannot delete this member" : "Delete member?"}
       >
         {memberToDelete && (
           <View style={{ padding: 16, gap: 12, paddingBottom: 24 }}>
-            <View style={deleteStyles.iconCircle}>
-              <Text style={deleteStyles.icon}>🗑</Text>
-            </View>
+            {deleteError ? (
+              <>
+                <View style={deleteStyles.iconCircle}>
+                  <Text style={deleteStyles.icon}>⚠</Text>
+                </View>
 
-            <Text style={deleteStyles.title}>
-              Delete {memberToDelete.fullName}?
-            </Text>
-            <Text style={deleteStyles.body}>
-              This will permanently remove this member from the group. Their
-              name, contact info, and role assignment will be erased.
-            </Text>
+                <Text style={deleteStyles.title}>
+                  Cannot delete {memberToDelete.fullName}
+                </Text>
+                <Text style={deleteStyles.body}>{deleteError}</Text>
 
-            <View style={deleteStyles.warningBox}>
-              <Text style={deleteStyles.warningTitle}>
-                ⚠ This cannot be undone
-              </Text>
-              <Text style={deleteStyles.warningText}>
-                If you want to keep this member's history but revoke their
-                access, use Deactivate instead — it preserves everything.
-              </Text>
-            </View>
+                <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
+                  <Button
+                    label="Close"
+                    variant="secondary"
+                    onPress={() => {
+                      setShowDeleteConfirm(false);
+                      setMemberToDelete(null);
+                      setDeleteError(null);
+                    }}
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    label="Deactivate instead"
+                    variant="warning"
+                    onPress={() => {
+                      const target = memberToDelete;
+                      setShowDeleteConfirm(false);
+                      setMemberToDelete(null);
+                      setDeleteError(null);
+                      // Give the modal a beat to close before the
+                      // native confirm opens — otherwise on iOS
+                      // the Alert can be swallowed by the modal
+                      // dismissal animation.
+                      setTimeout(
+                        () => handleDeactivateMember(target),
+                        260,
+                      );
+                    }}
+                    style={{ flex: 1 }}
+                  />
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={deleteStyles.iconCircle}>
+                  <Text style={deleteStyles.icon}>🗑</Text>
+                </View>
 
-            <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
-              <Button
-                label="Cancel"
-                variant="secondary"
-                onPress={() => {
-                  setShowDeleteConfirm(false);
-                  setMemberToDelete(null);
-                }}
-                style={{ flex: 1 }}
-              />
-              <Button
-                label="Delete member"
-                variant="danger"
-                onPress={() => handleDeleteMember(memberToDelete)}
-                style={{ flex: 1 }}
-              />
-            </View>
+                <Text style={deleteStyles.title}>
+                  Delete {memberToDelete.fullName}?
+                </Text>
+                <Text style={deleteStyles.body}>
+                  This will permanently remove this member from the group. Their
+                  name, contact info, and role assignment will be erased.
+                </Text>
+
+                <View style={deleteStyles.warningBox}>
+                  <Text style={deleteStyles.warningTitle}>
+                    ⚠ This cannot be undone
+                  </Text>
+                  <Text style={deleteStyles.warningText}>
+                    If you want to keep this member's history but revoke their
+                    access, use Deactivate instead — it preserves everything.
+                  </Text>
+                </View>
+
+                <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
+                  <Button
+                    label="Cancel"
+                    variant="secondary"
+                    onPress={() => {
+                      setShowDeleteConfirm(false);
+                      setMemberToDelete(null);
+                    }}
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    label="Delete member"
+                    variant="danger"
+                    onPress={() =>
+                      handleDeleteMember(memberToDelete)
+                    }
+                    loading={deletingMember}
+                    style={{ flex: 1 }}
+                  />
+                </View>
+              </>
+            )}
           </View>
         )}
       </BottomModal>
@@ -4483,14 +5260,23 @@ const makeMemberStyles = (C: Palette) => StyleSheet.create({
   },
 
   // ── Compact toolbar ──────────────────────────────────────────────────
+  // ── Compact toolbar ──────────────────────────────────────────────────
+  // flexWrap so the four buttons reflow onto a second row on phone
+  // widths instead of overflowing off the right edge. flexBasis values
+  // are concrete rather than percent so the wrap point is predictable
+  // across phone / tablet / desktop (percent + flexGrow interact poorly
+  // inside a wrapped row).
   toolbar: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     paddingHorizontal: 16,
     paddingBottom: 10,
   },
   toolbarBtnPrimary: {
-    flex: 1,
+    flexGrow: 1,
+    flexBasis: 170,
+    minWidth: 150,
     backgroundColor: C.primary,
     borderRadius: 10,
     paddingVertical: 10,
@@ -4503,15 +5289,17 @@ const makeMemberStyles = (C: Palette) => StyleSheet.create({
     fontWeight: "700",
   },
   toolbarBtnGhost: {
+    flexGrow: 1,
+    flexBasis: 80,
+    minWidth: 74,
     backgroundColor: C.elevated,
     borderRadius: 10,
     paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 10,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: C.border,
-    minWidth: 130,
   },
   toolbarBtnGhostText: {
     color: C.text2,

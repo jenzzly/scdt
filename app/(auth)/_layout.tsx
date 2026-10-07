@@ -15,7 +15,13 @@ export default function AuthLayout() {
       <Stack.Screen name="welcome" />
       <Stack.Screen name="onboarding" />
       <Stack.Screen name="login" />
-      <Stack.Screen name="register" />
+      {/*
+        `register` is deliberately NOT registered. Account creation
+        now happens only via admin invite + password-reset email.
+        The file is left on disk so the route can be re-enabled by
+        restoring this line — nothing else depends on it being
+        hidden.
+      */}
     </Stack>
   );
 }

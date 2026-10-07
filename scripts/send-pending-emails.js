@@ -143,6 +143,11 @@ async function main() {
         html: `<h2>${escapeHtml(subject || "New notification")}</h2><p>${escapeHtml(message || "You have a new notification.")}</p>`,
       });
       await doc.ref.update({ status: "sent", sentAt: new Date().toISOString() });
+      // The doc has served its purpose — the email is out. Delete
+      // it so pendingEmails only ever holds rows still awaiting
+      // send. Client rules cannot delete this collection; only this
+      // server-side script can.
+      await ref.delete();
       sent++;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

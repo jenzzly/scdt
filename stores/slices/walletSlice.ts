@@ -67,6 +67,7 @@ import {
 } from "../../utils/linkedWalletSync";
 import type {
   OverdueContribution,
+  OverdueGoalFee,
   OverdueInstallment,
 } from "../../utils/lateFees";
 
@@ -77,6 +78,7 @@ export const createWalletSlice = (
   StoreState,
   | "addWalletTxLocal"
   | "applyContributionLateFee"
+  | "applyGoalLateFee"
   | "applyLoanLateFee"
   | "clearStandaloneLateFee"
   | "deleteWalletTransaction"
@@ -1212,6 +1214,94 @@ export const createWalletSlice = (
     }
   },
 
+
+  // ═══════════════════════════════════════════════════════════════════
+  // GOAL-COMPLIANCE LATE FEE
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // Writes a single `late_fee` wallet tx for a goal-compliance
+  // shortfall. The tx ID is deterministic (see
+  // findGoalComplianceFees), so calling this twice for the same
+  // (member, period, kind) is a no-op.
+  applyGoalLateFee: async (overdue, customAmount) => {
+    const { activeGroupId, authUid } = get();
+    if (!activeGroupId) throw new Error("No active group");
+
+    const chargeAmount =
+      customAmount != null && customAmount > 0
+        ? round2(customAmount)
+        : overdue.feeAmount;
+
+    // Guard: don't apply a partial against a full-amount fee
+    // under the canonical id, since that would block the rest.
+    const isPartial =
+      customAmount != null &&
+      Math.abs(customAmount - overdue.feeAmount) > 0.01;
+
+    const txId = isPartial
+      ? `${overdue.feeTxId}-partial-${Date.now()}`
+      : overdue.feeTxId;
+
+    if (!isPartial) {
+      const existing = get().walletTransactions.find(
+        (t) => t.id === overdue.feeTxId,
+      );
+      if (existing) return;
+    }
+
+    const now = new Date().toISOString();
+    const label = overdue.kind === "mid" ? "Half-target" : "Full-target";
+    const tx: WalletTransaction = {
+      id: txId,
+      groupId: activeGroupId,
+      type: "late_fee",
+      sourceType: "manual",
+      sourceId: overdue.memberId,
+      amount: chargeAmount,
+      description: `Goal ${label} compliance fee — ${overdue.periodLabel} (${fmtCurrency(overdue.shortfall)} shortfall)`,
+      date: now,
+      memberId: overdue.memberId,
+      createdAt: now,
+      createdBy: authUid ?? undefined,
+      feePaid: false,
+    };
+
+    get().addWalletTxLocal(tx);
+    get().recalcTotals();
+
+    try {
+      get().setSyncStatus("pending");
+      await FS.addWalletTx(activeGroupId, tx);
+      get().setSyncStatus("synced");
+
+      const { members } = get();
+      const member = members.find((m) => m.id === overdue.memberId);
+      if (member?.userId) {
+        FS.addNotification(
+          member.userId,
+          {
+            userId: member.userId,
+            groupId: activeGroupId,
+            type: "contribution_late_fee",
+            title: "Contribution Goal Missed",
+            message: `${label} shortfall of ${fmtCurrency(overdue.shortfall)} for ${overdue.periodLabel} — a fee of ${fmtCurrency(chargeAmount)} has been applied.`,
+            read: false,
+            metadata: { goalFeeTxId: txId, kind: overdue.kind },
+            createdAt: now,
+          },
+          member.email,
+        ).catch(console.warn);
+      }
+    } catch (e) {
+      get().deleteWalletTxLocal(txId);
+      get().recalcTotals();
+      get().setSyncStatus(
+        "failed",
+        e instanceof Error ? e.message : "Failed to apply goal fee",
+      );
+      throw e;
+    }
+  },
 
   // ===========================================================================
   // CLEAR STANDALONE LATE FEE

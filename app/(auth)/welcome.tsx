@@ -325,7 +325,10 @@ export default function WelcomeScreen() {
     ]).start();
   }, []);
 
-  const handleGetStarted = () => safeNavigate(router, "/(auth)/register");
+  // Public self-registration is disabled. Onboarding now funnels
+// straight to sign-in; account creation is admin-initiated and
+// happens via a password-reset email from the Members screen.
+  const handleGetStarted = () => safeNavigate(router, "/(auth)/login");
   const handleSignIn = () => safeNavigate(router, "/(auth)/login");
 
   // ── Shared blocks ────────────────────────────────────────────────

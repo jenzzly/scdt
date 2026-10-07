@@ -5,7 +5,7 @@ import * as FS from "../../lib/firestore";
 import { uid, round2 } from "../../utils/theme";
 import { recalcGroupTotals } from "../recalcGroupTotals";
 
-export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addMeetingLocal" | "cancelMeeting" | "clearAllMemberPenalties" | "clearMeetingPenalty" | "deleteMeeting" | "deleteMeetingLocal" | "recordAttendance" | "scheduleMeeting" | "setMeetings" | "updateMeeting" | "updateMeetingLocal"> => ({
+export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addMeetingLocal" | "cancelMeeting" | "clearAllMemberPenalties" | "clearMeetingPenalty" | "deleteMeeting" | "deleteMeetingLocal" | "recordAttendance" | "scheduleMeeting" | "setMeetings" | "settleMeetingPenalties" | "updateMeeting" | "updateMeetingLocal"> => ({
       setMeetings: (ms) => set({ meetings: ms }),
       addMeetingLocal: (m) => set((s: StoreState) => ({ meetings: [m, ...s.meetings] })),
       updateMeetingLocal: (id, data) => set((s: StoreState) => {
@@ -315,61 +315,109 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
           }
         }
 
-        const penaltyTxId = `meeting-penalty-${meetingId}-${memberId}`;
-        // Wallet transaction fires for ANY penalty — absent OR late —
-        // not just absence. Previously this only checked `!attended`,
-        // so a member marked "late" got a penaltyAmount computed and
-        // shown in their attendee record, but no wallet_tx was ever
-        // created for it: the penalty displayed as owed but was never
-        // actually charged in the group's ledger. Both cases go
-        // through the same tx now; the description below distinguishes
-        // which kind of penalty it was.
+        // ── Attendance is saved as a record ONLY. No wallet tx yet. ──
+        //
+        // Previously this wrote a `late_fee` wallet tx the moment
+        // attendance was saved, so the group balance changed before
+        // any money had actually moved. Penalties are now collected
+        // later — see `settleMeetingPenalties` — which the
+        // contribution and loan flows call once the member is
+        // actually transacting.
         if (penaltyAmount > 0 && (!attended || status === "late")) {
-          const existingPenalty = get().walletTransactions.find((t) => t.id === penaltyTxId);
-          if (!existingPenalty) {
+          if (member?.userId) {
+            FS.addNotification(member.userId, {
+              userId: member.userId,
+              groupId: activeGroupId,
+              type: "penalty_applied",
+              title: !attended ? "Absence Penalty Recorded" : "Late Arrival Penalty Recorded",
+              message: `A penalty of ${penaltyAmount} RWF was recorded for ${meeting.title} (${meeting.date}). It will be collected with your next contribution or loan.`,
+              read: false,
+              metadata: { meetingId, penaltyAmount },
+              createdAt: new Date().toISOString(),
+            }, member.email).catch(console.warn);
+          }
+        }
+      },
+
+      // ═══════════════════════════════════════════════════════════════
+      // SETTLE MEETING PENALTIES
+      // ═══════════════════════════════════════════════════════════════
+      //
+      // Converts unpaid meeting-penalty attendee records into
+      // wallet_txs. Called when the member records a contribution or
+      // submits a loan, so the penalty lands on the ledger exactly
+      // when the member is transacting. Idempotent: a member who has
+      // already had a penalty collected for a given meeting will not
+      // be charged twice.
+      //
+      // This is deliberately NOT run on attendance save (see
+      // recordAttendance) and NOT run in a background job — a penalty
+      // that nobody collects simply doesn't exist on the ledger,
+      // which matches the "meetings are paperwork, wallets are money"
+      // boundary the group asked for.
+      settleMeetingPenalties: async (memberId: ID) => {
+        const { activeGroupId, meetings } = get();
+        if (!activeGroupId) return;
+
+        const now = new Date().toISOString();
+
+        for (const meeting of meetings) {
+          if (meeting.status === "cancelled") continue;
+
+          const attendee = meeting.attendees?.find(
+            (a) => a.memberId === memberId,
+          );
+          const amt = attendee?.penaltyAmount ?? 0;
+          if (!attendee || amt <= 0 || attendee.penaltyPaid) continue;
+
+          // Deterministic id so re-entry is a no-op if the wallet tx
+          // already exists (guards against double-calls from a
+          // retry).
+          const penaltyTxId = `meeting-penalty-${meeting.id}-${memberId}`;
+          const existing = get().walletTransactions.find(
+            (t) => t.id === penaltyTxId,
+          );
+
+          if (!existing) {
             const tx: WalletTransaction = {
               id: penaltyTxId,
               groupId: activeGroupId,
               type: "late_fee",
               sourceType: "manual",
-              sourceId: meetingId,
-              amount: penaltyAmount,
-              description: !attended
-                ? `Meeting absence penalty for ${member?.fullName ?? "member"} - ${meeting.title}`
-                : `Meeting late arrival penalty (${lateMinutes} min) for ${member?.fullName ?? "member"} - ${meeting.title}`,
+              sourceId: meeting.id,
+              amount: amt,
+              description:
+                attendee.status === "late"
+                  ? `Meeting late arrival penalty - ${meeting.title}`
+                  : `Meeting absence penalty - ${meeting.title}`,
               date: meeting.date,
               memberId,
-              createdAt: new Date().toISOString(),
+              createdAt: now,
             };
+
             get().addWalletTxLocal(tx);
-            try {
-              await FS.addWalletTx(activeGroupId, tx);
-            } catch (e) {
+            await FS.addWalletTx(activeGroupId, tx).catch((e) => {
               console.error(
-                "[recordAttendance] failed to persist penalty tx:",
+                "[settleMeetingPenalties] failed to persist tx:",
                 e,
               );
               throw e;
-            }
-            set((s: StoreState) => recalcGroupTotals(s));
-
-            // Alert the member directly — this is the "late fees,
-            // penalties" notification gap: previously a penalty could
-            // be applied with no signal to the person it applies to.
-            if (member?.userId) {
-              FS.addNotification(member.userId, {
-                userId: member.userId,
-                groupId: activeGroupId,
-                type: "penalty_applied",
-                title: !attended ? "Absence Penalty Applied" : "Late Arrival Penalty Applied",
-                message: `A penalty of ${penaltyAmount} RWF was applied for ${meeting.title} (${meeting.date})`,
-                read: false,
-                metadata: { meetingId, penaltyAmount },
-                createdAt: new Date().toISOString(),
-              }, member.email).catch(console.warn);
-            }
+            });
           }
+
+          // Mark the attendee record paid so the next call skips it.
+          const updatedAttendees = meeting.attendees.map((a) =>
+            a.memberId === memberId ? { ...a, penaltyPaid: true } : a,
+          );
+          get().updateMeetingLocal(meeting.id, {
+            attendees: updatedAttendees,
+          });
+          await FS.updateMeeting(activeGroupId, meeting.id, {
+            attendees: updatedAttendees,
+          });
         }
+
+        set((s: StoreState) => recalcGroupTotals(s));
       },
 
 

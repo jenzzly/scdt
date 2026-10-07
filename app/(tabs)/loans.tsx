@@ -49,7 +49,7 @@ import {
 import { Layout } from "../../utils/theme";
 import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 import { useTheme, useT } from "../../hooks/useTheme";
-import { exportPdf, generatePaymentScheduleHtml } from "../../utils/export";
+import { exportPdf, exportXlsx, generatePaymentScheduleHtml } from "../../utils/export";
 import { Loan, Member } from "../../types";
 import { KpiCard } from "../../components/ui/KpiCard";
 
@@ -2126,6 +2126,66 @@ export default function LoansScreen() {
     );
   };
 
+  const handleExport = async (format: "excel" | "pdf") => {
+    if (!filteredLoans.length) {
+      show("No loans to export");
+      return;
+    }
+
+    const headers = [
+      "Member",
+      "Principal",
+      "Interest Rate",
+      "Rate Period",
+      "Months",
+      "Total Repayable",
+      "Amount Repaid",
+      "Balance",
+      "Status",
+      "Applied",
+      "Disbursed",
+      "Purpose",
+    ];
+
+    const rows = filteredLoans.map((l) => [
+      getMember(l.memberId)?.fullName ?? "Unknown",
+      l.amount,
+      l.interestRate,
+      l.interestRatePeriod ?? "monthly",
+      l.repaymentMonths,
+      l.totalRepayable,
+      l.amountRepaid,
+      l.balance,
+      STATUS_LABEL[l.status] ?? l.status,
+      (l.applicationDate ?? "").slice(0, 10),
+      ((l as any).disbursementDate ?? "").slice(0, 10),
+      l.purpose ?? "",
+    ]);
+
+    const fileName = `Loans_${isGroupView ? "group" : "personal"}_${new Date()
+      .toISOString()
+      .slice(0, 10)}`;
+
+    if (format === "excel") {
+      await exportXlsx(fileName, headers, rows);
+    } else {
+      const html = `
+        <table>
+          <thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
+          <tbody>${rows
+            .map(
+              (row) =>
+                `<tr>${row.map((c) => `<td>${c}</td>`).join("")}</tr>`,
+            )
+            .join("")}</tbody>
+        </table>`;
+
+      await exportPdf(fileName, "Loans Report", html);
+    }
+
+    show(`Exported as ${format === "excel" ? "Excel" : "PDF"}`);
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
@@ -2139,15 +2199,36 @@ export default function LoansScreen() {
             {isGroupView ? " " : " "}
           </Text>
         </View>
-        {permissions.addLoan && (
+        <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
           <TouchableOpacity
-            style={styles.addInlineBtn}
-            onPress={() => router.push("/modals/add-loan")}
+            style={styles.exportBtn}
+            onPress={() => handleExport("excel")}
             activeOpacity={0.8}
           >
-            <Text style={styles.addInlineBtnText}>+ New Loan</Text>
+            <Text style={styles.exportBtnText}>Export</Text>
           </TouchableOpacity>
-        )}
+          {/*
+            A plain member can always apply for a loan for
+            themselves — the server rules accept it, and the
+            modal locks the member picker to "you" when the caller
+            is not a loan officer / admin. So the button shows
+            when the permission bit is on OR the caller is a
+            member. Kept defensive so an existing group whose
+            rolePermissions predates the addLoan default still
+            works without a data migration.
+          */}
+          {(permissions.addLoan || role === "member") && (
+            <TouchableOpacity
+              style={styles.addInlineBtn}
+              onPress={() => router.push("/modals/add-loan")}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.addInlineBtnText}>
+                {role === "member" ? "Request Loan" : "+ New Loan"}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <ScrollView
@@ -3335,6 +3416,20 @@ const makeStyles = (C: Palette) => StyleSheet.create({
     paddingHorizontal: 14,
   },
   addInlineBtnText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+
+  exportBtn: {
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  exportBtnText: {
+    color: C.text2,
+    fontSize: 12,
+    fontWeight: "700",
+  },
 
   tabWrapper: { paddingHorizontal: 16, marginBottom: 12 },
 

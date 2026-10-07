@@ -526,7 +526,21 @@ export const useCurrentMemberPermissions = (): MemberPermissions => {
     return allTrue as unknown as MemberPermissions;
   }
 
-  return member.permissions ?? { ...DEFAULT_MEMBER_PERMISSIONS };
+  // Explicit per-member permissions win outright.
+  if (member.permissions) return member.permissions;
+
+  // Role-appropriate fallback when the member doc has no explicit
+  // permissions field. This used to be a flat
+  // { ...DEFAULT_MEMBER_PERMISSIONS }, which has addLoan = false —
+  // so the "+ New Loan" button never appeared for a plain member,
+  // even though the server-side rules explicitly allow any active
+  // member to create a loan for themselves.
+  const roleFallback: Partial<MemberPermissions> =
+    member.role === "member"
+      ? { addContribution: true, addLoan: true }
+      : {};
+
+  return { ...DEFAULT_MEMBER_PERMISSIONS, ...roleFallback };
 };
 
 /**

@@ -264,6 +264,19 @@ export const createLoanSlice = (
       ).catch(console.warn);
     }
 
+    // Collect any outstanding meeting penalties at loan-submission
+    // time. Same reasoning as recordContribution — meetings never
+    // touch the wallet; loans and contributions are where the money
+    // actually moves.
+    await get()
+      .settleMeetingPenalties(loan.memberId)
+      .catch((e) =>
+        console.warn(
+          "[submitLoan] settleMeetingPenalties failed:",
+          e,
+        ),
+      );
+
     return loan.id;
   },
 
@@ -335,17 +348,21 @@ export const createLoanSlice = (
       };
       const nextRole = nextRoleMap[newStatus];
       if (nextRole) {
-        const nextApprover = members.find(
+        // Previously used `find`, so if there were multiple committee
+        // members only the first one in the array got a notification.
+        // Now every active member of the next role gets one.
+        const nextApprovers = members.filter(
           (m) =>
             m.role === nextRole &&
             m.status === "active" &&
-            m.groupId === activeGroupId,
+            m.groupId === activeGroupId &&
+            !!m.userId,
         );
-        if (nextApprover?.userId) {
+        for (const nextApprover of nextApprovers) {
           FS.addNotification(
-            nextApprover.userId,
+            nextApprover.userId!,
             {
-              userId: nextApprover.userId,
+              userId: nextApprover.userId!,
               groupId: activeGroupId,
               type: "loan_approval",
               title: "Loan Requires Your Approval",

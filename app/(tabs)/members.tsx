@@ -54,7 +54,7 @@ import {
   Toast,
   InfoRow,
 } from "../../components/ui";
-;
+import { PendingWaiversCard } from "../../components/ui/PendingWaiversCard";
 import {
   C as LightPalette,
   D as DarkPalette,
@@ -767,11 +767,48 @@ export default function MembersScreen() {
   ]);
 
   // ── Scope to view mode ─────────────────────────────────────────────
+  //
+  // In personal view we additionally dedupe. Historical data can
+  // contain two member docs for the same user (one created by
+  // addMember with a random doc ID, one created by
+  // ensureMemberExists on first login at members/{uid}). Both
+  // carry the same userId, so both match myIds and both rendered
+  // as "(You)". Showing the user themselves twice is confusing
+  // and hides the real bug; showing one entry is correct even
+  // while the data behind it is still being cleaned up.
+  const dedupePersonalView = (list: Member[]): Member[] => {
+    if (list.length <= 1) return list;
+
+    // Pick the "best" of the duplicates:
+    //   1. Prefer the one whose doc ID equals the auth userId
+    //      (that is what ensureMemberExists writes, so it is the
+    //      canonical one going forward).
+    //   2. Otherwise prefer the one with more history
+    //      (contributions + loanEarnings + late-fee exemptions).
+    const scored = list.map((m) => {
+      const uidMatch =
+        (m as any).userId && m.id === (m as any).userId ? 1 : 0;
+      const history =
+        (m.totalContributions || 0) +
+        (m.loanEarnings || 0) +
+        ((m as any).lateFeeExemptions?.length || 0);
+      return { member: m, uidMatch, history };
+    });
+
+    scored.sort((a, b) => {
+      if (b.uidMatch !== a.uidMatch) return b.uidMatch - a.uidMatch;
+      return b.history - a.history;
+    });
+
+    return [scored[0].member];
+  };
+
   const visibleMembers = useMemo(() => {
     if (isGroupView) return members;
-    return members.filter(
+    const mine = members.filter(
       (m) => myIds.has(m.id) || myIds.has((m as any).userId),
     );
+    return dedupePersonalView(mine);
   }, [members, isGroupView, myIds]);
 
   // ── Apply search, filter, sort ─────────────────────────────────────
@@ -866,6 +903,8 @@ export default function MembersScreen() {
 
     setCreatingUser(true);
     try {
+      // pass currentMember to createUserAsAdmin — enables its
+      // pre-flight self-heal of the caller's admin membership.
       const result = await createUserAsAdmin(
         {
           fullName: createForm.fullName.trim(),
@@ -876,6 +915,7 @@ export default function MembersScreen() {
         },
         currentMember.userId,
         currentMember.fullName || "Admin",
+        currentMember,
       );
 
       if (!result.success) {
@@ -897,7 +937,10 @@ export default function MembersScreen() {
 
   const handleResetPassword = async () => {
     if (!selectedMember?.email || !activeGroupId || !currentMember?.userId) {
-      show("Missing information", "error");
+      show(
+        "This member has no email on file. Add one before sending a login link.",
+        "error",
+      );
       return;
     }
 
@@ -908,20 +951,31 @@ export default function MembersScreen() {
         currentMember.userId,
         currentMember.fullName || "Admin",
         activeGroupId,
+        currentMember,
       );
 
       if (!result.success) {
         show(
-          result.error || "Failed to send password reset email",
+          result.error || "Failed to send login email",
           "error",
         );
         return;
       }
 
-      show("Password reset email sent to " + selectedMember.email);
+      // `created` is true when the Auth account had to be made
+      // just now (member existed in Firestore but had no login
+      // yet). The two messages tell the admin exactly what
+      // happened so they can confirm with the member.
+      const created = (result as any).created === true;
+      show(
+        created
+          ? `Login account created for ${selectedMember.email}. Invite email sent — the member must open it to set a password.`
+          : `Password reset email sent to ${selectedMember.email}.`,
+        "success",
+      );
       setShowActionModal(false);
     } catch (e: any) {
-      show(e.message || "Failed to send password reset email", "error");
+      show(e.message || "Failed to send login email", "error");
     } finally {
       setResettingPassword(false);
     }
@@ -1678,6 +1732,15 @@ export default function MembersScreen() {
           ) : null}
         </View>
 
+        {/* ── Pending waiver requests ────────────────────────
+            Independent of the active-exemptions list below.
+            Renders only when the member has pending requests;
+            the card itself returns null otherwise, so it is
+            safe to include unconditionally. Reads the member
+            from the store by ID, so approve / reject anywhere
+            in the app updates this view immediately. */}
+        <PendingWaiversCard member={member} />
+
         {/* ── Waived Fees & Exemptions ────────────────────────
             Every exemption an admin has recorded for this
             member. The frozen amount is captured on the
@@ -1936,10 +1999,22 @@ export default function MembersScreen() {
                     </TouchableOpacity>
                   )}
 
-                  {selectedMember.userId && (
+                  {/*
+                    Visible whenever the member has an email — NOT
+                    only when they already have a Firebase userId.
+                    A member who was added before their Auth account
+                    was created (or whose Auth create failed) has no
+                    userId and previously had no path to a login.
+                    `resetUserPasswordAsAdmin` now creates the Auth
+                    account if it doesn't exist, so this button
+                    covers both "invite a new member" and "reset an
+                    existing member's password".
+                  */}
+                  {selectedMember.email && (
                     <TouchableOpacity
                       style={[st.actionButton, st.passwordButton]}
                       onPress={handleResetPassword}
+                      disabled={resettingPassword}
                       activeOpacity={0.8}
                     >
                       <Text
@@ -1948,7 +2023,11 @@ export default function MembersScreen() {
                           { color: "#fff" },
                         ]}
                       >
-                        🔑 Reset Password
+                        {resettingPassword
+                          ? "Sending…"
+                          : selectedMember.userId
+                            ? "🔑 Reset Password"
+                            : "🔑 Send login link"}
                       </Text>
                     </TouchableOpacity>
                   )}
@@ -2226,9 +2305,13 @@ export default function MembersScreen() {
                   />
                 )}
 
-                {selectedMember.userId && (
+                {selectedMember.email && (
                   <Button
-                    label="🔑 Reset Password"
+                    label={
+                      selectedMember.userId
+                        ? "🔑 Reset Password"
+                        : "🔑 Send login link"
+                    }
                     onPress={handleResetPassword}
                     loading={resettingPassword}
                     size="sm"

@@ -159,6 +159,20 @@ const REP_LABELS: Record<
   other: { name: "Representative Name", role: "Role / Title" },
 };
 
+// Formats a numeric string with thousand separators as the user
+// types. Keeps at most one decimal point and two decimal places.
+// Same helper as add-contribution.tsx / add-expense.tsx so the
+// three money forms behave identically.
+const formatAmountInput = (raw: string): string => {
+  const cleaned = raw.replace(/[^0-9.]/g, "");
+  if (!cleaned) return "";
+  const parts = cleaned.split(".");
+  const intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  if (parts.length === 1) return intPart;
+  const decPart = (parts[1] ?? "").slice(0, 2);
+  return `${intPart}.${decPart}`;
+};
+
 // ─────────────────────────────────────────────────────────────────────────
 // Screen
 // ─────────────────────────────────────────────────────────────────────────
@@ -199,8 +213,8 @@ export default function AddInvestmentModal() {
   const repLabels = REP_LABELS[investmentType];
 
   const roi = useMemo(() => {
-    const a = parseFloat(amount) || 0;
-    const e = parseFloat(expected) || 0;
+    const a = parseFloat(amount.replace(/,/g, "")) || 0;
+    const e = parseFloat(expected.replace(/,/g, "")) || 0;
     if (!a || !e) return null;
     return round2(((e - a) / a) * 100);
   }, [amount, expected]);
@@ -222,7 +236,7 @@ export default function AddInvestmentModal() {
       show("Investment name required", "error");
       return;
     }
-    const amtNum = parseFloat(amount);
+    const amtNum = parseFloat(amount.replace(/,/g, ""));
     if (!amtNum || amtNum <= 0) {
       show("Enter a valid amount", "error");
       return;
@@ -261,7 +275,7 @@ export default function AddInvestmentModal() {
           : undefined,
 
         investmentAmount: amtNum,
-        expectedReturn: parseFloat(expected) || amtNum,
+        expectedReturn: parseFloat(expected.replace(/,/g, "")) || amtNum,
 
         startDate: new Date(startDate).toISOString(),
         maturityDate: maturityDate
@@ -416,9 +430,9 @@ export default function AddInvestmentModal() {
             <Input
               label={`Amount (${group?.currency ?? "RWF"}) *`}
               value={amount}
-              onChangeText={setAmount}
+              onChangeText={(v) => setAmount(formatAmountInput(v))}
               keyboardType="numeric"
-              placeholder="300000"
+              placeholder="300,000"
               prefix={group?.currency ?? "RWF"}
             />
           </View>
@@ -426,9 +440,9 @@ export default function AddInvestmentModal() {
             <Input
               label="Expected Return"
               value={expected}
-              onChangeText={setExpected}
+              onChangeText={(v) => setExpected(formatAmountInput(v))}
               keyboardType="numeric"
-              placeholder="360000"
+              placeholder="360,000"
               prefix={group?.currency ?? "RWF"}
             />
           </View>

@@ -82,6 +82,11 @@ const PAGE_TITLES: Record<string, string> = {
 const MOBILE_HIDDEN_ROUTES = new Set<string>([
   "/(tabs)/investments",
   "/(tabs)/wallet",
+  // Meetings — the tab still exists and still works on web/desktop.
+  // Hiding it on mobile keeps the bottom tab bar to a manageable count
+  // and matches how the group actually uses the app on phones
+  // (attendance is recorded from the web console).
+  "/(tabs)/meetings",
   // Members is deliberately NOT hidden — it's the "my stats" page for
   // a regular member and shows their own card + risk breakdown.
 ]);

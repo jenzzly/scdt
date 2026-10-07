@@ -1417,6 +1417,185 @@ export function outstandingLoanLateFeeTotal(
 // Late-fee transaction ID helpers
 // -----------------------------------------------------------------------------
 
+// ═════════════════════════════════════════════════════════════════════
+// CONTRIBUTION GOAL COMPLIANCE FEES
+// ═════════════════════════════════════════════════════════════════════
+//
+// Two fees per goal period, both evaluated at period end:
+//
+//   Mid:  contributions in the first half of the period fell
+//         short of (minPct × target).
+//         fee = rate × (minPct/100 × target − contributed_first_half)
+//
+//   Full: total contributions for the period fell short of
+//         target.
+//         fee = rate × (target − contributed_whole_period)
+//
+// Only PERIODS THAT HAVE ENDED are considered. Members currently
+// inside an active period are not charged until the period closes.
+//
+// Deterministic fee IDs let the applier block duplicates:
+//   goal-fee-{memberId}-{periodStartYmd}-mid
+//   goal-fee-{memberId}-{periodStartYmd}-full
+export interface OverdueGoalFee {
+  memberId: string;
+  memberName: string;
+  kind: "mid" | "full";
+  periodLabel: string;
+  periodStart: string;
+  periodEnd: string;
+  target: number;
+  contributed: number;
+  shortfall: number;
+  ratePct: number;
+  feeAmount: number;
+  feeTxId: string;
+}
+
+export function findGoalComplianceFees(
+  group: Group,
+  members: Member[],
+  contributions: Contribution[],
+  existingWalletTxs: WalletTransaction[],
+  asOf: Date = new Date(),
+): OverdueGoalFee[] {
+  const periodMonths = group.contributionGoalPeriodMonths;
+  const target = group.contributionGoalTargetAmount;
+  const anchorYmd = group.contributionGoalAnchorDate;
+
+  if (!periodMonths || periodMonths < 1) return [];
+  if (!target || target <= 0) return [];
+  if (!anchorYmd) return [];
+
+  const minPct = Math.max(
+    1,
+    Math.min(100, group.contributionGoalMinPct ?? 50),
+  );
+  const ratePct = Math.max(0, group.contributionGoalLateFeeRatePct ?? 2);
+  if (ratePct <= 0) return [];
+
+  const anchor = new Date(anchorYmd);
+  if (Number.isNaN(anchor.getTime())) return [];
+
+  const results: OverdueGoalFee[] = [];
+
+  const addMonths = (d: Date, n: number) => {
+    const out = new Date(d);
+    out.setMonth(out.getMonth() + n);
+    return out;
+  };
+
+  const ymd = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  for (const member of members) {
+    if (member.status !== "active") continue;
+
+    const memberAlias = (member as any).userId as string | undefined;
+    const ownedContribs = contributions.filter(
+      (c) =>
+        (c.memberId === member.id ||
+          (memberAlias !== undefined && c.memberId === memberAlias)) &&
+        c.status === "approved" &&
+        c.contributionType === "regular",
+    );
+
+    let cursor = new Date(anchor);
+    cursor.setHours(0, 0, 0, 0);
+    let guard = 0;
+
+    while (guard < 500) {
+      guard++;
+      const periodStart = new Date(cursor);
+      const periodEnd = addMonths(periodStart, periodMonths);
+
+      // Only closed periods.
+      if (periodEnd > asOf) break;
+
+      const midPoint = addMonths(periodStart, Math.floor(periodMonths / 2));
+
+      const contributedFirstHalf = ownedContribs
+        .filter((c) => {
+          const d = new Date(c.date);
+          return d >= periodStart && d < midPoint;
+        })
+        .reduce((s, c) => s + (c.amount || 0), 0);
+
+      const contributedFullPeriod = ownedContribs
+        .filter((c) => {
+          const d = new Date(c.date);
+          return d >= periodStart && d < periodEnd;
+        })
+        .reduce((s, c) => s + (c.amount || 0), 0);
+
+      const midTarget = round2(target * (minPct / 100));
+      const midShortfall = round2(
+        Math.max(0, midTarget - contributedFirstHalf),
+      );
+      const fullShortfall = round2(
+        Math.max(0, target - contributedFullPeriod),
+      );
+
+      const startYmd = ymd(periodStart);
+      const endInclusive = new Date(periodEnd);
+      endInclusive.setDate(endInclusive.getDate() - 1);
+      const label = `${startYmd} → ${ymd(endInclusive)}`;
+
+      // Fee A — mid.
+      if (midShortfall > 0) {
+        const feeTxId = `goal-fee-${member.id}-${startYmd}-mid`;
+        const already = existingWalletTxs.some(
+          (t) => t.id === feeTxId && t.type === "late_fee",
+        );
+        if (!already) {
+          results.push({
+            memberId: member.id,
+            memberName: member.fullName,
+            kind: "mid",
+            periodLabel: label,
+            periodStart: startYmd,
+            periodEnd: ymd(periodEnd),
+            target: midTarget,
+            contributed: round2(contributedFirstHalf),
+            shortfall: midShortfall,
+            ratePct,
+            feeAmount: round2(midShortfall * (ratePct / 100)),
+            feeTxId,
+          });
+        }
+      }
+
+      // Fee B — full.
+      if (fullShortfall > 0) {
+        const feeTxId = `goal-fee-${member.id}-${startYmd}-full`;
+        const already = existingWalletTxs.some(
+          (t) => t.id === feeTxId && t.type === "late_fee",
+        );
+        if (!already) {
+          results.push({
+            memberId: member.id,
+            memberName: member.fullName,
+            kind: "full",
+            periodLabel: label,
+            periodStart: startYmd,
+            periodEnd: ymd(periodEnd),
+            target,
+            contributed: round2(contributedFullPeriod),
+            shortfall: fullShortfall,
+            ratePct,
+            feeAmount: round2(fullShortfall * (ratePct / 100)),
+            feeTxId,
+          });
+        }
+      }
+
+      cursor = periodEnd;
+    }
+  }
+
+  return results;
+}
+
 export function getLateFeeTransactionPrefix(
   type: "contribution" | "loan",
   sourceId: string,

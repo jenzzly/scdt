@@ -58,8 +58,9 @@ const SYSTEM_ROLE_DEFAULT_PERMISSIONS: Record<MemberRole, MemberPermissions> = {
   },
   member: {
     ...DEFAULT_MEMBER_PERMISSIONS,
+    // member role: can apply for their own loan
     addContribution: true,
-  
+    addLoan: true,
   },
 };
 

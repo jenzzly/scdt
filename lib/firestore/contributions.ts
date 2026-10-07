@@ -124,20 +124,32 @@ export async function deleteContributionPermanently(gId: string, id: string, rea
 
     await deleteDoc(doc(contribsCol(gId), id));
     
-    const remainingContributions = await getDocs(
-      query(contribsCol(gId), where("memberId", "==", memberId), where("status", "==", "approved"))
-    );
-    
-    const totalAmount = remainingContributions.docs.reduce((sum, doc) => {
-      const data = doc.data();
-      return sum + (data.amount || 0);
-    }, 0);
-    
-    await updateDoc(doc(membersCol(gId), memberId), {
-      totalContributions: totalAmount,
-      totalSavings: totalAmount,
-      updatedAt: new Date().toISOString(),
-    });
+    // [orphan-contrib-permanent] Only recompute member totals when
+    // the member doc exists. See deleteContributionWithRelations in
+    // deletions.ts for the full explanation.
+    const memberRef = doc(membersCol(gId), memberId);
+    const memberSnap = await getDoc(memberRef);
+    if (memberSnap.exists()) {
+      const remainingContributions = await getDocs(
+        query(contribsCol(gId), where("memberId", "==", memberId), where("status", "==", "approved"))
+      );
+      
+      const totalAmount = remainingContributions.docs.reduce((sum, doc) => {
+        const data = doc.data();
+        return sum + (data.amount || 0);
+      }, 0);
+      
+      await updateDoc(memberRef, {
+        totalContributions: totalAmount,
+        totalSavings: totalAmount,
+        updatedAt: new Date().toISOString(),
+      });
+    } else {
+      console.warn(
+        "[deleteContributionPermanently] member not found; skipping totals update",
+        { memberId, id },
+      );
+    }
     
   } catch (error) {
     logError("deleteContributionPermanently", "contribution", error, { groupId: gId, id });

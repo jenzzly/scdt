@@ -96,7 +96,7 @@ export default function OnboardingScreen() {
   const handleNext = async () => {
     if (isLast) {
       await AsyncStorage.setItem("onboarding_completed", "true");
-      router.replace("/(auth)/register");
+      router.replace("/(auth)/login");
     } else {
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
@@ -114,7 +114,7 @@ export default function OnboardingScreen() {
 
   const handleSkip = async () => {
     await AsyncStorage.setItem("onboarding_completed", "true");
-    router.replace("/(auth)/register");
+    router.replace("/(auth)/login");
   };
 
   const onScroll = (event: any) => {
