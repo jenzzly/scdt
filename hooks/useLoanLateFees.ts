@@ -23,7 +23,7 @@ import {
   useGroupLoans,
   useGroupWallet,
 } from "../stores/useStore";
-import { findOverdueInstallments } from "../utils/lateFees";
+import { findOverdueInstallments, isLateFeeExempt } from "../utils/lateFees";
 import { fmtCurrency, round2 } from "../utils/theme";
 
 export interface LoanLateFeeRow {
@@ -84,18 +84,13 @@ export function useLoanLateFees(loanId?: string): LoanLateFees {
     const member = loan
       ? members.find((m: any) => m.id === loan.memberId)
       : null;
-    const exemptions = ((member as any)?.lateFeeExemptions ?? []) as Array<{
-      scope: string;
-      periodStart: string;
-      periodEnd: string;
-    }>;
+    // Delegate the exemption check to the shared isLateFeeExempt
+    // helper in utils/lateFees.ts so the loan and contribution
+    // fee engines cannot drift apart. Any scope/date comparison
+    // change happens in one place.
     const dateInExemption = (dateStr: string | undefined): boolean => {
       if (!dateStr) return false;
-      const day = String(dateStr).slice(0, 10);
-      return exemptions.some((ex) => {
-        if (ex.scope !== "loan" && ex.scope !== "both") return false;
-        return day >= ex.periodStart && day <= ex.periodEnd;
-      });
+      return isLateFeeExempt(member, "loan", new Date(dateStr));
     };
 
     const appliedTxs = wallet.filter(

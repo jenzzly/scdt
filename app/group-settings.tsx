@@ -5321,14 +5321,6 @@ const makePermStyles = (C: Palette) => StyleSheet.create({
   },
   saveBtnDisabled: { opacity: 0.6 },
   saveBtnText: { fontSize: 11, fontWeight: "700", color: "#fff" },
-  tokenBtn: {
-    backgroundColor: C.accent,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-  },
-  tokenBtnDisabled: { opacity: 0.6 },
-  tokenBtnText: { fontSize: 11, fontWeight: "700", color: "#fff" },
   deleteRoleBtn: {
     paddingHorizontal: 8,
     paddingVertical: 5,

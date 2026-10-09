@@ -6,7 +6,7 @@
 // to the store internals and could just as easily live next to the
 // screens that use them.
 import { useMemo } from "react";
-;
+import type { Member } from "../types";
 
 // These hooks are now re-exported from useStore.ts to avoid circular dependency
 // They are implemented in the slice files to maintain the same functionality
@@ -88,4 +88,57 @@ export function recordIsMine(
   if (record.memberId && myIds.has(record.memberId)) return true;
   if (record.userId && myIds.has(record.userId)) return true;
   return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Member-id helpers
+//
+// Records in this app reference a member under either:
+//   • the member-document id   (e.g. members/{abc123})
+//   • the Firebase auth userId (the uid the member signs in with)
+//
+// Nothing in the schema distinguishes them, so any lookup that needs to
+// work with both conventions has to check both keys. These two helpers
+// centralize that so a caller doesn't have to remember to.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Find a member by either their document id OR their auth userId.
+ * Returns null if no member matches under either key. Safe to call
+ * with a null/undefined id.
+ */
+export function findMemberByAnyId(
+  members: Member[],
+  id: string | null | undefined,
+): Member | null {
+  if (!id) return null;
+  return (
+    members.find(
+      (m) => m.id === id || (m as any).userId === id,
+    ) ?? null
+  );
+}
+
+/**
+ * Given any one identifier for a member, return the SET of every
+ * identifier a record might use to reference them — the input plus
+ * the member's own id and userId if a member doc can be resolved.
+ *
+ * Used by hooks that need to check "is this record mine?" against
+ * both convention keys without re-deriving the aliasing rules on
+ * every call.
+ */
+export function expandMemberAliases(
+  memberId: string | null | undefined,
+  members: Member[],
+): Set<string> {
+  const set = new Set<string>();
+  if (!memberId) return set;
+  set.add(memberId);
+  const m = findMemberByAnyId(members, memberId);
+  if (m) {
+    if (m.id) set.add(m.id);
+    if ((m as any).userId) set.add((m as any).userId);
+  }
+  return set;
 }

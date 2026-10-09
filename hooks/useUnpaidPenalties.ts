@@ -9,6 +9,7 @@ import {
   useGroupLoans,
   useCurrentUserRole,
 } from "../stores/useStore";
+import { expandMemberAliases } from "../stores/selectors";
 import {
   findOverdueContributions,
   findOverdueInstallments,
@@ -23,24 +24,12 @@ export function useUnpaidPenalties(memberId: string) {
   const loans = useGroupLoans();
   const role = useCurrentUserRole();
 
-  // Expand `memberId` into every string a record might use to reference
-  // this member: the argument itself, the member doc's id (if the
-  // argument was a userId), and the member doc's userId (if the argument
-  // was a member id). Records in this app use both conventions.
-  const memberAliases = useMemo(() => {
-    const set = new Set<string>();
-    if (memberId) set.add(memberId);
-    const m = members.find(
-      (x) =>
-        x.id === memberId ||
-        (x as any).userId === memberId,
-    );
-    if (m) {
-      if (m.id) set.add(m.id);
-      if ((m as any).userId) set.add((m as any).userId);
-    }
-    return set;
-  }, [memberId, members]);
+  // Expand `memberId` into every string a record might use to
+  // reference this member. Shared helper — see stores/selectors.ts.
+  const memberAliases = useMemo(
+    () => expandMemberAliases(memberId, members),
+    [memberId, members],
+  );
 
   const isMine = (id: string | undefined) =>
     !!id && memberAliases.has(id);

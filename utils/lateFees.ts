@@ -67,9 +67,8 @@ import type {
   Contribution,
   Loan,
   WalletTransaction,
+  LateFeeExemption,
 } from "../types";
-
-import type { LateFeeExemption } from "../types";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -220,7 +219,7 @@ function localIso(d: Date): string {
  * scope must equal the requested one. The [periodStart, periodEnd]
  * window is inclusive on both ends.
  */
-function isLateFeeExempt(
+export function isLateFeeExempt(
   member: Member | null | undefined,
   scope: "contribution" | "loan",
   date: Date,
