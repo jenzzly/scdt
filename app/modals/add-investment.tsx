@@ -26,7 +26,7 @@ import {
 } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
-import { type Palette, R, S, round2 } from "../../utils/theme";
+import { type Palette, R, S, round2, formatAmountInput } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -157,20 +157,6 @@ const REP_LABELS: Record<
   stocks: { name: "Broker Name", role: "Brokerage Firm" },
   fixed_deposit: { name: "Bank Name", role: "Relationship Manager" },
   other: { name: "Representative Name", role: "Role / Title" },
-};
-
-// Formats a numeric string with thousand separators as the user
-// types. Keeps at most one decimal point and two decimal places.
-// Same helper as add-contribution.tsx / add-expense.tsx so the
-// three money forms behave identically.
-const formatAmountInput = (raw: string): string => {
-  const cleaned = raw.replace(/[^0-9.]/g, "");
-  if (!cleaned) return "";
-  const parts = cleaned.split(".");
-  const intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  if (parts.length === 1) return intPart;
-  const decPart = (parts[1] ?? "").slice(0, 2);
-  return `${intPart}.${decPart}`;
 };
 
 // ─────────────────────────────────────────────────────────────────────────

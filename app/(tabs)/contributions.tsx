@@ -52,6 +52,7 @@ import {
   canApproveContributions as canApproveContributionsPerm,
   canManageWallet,
   canViewAllContributions,
+  FINANCIAL_EDIT_ROLES,
 } from "@/lib/auth/permissions";
 
 // -----------------------------------------------------------------------------
@@ -72,10 +73,6 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const STATUS_TABS = ["All", "Approved", "Pending", "Late Fee"] as const;
-
-// Matches EDIT_ROLES in edit-contribution.tsx — kept in sync manually
-// since that file is a separate route/bundle.
-const EDIT_ROLES = ["admin", "loan_officer", "accountant"];
 
 type SortKey = "date_desc" | "date_asc" | "month" | "year";
 
@@ -161,7 +158,7 @@ export default function ContributionsScreen() {
 
   const canAdd = permissions.addContribution || isAdmin;
   const canExport = permissions.downloadReports || isAdmin;
-  const canEditContribution = EDIT_ROLES.includes(role);
+  const canEditContribution = FINANCIAL_EDIT_ROLES.includes(role);
 
   const getMemberName = (id: string) =>
     allMembers.find((m) => m.id === id)?.fullName ?? "Unknown";

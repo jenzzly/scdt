@@ -56,9 +56,8 @@ import type {
   Member,
 } from "../../types";
 import * as FS from "../../lib/firestore";
-import { updateMeeting as FSUpdateMeeting } from "../../lib/firestore/meetings";
 import { recalcGroupTotals } from "../recalcGroupTotals";
-import { round2 } from "../../utils/theme";
+import { fmtCurrency, round2 } from "../../utils/theme";
 import {
   identifyLinkedParent,
   buildLoanPatchFromWalletEdit,
@@ -223,20 +222,14 @@ export const createWalletSlice = (
     }
 
     const existingTx = walletTransactions.find(
-      (t: WalletTransaction) =>
-        t.id === transactionId
+      (t: WalletTransaction) => t.id === transactionId
     );
 
     if (!existingTx) {
       throw new Error("Transaction not found");
     }
 
-    // -------------------------------------------------------------------------
-    // Keep immutable/system fields under application control.
-    //
-    // These should never be changed by an edit form.
-    // -------------------------------------------------------------------------
-
+    // ── Sanitize: keep system fields under app control ───────────────
     const {
       id: _id,
       groupId: _groupId,
@@ -244,40 +237,26 @@ export const createWalletSlice = (
       createdBy: _createdBy,
       ...editableData
     } = data;
-
-    // Avoid unused-variable warnings while making the intention explicit.
     void _id;
     void _groupId;
     void _createdAt;
     void _createdBy;
 
-    // -------------------------------------------------------------------------
-    // Normalize numeric values.
-    //
-    // Amounts should remain consistently rounded.
-    // -------------------------------------------------------------------------
-
-    const sanitizedData: Partial<WalletTransaction> = {
-      ...editableData,
-    };
-
+    const sanitizedData: Partial<WalletTransaction> = { ...editableData };
     if (
       sanitizedData.amount !== undefined &&
       typeof sanitizedData.amount === "number"
     ) {
-      sanitizedData.amount = round2(
-        sanitizedData.amount
-      );
+      sanitizedData.amount = round2(sanitizedData.amount);
     }
 
-    // -------------------------------------------------------------------------
-    // Identify linked parent record (shared logic).
-    // -------------------------------------------------------------------------
-
+    // ── Identify the linked parent (shared detection) ───────────────
     const { kind: linkedKind, id: linkedId } = identifyLinkedParent(existingTx);
 
     const linkedLoan =
-      linkedKind === "loan" ? loans.find((l: Loan) => l.id === linkedId) : null;
+      linkedKind === "loan"
+        ? loans.find((l: Loan) => l.id === linkedId)
+        : null;
     const linkedContribution =
       linkedKind === "contribution"
         ? contributions.find((c) => c.id === linkedId)
@@ -287,6 +266,11 @@ export const createWalletSlice = (
         ? investments?.find((i) => i.id === linkedId)
         : null;
 
+    // Meeting penalties aren't a top-level linked record the way
+    // loans / contributions / investments are — they're one attendee's
+    // field inside a larger meeting doc — so they get their own
+    // narrow handling below rather than a patch builder in
+    // linkedWalletSync.ts.
     const isMeetingPenalty = existingTx.id.startsWith("meeting-penalty-");
     let linkedMeeting: Meeting | null = null;
     let meetingMemberId: string | undefined;
@@ -297,24 +281,11 @@ export const createWalletSlice = (
       linkedMeeting = meetings?.find((m) => m.id === meetingId) ?? null;
     }
 
-    // -------------------------------------------------------------------------
-    // Save previous state for rollback.
-    // -------------------------------------------------------------------------
-
-    const previousTx = { ...existingTx };
-    const previousLoan = linkedLoan ? { ...linkedLoan } : null;
-    const previousContribution = linkedContribution ? { ...linkedContribution } : null;
-    const previousInvestment = linkedInvestment ? { ...linkedInvestment } : null;
-    const previousMeeting = linkedMeeting ? { ...linkedMeeting } : null;
-
-    // -------------------------------------------------------------------------
-    // Build linked-parent patches via the SHARED helpers — same functions
-    // updateLoanAndSync / updateContributionAndSync / updateInvestmentAndSync
-    // use in the other direction, so the field-mapping rules and the loan
-    // accrued-interest re-anchoring logic live in exactly one place
-    // (utils/linkedWalletSync.ts).
-    // -------------------------------------------------------------------------
-
+    // ── Build linked-parent patches via the SHARED helpers ──────────
+    // Same functions updateLoanAndSync / updateContributionAndSync /
+    // updateInvestmentAndSync use in the other direction, so the
+    // field-mapping rules and the loan accrued-interest re-anchoring
+    // logic live in exactly one place (utils/linkedWalletSync.ts).
     const walletEditChanged = {
       description: sanitizedData.description,
       amount: sanitizedData.amount,
@@ -326,19 +297,28 @@ export const createWalletSlice = (
     let investmentPatch: Partial<Investment> | null = null;
     let meetingPatch: Partial<Meeting> | null = null;
 
-    if (linkedLoan && (sanitizedData.date !== undefined || sanitizedData.amount !== undefined)) {
-      loanPatch = buildLoanPatchFromWalletEdit(linkedLoan, walletEditChanged);
-      if (Object.keys(loanPatch).length === 0) loanPatch = null;
+    if (
+      linkedLoan &&
+      (sanitizedData.date !== undefined || sanitizedData.amount !== undefined)
+    ) {
+      const p = buildLoanPatchFromWalletEdit(linkedLoan, walletEditChanged);
+      if (Object.keys(p).length > 0) loanPatch = p;
     }
 
-    if (linkedContribution && (sanitizedData.date !== undefined || sanitizedData.amount !== undefined)) {
-      contributionPatch = buildContributionPatchFromWalletEdit(walletEditChanged);
-      if (Object.keys(contributionPatch).length === 0) contributionPatch = null;
+    if (
+      linkedContribution &&
+      (sanitizedData.date !== undefined || sanitizedData.amount !== undefined)
+    ) {
+      const p = buildContributionPatchFromWalletEdit(walletEditChanged);
+      if (Object.keys(p).length > 0) contributionPatch = p;
     }
 
-    if (linkedInvestment && (sanitizedData.date !== undefined || sanitizedData.amount !== undefined)) {
-      investmentPatch = buildInvestmentPatchFromWalletEdit(walletEditChanged);
-      if (Object.keys(investmentPatch).length === 0) investmentPatch = null;
+    if (
+      linkedInvestment &&
+      (sanitizedData.date !== undefined || sanitizedData.amount !== undefined)
+    ) {
+      const p = buildInvestmentPatchFromWalletEdit(walletEditChanged);
+      if (Object.keys(p).length > 0) investmentPatch = p;
     }
 
     if (linkedMeeting && meetingMemberId && sanitizedData.amount !== undefined) {
@@ -350,124 +330,135 @@ export const createWalletSlice = (
       meetingPatch = { attendees: updatedAttendees } as Partial<Meeting>;
     }
 
-    // -------------------------------------------------------------------------
-    // Optimistic update — tx + linked parent(s), all locally first.
-    // -------------------------------------------------------------------------
+    // ── One descriptor per linked parent, applied in three phases ───
+    //
+    // Previously this was three near-identical blocks (optimistic
+    // update, remote write, rollback), each with its own four-branch
+    // if-chain — twelve copies of the same shape. The array below
+    // carries the same information once; the loops apply it in each
+    // of the three phases.
+    type LinkedSync = {
+      applyLocal: (s: StoreState) => Partial<StoreState>;
+      revertLocal: (s: StoreState) => Partial<StoreState>;
+      // Promise<unknown>: updateLoan resolves to the updated
+      // Loan while the other three resolve to void. The await
+      // loop discards the resolved value — only rejection matters.
+      applyRemote: (gId: string) => Promise<unknown>;
+    };
 
-    get().updateWalletTxLocal(transactionId, sanitizedData);
+    const syncs: LinkedSync[] = [];
 
     if (linkedLoan && loanPatch) {
-      set((s: StoreState) => ({
-        loans: s.loans.map((l: Loan) =>
-          l.id === linkedLoan.id ? { ...l, ...loanPatch } : l
-        ),
-      }));
-    }
-    if (linkedContribution && contributionPatch) {
-      set((s: StoreState) => ({
-        contributions: s.contributions.map((c) =>
-          c.id === linkedContribution.id ? { ...c, ...contributionPatch } : c
-        ),
-      }));
-    }
-    if (linkedInvestment && investmentPatch) {
-      set((s: StoreState) => ({
-        investments: (s.investments ?? []).map((i) =>
-          i.id === linkedInvestment.id ? { ...i, ...investmentPatch } : i
-        ),
-      }));
-    }
-    if (linkedMeeting && meetingPatch) {
-      set((s: StoreState) => ({
-        meetings: (s.meetings ?? []).map((m) =>
-          m.id === linkedMeeting.id ? { ...m, ...meetingPatch } : m
-        ),
-      }));
+      const prevLoan = { ...linkedLoan };
+      const targetId = linkedLoan.id;
+      const patch = loanPatch;
+      syncs.push({
+        applyLocal: (s) => ({
+          loans: s.loans.map((l: Loan) =>
+            l.id === targetId ? { ...l, ...patch } : l
+          ),
+        }),
+        revertLocal: (s) => ({
+          loans: s.loans.map((l: Loan) =>
+            l.id === targetId ? (prevLoan as Loan) : l
+          ),
+        }),
+        applyRemote: (gId) => FS.updateLoan(gId, targetId, patch),
+      });
     }
 
+    if (linkedContribution && contributionPatch) {
+      const prevContribution = { ...linkedContribution };
+      const targetId = linkedContribution.id;
+      const patch = contributionPatch;
+      syncs.push({
+        applyLocal: (s) => ({
+          contributions: s.contributions.map((c) =>
+            c.id === targetId ? { ...c, ...patch } : c
+          ),
+        }),
+        revertLocal: (s) => ({
+          contributions: s.contributions.map((c) =>
+            c.id === targetId ? (prevContribution as Contribution) : c
+          ),
+        }),
+        applyRemote: (gId) => FS.updateContribution(gId, targetId, patch),
+      });
+    }
+
+    if (linkedInvestment && investmentPatch) {
+      const prevInvestment = { ...linkedInvestment };
+      const targetId = linkedInvestment.id;
+      const patch = investmentPatch;
+      syncs.push({
+        applyLocal: (s) => ({
+          investments: (s.investments ?? []).map((i) =>
+            i.id === targetId ? { ...i, ...patch } : i
+          ),
+        }),
+        revertLocal: (s) => ({
+          investments: (s.investments ?? []).map((i) =>
+            i.id === targetId ? (prevInvestment as Investment) : i
+          ),
+        }),
+        applyRemote: (gId) => FS.updateInvestment(gId, targetId, patch),
+      });
+    }
+
+    if (linkedMeeting && meetingPatch) {
+      const prevMeeting = { ...linkedMeeting };
+      const targetId = linkedMeeting.id;
+      const patch = meetingPatch;
+      syncs.push({
+        applyLocal: (s) => ({
+          meetings: (s.meetings ?? []).map((m) =>
+            m.id === targetId ? { ...m, ...patch } : m
+          ),
+        }),
+        revertLocal: (s) => ({
+          meetings: (s.meetings ?? []).map((m) =>
+            m.id === targetId ? (prevMeeting as Meeting) : m
+          ),
+        }),
+        applyRemote: (gId) => FS.updateMeeting(gId, targetId, patch),
+      });
+    }
+
+    // ── Phase 1: optimistic local update ────────────────────────────
+    get().updateWalletTxLocal(transactionId, sanitizedData);
+    for (const s of syncs) {
+      set((state: StoreState) => s.applyLocal(state));
+    }
     set((s: StoreState) => recalcGroupTotals(s));
 
     try {
       get().setSyncStatus("pending");
 
-      // -----------------------------------------------------------------------
-      // Firestore update — FS now correctly resolves to the barrel
-      // (../../lib/firestore), which re-exports addWalletTx, updateWalletTx,
-      // updateLoan, and everything else used below. This is the actual fix
-      // for "not able to save changes."
-      // -----------------------------------------------------------------------
-
-      await FS.updateWalletTx(
-        activeGroupId,
-        transactionId,
-        sanitizedData
-      );
-
-      if (linkedLoan && loanPatch) {
-        await FS.updateLoan(activeGroupId, linkedLoan.id, loanPatch);
-      }
-      if (linkedContribution && contributionPatch) {
-        await FS.updateContribution(activeGroupId, linkedContribution.id, contributionPatch);
-      }
-      if (linkedInvestment && investmentPatch) {
-        await FS.updateInvestment(activeGroupId, linkedInvestment.id, investmentPatch);
-      }
-      if (linkedMeeting && meetingPatch) {
-        await FSUpdateMeeting(activeGroupId, linkedMeeting.id, meetingPatch);
+      // ── Phase 2: remote write ─────────────────────────────────────
+      await FS.updateWalletTx(activeGroupId, transactionId, sanitizedData);
+      for (const s of syncs) {
+        await s.applyRemote(activeGroupId);
       }
 
       get().recalcTotals();
       get().setSyncStatus("synced");
     } catch (e) {
-      // -----------------------------------------------------------------------
-      // Rollback optimistic update.
-      // -----------------------------------------------------------------------
-
-      get().updateWalletTxLocal(transactionId, previousTx);
-
-      if (linkedLoan && previousLoan) {
-        set((s: StoreState) => ({
-          loans: s.loans.map((l: Loan) =>
-            l.id === linkedLoan.id ? (previousLoan as Loan) : l
-          ),
-        }));
+      // ── Phase 3: rollback (wallet tx + every linked parent) ───────
+      get().updateWalletTxLocal(transactionId, existingTx);
+      for (const s of syncs) {
+        set((state: StoreState) => s.revertLocal(state));
       }
-      if (linkedContribution && previousContribution) {
-        set((s: StoreState) => ({
-          contributions: s.contributions.map((c) =>
-            c.id === linkedContribution.id ? (previousContribution as Contribution) : c
-          ),
-        }));
-      }
-      if (linkedInvestment && previousInvestment) {
-        set((s: StoreState) => ({
-          investments: (s.investments ?? []).map((i) =>
-            i.id === linkedInvestment.id ? (previousInvestment as Investment) : i
-          ),
-        }));
-      }
-      if (linkedMeeting && previousMeeting) {
-        set((s: StoreState) => ({
-          meetings: (s.meetings ?? []).map((m) =>
-            m.id === linkedMeeting.id ? (previousMeeting as Meeting) : m
-          ),
-        }));
-      }
-
       get().recalcTotals();
 
       get().setSyncStatus(
         "failed",
-        e instanceof Error
-          ? e.message
-          : "Failed to update transaction"
+        e instanceof Error ? e.message : "Failed to update transaction"
       );
 
       throw e;
     }
   },
 
-  // ===========================================================================
   // OPTIMISTIC DELETE
   // ===========================================================================
 

@@ -18,17 +18,12 @@ import { TabRow, SearchBar, useToast, Toast } from "../../components/ui";
 import { type Palette, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
 import { Layout } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
+import { FINANCIAL_EDIT_ROLES } from "../../lib/auth/permissions";
 import type { WalletTransaction } from "../../types";
 import { useCurrentMemberPermissions, useMyMemberIds} from "../../stores/selectors";
 import { KpiCard } from "../../components/ui/KpiCard";
 
 const PAGE_SIZE = 20;
-
-// Roles allowed to edit a wallet transaction. Delete remains admin-only
-// (see `isAdmin` below) — this is a separate, slightly broader set for
-// editing only. Adjust here if your role enum uses different string
-// values (e.g. "accountant" vs "account").
-const EDIT_ROLES = ["admin", "loan_officer", "accountant"];
 
 const TX_LABEL: Record<string, string> = {
   contribution:             "Contribution",
@@ -89,7 +84,7 @@ export default function WalletScreen() {
 
   const isAdmin   = role === "admin";
   // Editing is allowed for a slightly broader set of roles than deleting.
-  const canEdit   = EDIT_ROLES.includes(role);
+  const canEdit   = FINANCIAL_EDIT_ROLES.includes(role);
   const isGroupView = useIsGroupView();
   const canSeeAll = isGroupView;
 

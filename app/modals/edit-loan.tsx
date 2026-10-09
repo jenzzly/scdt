@@ -32,10 +32,9 @@ import { ModalShell } from "../../components/ui/ModalShell";
 import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 import { type Palette, S, fmtCurrency, fmtDate, showConfirm } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
+import { FINANCIAL_EDIT_ROLES } from "../../lib/auth/permissions";
 
 import type { Loan } from "../../types";
-
-const EDIT_ROLES = ["admin", "loan_officer", "accountant"];
 
 export default function EditLoanModal() {
   const C = useTheme();
@@ -51,7 +50,7 @@ export default function EditLoanModal() {
     useStore();
   const { show, visible, msg, type } = useToast();
 
-  const canEdit = EDIT_ROLES.includes(role);
+  const canEdit = FINANCIAL_EDIT_ROLES.includes(role);
 
   const loan = useMemo(() => {
     if (!loanId) return undefined;

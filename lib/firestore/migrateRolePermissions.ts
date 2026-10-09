@@ -16,53 +16,9 @@
 // double-write or clobbering of permissions an admin has already
 // customized via the Permissions tab.
 import { doc, getDoc, updateDoc, db } from "./core";
-import type { MemberPermissions, MemberRole } from "../../types";
-import { DEFAULT_MEMBER_PERMISSIONS } from "../../types";
+import { SYSTEM_ROLE_DEFAULT_PERMISSIONS } from "../../types/roles";
 
-// Mirrors SYSTEM_ROLE_DEFAULT_PERMISSIONS in app/group-settings.tsx.
-// Duplicated here (rather than imported) because that file is a screen
-// component, not a shared module, and this migration needs to run
-// before the Group Settings screen is ever opened, from wherever the
-// group first loads (see wiring note at the bottom of this file).
-const SYSTEM_ROLE_DEFAULT_PERMISSIONS: Record<MemberRole, MemberPermissions> = {
-  admin: {
-    addContribution: true, addLoan: true, addInvestment: true,
-    approveContributions: true, approveLoans: true, approveInvestments: true,
-    viewAllReports: true, downloadReports: true,
-    manageMeetings: true, editMembers: true, deleteRecords: true, manageSettings: true,
-    manageContributions: true, manageLoans: true, manageInvestments: true,
-    applyLateFees: true, waiveLateFees: true, recordAttendance: true,
-    viewAuditLogs: true, revertAuditLogs: true,
-    manageRoles: true, manageBackup: true,
-  
-  },
-  accountant: {
-    ...DEFAULT_MEMBER_PERMISSIONS,
-    approveContributions: true, viewAllReports: true, downloadReports: true,
-    manageContributions: true, manageLoans: true, manageInvestments: true,
-    applyLateFees: true, waiveLateFees: true, recordAttendance: true,
-    viewAuditLogs: true, manageBackup: true,
-  
-  },
-  loan_officer: {
-    ...DEFAULT_MEMBER_PERMISSIONS,
-    addLoan: true, approveLoans: true, viewAllReports: true,
-    manageLoans: true, applyLateFees: true, recordAttendance: true,
-  
-  },
-  committee: {
-    ...DEFAULT_MEMBER_PERMISSIONS,
-    approveContributions: true, approveLoans: true, approveInvestments: true, viewAllReports: true,
-    recordAttendance: true, viewAuditLogs: true,
-  
-  },
-  member: {
-    ...DEFAULT_MEMBER_PERMISSIONS,
-    // member role: can apply for their own loan
-    addContribution: true,
-    addLoan: true,
-  },
-};
+// SYSTEM_ROLE_DEFAULT_PERMISSIONS — imported from types/roles.ts.
 
 /**
  * Seeds group.rolePermissions / group.customRolePermissions from the

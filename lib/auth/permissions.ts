@@ -5,6 +5,21 @@
 import { DEFAULT_MEMBER_PERMISSIONS, type MemberPermissions } from "../../types";
 import type { UserRole } from "../../types/roles";
 
+/**
+ * Roles that can edit financial records in place — contributions,
+ * loans, investments, wallet transactions, expenses — through the
+ * inline edit forms and the edit-*.tsx modals.
+ *
+ * Consolidated here from six separate copies (app/(tabs)/contributions,
+ * app/(tabs)/wallet, and every app/modals/edit-*.tsx). A change to this
+ * list takes effect across the whole app in one edit.
+ */
+export const FINANCIAL_EDIT_ROLES: UserRole[] = [
+  "admin",
+  "loan_officer",
+  "accountant",
+];
+
 export interface NavItem {
   label: string;
   route: string;

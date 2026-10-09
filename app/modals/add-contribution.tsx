@@ -66,7 +66,7 @@ import {
 import { ModalShell } from "../../components/ui/ModalShell";
 import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
 import { LateFeeWaiverModal } from "../../components/ui/LateFeeWaiverModal";
-import { type Palette, S, fmtCurrency, fmtDate } from "../../utils/theme";
+import { type Palette, S, fmtCurrency, fmtDate, formatAmountInput } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 import { findOverdueContributions } from "../../utils/lateFees";
 
@@ -82,19 +82,6 @@ const TYPE_OPTIONS = Object.entries(TYPE_LABELS).map(([value, label]) => ({
 }));
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
-
-// Formats a numeric string with thousand separators as the user
-// types. Keeps at most one decimal point and two decimal places.
-// "1234567.89" → "1,234,567.89". Strips any non-numeric input.
-const formatAmountInput = (raw: string): string => {
-  const cleaned = raw.replace(/[^0-9.]/g, "");
-  if (!cleaned) return "";
-  const parts = cleaned.split(".");
-  const intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  if (parts.length === 1) return intPart;
-  const decPart = (parts[1] ?? "").slice(0, 2);
-  return `${intPart}.${decPart}`;
-};
 
 export default function AddContributionModal() {
   const C = useTheme();

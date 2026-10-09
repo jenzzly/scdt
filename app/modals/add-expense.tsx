@@ -5,7 +5,7 @@ import { useStore, useActiveGroup } from "../../stores/useStore";
 import { Input, Select, Button, useToast, Toast, DatePicker } from "../../components/ui";
 import { ModalShell } from "../../components/ui/ModalShell";
 import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
-import { S, type Palette } from "../../utils/theme";
+import { S, type Palette, formatAmountInput } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 
 const CATEGORIES = [
@@ -17,18 +17,6 @@ const CATEGORIES = [
   { label: "Transport", value: "transport" },
   { label: "Other", value: "other" },
 ];
-
-// Formats a numeric string with thousand separators as the user
-// types. Keeps at most one decimal point and two decimal places.
-const formatAmountInput = (raw: string): string => {
-  const cleaned = raw.replace(/[^0-9.]/g, "");
-  if (!cleaned) return "";
-  const parts = cleaned.split(".");
-  const intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  if (parts.length === 1) return intPart;
-  const decPart = (parts[1] ?? "").slice(0, 2);
-  return `${intPart}.${decPart}`;
-};
 
 export default function AddExpenseModal() {
   const router = useRouter();

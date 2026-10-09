@@ -36,12 +36,13 @@ export * from "./meetings";
 export * from "./notifications";
 export * from "./groupInit";
 export * from "./deletions";
-// tokenRequests removed — the token-based invite flow is gone.
+// tokenRequests is a stub module — see lib/firestore/tokenRequests.ts.
 // Account creation now goes through lib/auth/adminUsers.ts
-// (createUserAsAdmin / resetUserPasswordAsAdmin). The module file
-// is left on disk as an empty stub so any stale import path still
-// resolves without a build error.
+// (createUserAsAdmin / resetUserPasswordAsAdmin). The stubs exist
+// only so stale imports resolve without a build error.
 
 // getMembershipId is defined in core.ts (used internally by several domain
 // modules) but screens also import it directly off the FS namespace.
 export { getMembershipId } from "./core";
+
+export * from "./tokenRequests";

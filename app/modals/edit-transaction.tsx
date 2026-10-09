@@ -43,13 +43,10 @@ import {
 import { useToast, Toast, DatePicker } from "../../components/ui";
 import { type Palette, fmtCurrency, showConfirm } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
+import { FINANCIAL_EDIT_ROLES } from "../../lib/auth/permissions";
 import type { WalletTransaction } from "../../types";
 import { projectAccruedInterest, computeFlatAccrued } from "../../utils/accrual";
 import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
-
-// Same allow-list as wallet.tsx — keep these two in sync, or better,
-// move this into a shared constants file and import it in both places.
-const EDIT_ROLES = ["admin", "loan_officer", "accountant"];
 
 const TX_LABEL: Record<string, string> = {
   contribution: "Contribution",
@@ -90,7 +87,7 @@ export default function EditTransactionModal() {
 
   const { show, visible, msg, type } = useToast();
 
-  const canEdit = EDIT_ROLES.includes(role);
+  const canEdit = FINANCIAL_EDIT_ROLES.includes(role);
 
   const tx = useMemo(
     () => allTxs.find((t: WalletTransaction) => t.id === id),

@@ -2,7 +2,12 @@
 export type ID = string;
 
 export type MemberRole = "admin" | "accountant" | "loan_officer" | "committee" | "member";
-export type UserRole = "admin" | "accountant" | "loan_officer" | "committee" | "member" | "audit" | "groups";
+// UserRole is defined in types/roles.ts (single source of truth —
+// that module also exports the USER_ROLES runtime array and the
+// label/description maps). This type-only re-export keeps every
+// existing `import { UserRole } from "./types"` working unchanged
+// while ensuring both names resolve to the same type.
+export type { UserRole } from "./roles";
 export type MemberStatus = "active" | "inactive" | "pending" | "suspended" | "exited";
 export type LoanStatus = 
   | "pending_loan_officer" 
@@ -148,6 +153,19 @@ export interface Group {
   contributionGoalAnchorDate?: string;
 
   /**
+   * ISO date (YYYY-MM-DD) — the single anchor every date-gated
+   * rule reads: contribution late fees, loan late fees, goal
+   * periods, and yearly reports. Late fees accrue from this
+   * date forward. When unset, no late fees accrue at all.
+   *
+   * Replaces the previous fallback chain
+   * (financialYearStartDate ?? contributionLateFeeStartDate)
+   * — there is now exactly one source of truth, so what the
+   * admin sets in Group Settings is what the fee engine uses.
+   */
+  financialYearStartDate?: string;
+
+  /**
    * Fraction of the goal target a member must reach in the first
    * half of each goal period. Below this at the midpoint triggers
    * the "half-target" compliance fee at period end. Default 50.
@@ -201,11 +219,6 @@ export interface Group {
   // ── Global settings — financial year & reminders ────────────────
   // Both optional. Existing groups keep working without them,
   // and the app falls back to sensible defaults when absent.
-
-  /** 1-12. Reports and yearly totals bucket by fiscal year
-   *  starting in this month rather than January. Defaults to
-   *  January when unset. Display-only — no data is rewritten. */
-  financialYearStartMonth?: number;
 
   /** How many days before a contribution is due to nudge the
    *  member. 0 or unset disables reminders. */

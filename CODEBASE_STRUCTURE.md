@@ -72,8 +72,8 @@ The app had **48 pre-existing TypeScript errors** (the app ran because
 Babel strips types without checking). Fixed in three passes via
 targeted scripts:
 
-| Pass | Scope | Errors cleared |
-|---|---|---|
+| Pass | Scope | Errors cleared  |
+|---|---|---|------|-----|-------|
 | 1 | Mechanical fixes across 10 files | 48 → 35 |
 | 2 | More mechanical + regression fix | 35 → 21 |
 | 3 | Final mechanical (CRLF-aware) + design fixes | 21 → 12 |

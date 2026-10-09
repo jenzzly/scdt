@@ -17,12 +17,11 @@ import { exportXlsx, importXlsx } from "../utils/export";
 import * as FS from "../lib/firestore";
 import type { AuditLog, MemberPermissions, Member, GroupRole, MemberRole } from "../types";
 import { DEFAULT_MEMBER_PERMISSIONS } from "../types";
-import { ROLE_LABELS } from "../types/roles";
+import { ROLE_LABELS, SYSTEM_ROLE_DEFAULT_PERMISSIONS } from "../types/roles";
 import {
   createUserAsAdmin,
   resetUserPasswordAsAdmin,
 } from "../lib/auth/adminUsers";
-import { generateLoginToken } from "../utils/authTokens";
 import {
   findMembershipDrift,
   fixMembershipDrift,
@@ -80,33 +79,7 @@ const SYSTEM_ROLE_KEYS: MemberRole[] = ["admin", "accountant", "loan_officer", "
 // Starting-point permission templates for the 5 built-in roles.
 // Admins are always full-access and can't be edited below. The other four
 // are just sensible starting defaults — adjust freely in the Permissions tab.
-const SYSTEM_ROLE_DEFAULT_PERMISSIONS: Record<MemberRole, MemberPermissions> = {
-  admin: {
-    manageContributions: true, manageLoans: true, manageInvestments: true,
-    applyLateFees: true, waiveLateFees: true, recordAttendance: true,
-    viewAuditLogs: true, revertAuditLogs: true,
-    manageRoles: true, manageBackup: true,
-
-  },
-  accountant: {
-    ...DEFAULT_MEMBER_PERMISSIONS,
-    approveContributions: true, viewAllReports: true, downloadReports: true,
-  },
-  loan_officer: {
-    ...DEFAULT_MEMBER_PERMISSIONS,
-    addLoan: true, approveLoans: true, viewAllReports: true,
-  },
-  committee: {
-    ...DEFAULT_MEMBER_PERMISSIONS,
-    approveContributions: true, approveLoans: true, approveInvestments: true, viewAllReports: true,
-  },
-  member: {
-    ...DEFAULT_MEMBER_PERMISSIONS,
-    // member role: can apply for their own loan
-    addContribution: true,
-    addLoan: true,
-  },
-};
+// SYSTEM_ROLE_DEFAULT_PERMISSIONS — imported from types/roles.ts
 
 const PERM_KEYS: (keyof MemberPermissions)[] = [
   "addContribution", "addLoan", "addInvestment",
@@ -652,7 +625,6 @@ export default function GroupSettingsScreen() {
     { key: "settings", label: "Settings", icon: "⚙️" },
     { key: "members", label: "Members", icon: "👥" },
     { key: "permissions", label: "Permissions", icon: "🔐" },
-    // { key: "tokenRequests", label: "Token Requests", icon: "🔑" },
     { key: "audit", label: "Audit", icon: "📋" },
   ] as const; // TAB_ICON_AND_LABEL
 
@@ -848,7 +820,7 @@ export default function GroupSettingsScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   // ─── Audit State ─────────────────────────────────────────────────────────
-  const [activeSection, setActiveSection] = useState<"settings" | "members" | "permissions" | "audit" | "tokenRequests">("settings");
+  const [activeSection, setActiveSection] = useState<"settings" | "members" | "permissions" | "audit">("settings");
   const [activeTab, setActiveTab] = useState<AuditTab>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
@@ -870,11 +842,7 @@ export default function GroupSettingsScreen() {
   const [showCreateRole, setShowCreateRole] = useState(false);
   const [newRoleName, setNewRoleName] = useState("");
   const [creatingRole, setCreatingRole] = useState(false);
-  const [tokenGenerating, setTokenGenerating] = useState<string | null>(null);
 
-  // ─── Token Requests State ─────────────────────────────────────────────────
-  const [pendingTokenRequests, setPendingTokenRequests] = useState<any[]>([]);
-  const [processingTokenRequest, setProcessingTokenRequest] = useState<string | null>(null);
 
   // Combined list of roles: the 5 built-in system roles + any custom roles
   // stored on the group doc. This is the single source of truth the
@@ -981,84 +949,6 @@ export default function GroupSettingsScreen() {
     }
   }, [newRoleName, activeGroupId, roles, group?.customRoles, group?.customRolePermissions, updateGroup, show]);
 
-  // ─── Token Request Handlers ───────────────────────────────────────────────
-  useEffect(() => {
-    if (activeSection === "tokenRequests" && activeGroupId) {
-      const unsubscribe = FS.subscribePendingTokenRequests(
-        activeGroupId,
-        (requests) => setPendingTokenRequests(requests),
-        (error) => console.error("Error loading token requests:", error)
-      );
-      return () => unsubscribe();
-    }
-  }, [activeSection, activeGroupId]);
-
-  const handleProcessTokenRequest = useCallback(async (request: any) => {
-    if (!activeGroupId) { show("No active group", "error"); return; }
-
-    setProcessingTokenRequest(request.id);
-    try {
-      // Find member by email
-      const member = members.find(m => m.email?.toLowerCase() === request.email.toLowerCase());
-
-      if (!member) {
-        show(`No member found with email ${request.email}`, "error");
-        await FS.updateTokenRequest(request.id, { status: "cancelled", processedAt: new Date().toISOString() });
-        return;
-      }
-
-      // Generate token
-      const tokenData = generateLoginToken();
-      await useStore.getState().updateMember(member.id, {
-        loginToken: tokenData.token,
-        loginTokenExpiry: tokenData.expiry,
-      });
-
-      // Send email notification
-      if (member.email) {
-        await FS.addNotification(
-          member.userId || member.id,
-          {
-            userId: member.userId || member.id,
-            title: "Your Login Token",
-            message: `Your login token is: ${tokenData.token}
-
-This token will expire in 24 hours. Use it on the login screen to access your account.`,
-            type: "info",
-            groupId: activeGroupId,
-            read: false,
-            createdAt: new Date().toISOString(),
-          },
-          member.email
-        );
-      }
-
-      // Mark request as processed
-      await FS.updateTokenRequest(request.id, {
-        status: "processed",
-        processedAt: new Date().toISOString()
-      });
-
-      show(`Login token sent to ${member.email}`, "success");
-    } catch (e: any) {
-      show(e.message || "Failed to process token request", "error");
-    } finally {
-      setProcessingTokenRequest(null);
-    }
-  }, [activeGroupId, members, show]);
-
-  const handleCancelTokenRequest = useCallback(async (requestId: string) => {
-    try {
-      await FS.updateTokenRequest(requestId, {
-        status: "cancelled",
-        processedAt: new Date().toISOString()
-      });
-      show("Token request cancelled");
-    } catch (e: any) {
-      show(e.message || "Failed to cancel token request", "error");
-    }
-  }, [show]);
-
   const handleDeleteRole = useCallback((role: GroupRole) => {
     if (role.isSystem || !activeGroupId) return;
     const count = memberCountForRole(role);
@@ -1098,21 +988,6 @@ This token will expire in 24 hours. Use it on the login screen to access your ac
     return ROLE_LABELS[member.role] || member.role;
   }, [group?.customRoles]);
 
-  const generateMemberToken = useCallback(async (member: Member) => {
-    setTokenGenerating(member.id);
-    try {
-      const tokenData = generateLoginToken();
-      await useStore.getState().updateMember(member.id, {
-        loginToken: tokenData.token,
-        loginTokenExpiry: tokenData.expiry,
-      });
-      show(`Login token generated for ${member.fullName}: ${tokenData.token}`, "success");
-    } catch (e: any) {
-      show(e.message || "Failed to generate login token", "error");
-    } finally {
-      setTokenGenerating(null);
-    }
-  }, [show]);
 
   // ─── Member Management Stats ────────────────────────────────────────────
   const memberStats = useMemo(() => {
@@ -1200,6 +1075,11 @@ This token will expire in 24 hours. Use it on the login screen to access your ac
     const targets = membersWithoutAccounts;
     if (targets.length === 0) return;
 
+    // Capture into locals so TS can narrow past the async closure.
+    // The guard above already proves both exist.
+    const actorUserId = currentMember.userId;
+    const actorFullName = currentMember.fullName || "Admin";
+
     showConfirm(
       "Send Login Invites",
       `Send password-setup emails to ${targets.length} member${
@@ -1218,8 +1098,8 @@ This token will expire in 24 hours. Use it on the login screen to access your ac
           try {
             const r = await resetUserPasswordAsAdmin(
               m.email!,
-              currentMember.userId,
-              currentMember.fullName || "Admin",
+              actorUserId,
+              actorFullName,
               activeGroupId,
               currentMember,
             );
@@ -1928,7 +1808,8 @@ They won't be able to sign in or participate in group activities, and any new la
         })(),
       }),
           // ── Contribution reminder ───────────────────────────────────────
-      ...(Number.isFinite(contributionReminderDaysBeforeNum) &&
+      ...(contributionReminderDaysBeforeNum !== undefined &&
+        Number.isFinite(contributionReminderDaysBeforeNum) &&
         contributionReminderDaysBeforeNum >= 0 && {
           contributionReminderDaysBefore: contributionReminderDaysBeforeNum,
         }),
@@ -2278,17 +2159,6 @@ They won't be able to sign in or participate in group activities, and any new la
                     runDetailAction(() => openEditMember(member))
                   }
                 />
-                {!member.userId && (
-                  <DetailAction
-                    icon="🔑"
-                    label="Generate login token"
-                    description="Create a one-time token this member can use to sign in"
-                    tone="neutral"
-                    onPress={() =>
-                      runDetailAction(() => generateMemberToken(member))
-                    }
-                  />
-                )}
               </View>
 
               {/* Danger section (delete is conditional) */}
@@ -2546,9 +2416,7 @@ They won't be able to sign in or participate in group activities, and any new la
             const active = activeSection === tab.key;
 
             const badgeCount =
-              (tab.key as string) === "tokenRequests"
-                ? pendingTokenRequests.length
-                : tab.key === "audit"
+              tab.key === "audit"
                 ? allAuditLogs.length
                 : tab.key === "permissions"
                 ? roles.length
@@ -3874,87 +3742,6 @@ They won't be able to sign in or participate in group activities, and any new la
         </View>
       )}
 
-      {/* ─── TOKEN REQUESTS SECTION ──────────────────────────────────────────── */}
-      {activeSection === "tokenRequests" && isAdmin && (
-        <View style={styles.contentScroll}>
-          <View style={{ padding: 16, gap: 16 }}>
-            <Text style={{ fontSize: 18, fontWeight: "700", color: C.text }}>
-              Pending Token Requests
-            </Text>
-            <Text style={{ fontSize: 13, color: C.text3 }}>
-              Process login token requests from members who need access to their accounts.
-            </Text>
-
-            {pendingTokenRequests.length === 0 ? (
-              <View style={{ padding: 32, alignItems: "center" }}>
-                <Text style={{ fontSize: 14, color: C.text3 }}>
-                  No pending token requests
-                </Text>
-              </View>
-            ) : (
-              <View style={{ gap: 12 }}>
-                {pendingTokenRequests.map((request) => (
-                  <View key={request.id} style={{
-                    backgroundColor: C.surface,
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    borderColor: C.border,
-                    padding: 16,
-                    gap: 12
-                  }}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 14, fontWeight: "600", color: C.text }}>
-                          {request.email}
-                        </Text>
-                        <Text style={{ fontSize: 12, color: C.text3, marginTop: 4 }}>
-                          Requested {request.requestedAt ? new Date(request.requestedAt.toDate()).toLocaleString() : "Recently"}
-                        </Text>
-                      </View>
-                      <View style={{
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                        borderRadius: 6,
-                        backgroundColor: C.warning + "20"
-                      }}>
-                        <Text style={{ fontSize: 11, fontWeight: "600", color: C.warning }}>
-                          Pending
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* <View style={{ flexDirection: "row", gap: 8 }}>
-                      <Button
-                        label="Send Token"
-                        onPress={() => handleProcessTokenRequest(request)}
-                        loading={processingTokenRequest === request.id}
-                        size="sm"
-                        style={{ flex: 1 }}
-                      />
-                      <TouchableOpacity
-                        onPress={() => handleCancelTokenRequest(request.id)}
-                        style={{
-                          paddingHorizontal: 16,
-                          paddingVertical: 10,
-                          borderRadius: 8,
-                          borderWidth: 1,
-                          borderColor: C.border,
-                          backgroundColor: C.elevated
-                        }}
-                      >
-                        <Text style={{ fontSize: 13, fontWeight: "600", color: C.text3 }}>
-                          Cancel
-                        </Text>
-                      </TouchableOpacity>
-                    </View> */}
-                  </View>
-                ))}
-              </View>
-            )}
-          </View>
-        </View>
-      )}
-
       {/* ─── AUDIT SECTION ────────────────────────────────────────────────── */}
       {activeSection === "audit" && (
         <View style={styles.contentScroll}>
@@ -5138,6 +4925,31 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   penaltyNote: { fontSize: 12, color: C.text3, marginBottom: 10, lineHeight: 17 },
   subLabel: { fontSize: 11, fontWeight: "700", color: C.text2, marginTop: 4, marginBottom: 6 },
   goalPreview: { fontSize: 11, color: C.primary, fontWeight: "600", marginTop: 6 },
+
+  // Deadline preview chip — shown under the late-fee inputs on the
+  // Settings tab. Confirms the actual due date, grace end, and
+  // fee-start date the fee engine will use for the current month.
+  deadlinePreview: {
+    marginTop: 8,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.borderLight,
+  },
+  deadlinePreviewTitle: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: C.text3,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  deadlinePreviewLine: {
+    fontSize: 11,
+    color: C.text2,
+    lineHeight: 15,
+  },
 
   toggleRow: {
     flexDirection: "row",

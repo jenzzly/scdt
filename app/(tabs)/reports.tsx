@@ -12,7 +12,6 @@ import {
   useWindowDimensions,
   Modal,
   Platform,
-  Alert,
 } from "react-native";
 import Svg, { Circle, Path } from "react-native-svg";
 
@@ -50,6 +49,7 @@ import {
   fmtCurrency,
   fmtDate,
   round2,
+  showConfirm,
   type Palette,
 } from "../../utils/theme";
 import { Layout } from "../../utils/theme";
@@ -4014,37 +4014,6 @@ export default function ReportsScreen() {
       <Toast visible={visible} msg={msg} type={type} />
     </View>
   );
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Confirm dialog
-// ─────────────────────────────────────────────────────────────────────────
-function showConfirm(
-  title: string,
-  message: string,
-  onConfirm: () => void,
-  onCancel?: () => void,
-  destructive = false,
-) {
-  if (Platform.OS === "web") {
-    const ok =
-      typeof window !== "undefined" &&
-      window.confirm(`${title}
-
-${message}`);
-    if (ok) onConfirm();
-    else onCancel?.();
-    return;
-  }
-
-  Alert.alert(title, message, [
-    { text: "Cancel", style: "cancel", onPress: onCancel },
-    {
-      text: "Confirm",
-      style: destructive ? "destructive" : "default",
-      onPress: onConfirm,
-    },
-  ]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

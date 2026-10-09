@@ -17,7 +17,7 @@
  * and spread it in below.
  */
 import { create } from "zustand";
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { persist, createJSONStorage } from "zustand/middleware";
 import { Platform } from "react-native";
 import type { StoreState, SetFn, GetFn } from "./storeTypes";
@@ -402,37 +402,23 @@ export const useCurrentMember = () => {
   const authUid = useStore((state) => state.authUid);
   const members = useStore((state) => state.members);
   const currentMember = useStore((state) => state.currentMember);
-  const activeGroupId = useStore((state) => state.activeGroupId);
-  const [hasAttempted, setHasAttempted] = useState(false);
 
-  // Use useEffect to update state after render
+  // Recovery path for when the members array arrives (or rehydrates)
+  // after setAuth / setCurrentMember already ran. The store also sets
+  // currentMember in setAuth and in onRehydrateStorage, so this is a
+  // safety net — not the primary path.
+  //
+  // Previously this was two effects, both dead: the first compared
+  // `m.authUid` (a field that does not exist on Member — the field
+  // is `userId`) and the second compared `m.email === authUid`.
+  // Neither could ever match, so the whole function was a no-op.
   useEffect(() => {
-    // If we already have a current member or no authUid or no members, skip
-    if (currentMember || !authUid || !members || members.length === 0) {
-      return;
-    }
-
-    // Find the member that matches the authUid
-    const member = members.find((m: any) => m.authUid === authUid);
+    if (currentMember || !authUid || members.length === 0) return;
+    const member = members.find((m) => m.userId === authUid);
     if (member) {
       useStore.setState({ currentMember: member });
     }
-    setHasAttempted(true);
   }, [authUid, members, currentMember]);
-
-  // If we couldn't find a member but have authUid, try looking by email as fallback
-  useEffect(() => {
-    if (currentMember || !authUid || !members || members.length === 0 || hasAttempted) {
-      return;
-    }
-
-    // Try to find by matching some other criteria if needed.
-    // This is a fallback in case authUid isn't set correctly on members.
-    const memberByEmail = members.find((m: any) => m.email === authUid);
-    if (memberByEmail) {
-      useStore.setState({ currentMember: memberByEmail });
-    }
-  }, [authUid, members, currentMember, hasAttempted]);
 
   return useStore((state) => state.currentMember);
 };
