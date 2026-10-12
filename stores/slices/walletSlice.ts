@@ -56,7 +56,7 @@ import type {
   Member,
 } from "../../types";
 import * as FS from "../../lib/firestore";
-import { recalcGroupTotals } from "../recalcGroupTotals";
+import { recalcGroupTotals , withRecalc} from "../recalcGroupTotals";
 import { fmtCurrency, round2 } from "../../utils/theme";
 import {
   identifyLinkedParent,
@@ -429,7 +429,7 @@ export const createWalletSlice = (
     for (const s of syncs) {
       set((state: StoreState) => s.applyLocal(state));
     }
-    set((s: StoreState) => recalcGroupTotals(s));
+    set(withRecalc());
 
     try {
       get().setSyncStatus("pending");

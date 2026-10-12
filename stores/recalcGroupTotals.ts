@@ -2,6 +2,34 @@
 //
 // Single source of truth for derived group/member totals.
 //
+// ─────────────────────────────────────────────────────────────────
+// CALL-SITE CONVENTIONS
+//
+// This function runs from three distinct places, each for a
+// different reason. Understanding which is which prevents "why
+// does this fire here?" confusion — and prevents removing a call
+// that was load-bearing.
+//
+//   1. Slice mutators (addWalletTxLocal, updateMemberLocal, etc.) —
+//      fire after every local write so the derived fields that
+//      consumers read (group.availableBalance, member.totalContributions,
+//      member.loanEarnings, …) reflect the change before the next
+//      render. These are the primary source of truth.
+//
+//   2. Snapshot arrivals (setWalletTxs, setContributions, etc.) —
+//      the canonical input set changed wholesale; recompute once
+//      rather than N times.
+//
+//   3. Safety nets (useRecalcTotals on focus, rehydrate) — fires
+//      on mount and on tab focus. Recomputes even when nothing
+//      obvious changed, so a slice that forgot to bracket its own
+//      write still shows correct totals on the next paint.
+//
+// The function is idempotent and O(n) over arrays already in memory
+// — calling it twice within one tick costs a single extra pass and
+// is harmless. Prefer calling it too often over too rarely.
+// ─────────────────────────────────────────────────────────────────
+//
 // Changes in this revision:
 //
 //   MEMBER CONTRIBUTION TOTALS no longer come from walletTransactions.
@@ -35,6 +63,37 @@
 //   than a regression.
 import { round2 } from "../utils/theme";
 import type { StoreState } from "./storeTypes";
+
+/**
+ * Convenience wrapper for the ~20 slice call sites that need to write
+ * a partial state patch and then recompute derived totals.
+ *
+ * Before:
+ *     set((s) => recalcGroupTotals(s));
+ *     set((s) => ({
+ *       walletTransactions: newTxs,
+ *       ...recalcGroupTotals({ ...s, walletTransactions: newTxs }),
+ *     }));
+ *
+ * After:
+ *     set(withRecalc());
+ *     set(withRecalc({ walletTransactions: newTxs }));
+ *
+ * The helper applies the patch FIRST, then computes totals against the
+ * post-patch state, then returns a single object with both. That's the
+ * order every call site already uses by hand — the helper makes it
+ * impossible to get wrong.
+ *
+ * The return type is `(s: StoreState) => Partial<StoreState>`, which
+ * is exactly what Zustand's `set` accepts, so `set(withRecalc(...))`
+ * composes cleanly.
+ */
+export function withRecalc(patch: Partial<StoreState> = {}) {
+  return (s: StoreState): Partial<StoreState> => ({
+    ...patch,
+    ...recalcGroupTotals({ ...s, ...patch }),
+  });
+}
 
 export function recalcGroupTotals(
   state: Pick<

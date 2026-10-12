@@ -109,17 +109,24 @@ export const DEFAULT_MEMBER_PERMISSIONS: MemberPermissions = {
   manageSettings: false,
 };
 
-export interface LoanApprovalStep {
+/**
+ * One approval step's outcome — used for both loans and investments.
+ * Previously named LoanApprovalStep; renamed to reflect that it's shared.
+ */
+export interface ApprovalStep {
   approved: boolean;
   date?: string;
   comment?: string;
   userId?: string;
 }
 
+/** @deprecated — renamed to ApprovalStep. Kept for compatibility. */
+export type LoanApprovalStep = ApprovalStep;
+
 export interface LoanApprovals {
-  loanOfficer: LoanApprovalStep;
-  committee: LoanApprovalStep;
-  accountant: LoanApprovalStep;
+  loanOfficer: ApprovalStep;
+  committee: ApprovalStep;
+  accountant: ApprovalStep;
 }
 
 export type LoanInterestMethod = "flat" | "reducing_balance";
@@ -436,8 +443,8 @@ export interface RepaymentScheduleItem {
 }
 
 export interface InvestmentApprovals {
-  committee: LoanApprovalStep;
-  accountant: LoanApprovalStep;
+  committee: ApprovalStep;
+  accountant: ApprovalStep;
 }
 
 export interface Investment {

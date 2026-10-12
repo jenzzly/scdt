@@ -249,3 +249,80 @@ export function getMeetingPenaltyTotals(
     paidCount,
   };
 }
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Meeting-penalty math
+//
+// Single source of truth for the two penalty formulas a meeting can
+// produce. Both are used by:
+//   • stores/slices/meetingSlice.ts        (recordAttendance writes the
+//                                            penalty onto the meeting)
+//   • app/modals/meeting-attendance.tsx    (live preview in the UI)
+//
+// Keeping the math in one file means a member's penalty in the preview
+// and the penalty that gets saved on save cannot disagree.
+//
+// Formula conventions:
+//
+//   Absence  — a % of the group's contribution amount, configured in
+//              Group Settings → Meeting Penalties. Officers (any role
+//              other than "member") get their own rate. Falls back to
+//              the legacy fixed-amount fields only for groups created
+//              before the percentage-based policy existed.
+//
+//   Late     — % of contribution amount, applied once per whole
+//              15-minute block past the meeting start. Sub-15-minute
+//              lateness is free. Falls back to a flat RWF-per-block
+//              number for legacy groups.
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Penalty charged when a member is marked absent from a meeting.
+ * `role` is the member's role string; anything other than "member" is
+ * treated as an officer and uses the officer rate.
+ */
+export function computeAbsencePenalty(
+  group: Group | null | undefined,
+  role: string | null | undefined,
+): number {
+  const contributionBase = group?.contributionAmount ?? 0;
+  const isOfficer = role !== "member";
+
+  const pct = isOfficer
+    ? group?.absencePenaltyOfficerRatePct
+    : group?.absencePenaltyMemberRatePct;
+  const legacy = isOfficer
+    ? group?.absencePenaltyOfficer
+    : group?.absencePenaltyMember;
+  const fallback = isOfficer ? 5000 : 2000;
+
+  if (pct !== undefined && pct > 0 && contributionBase > 0) {
+    return Math.round(contributionBase * (pct / 100) * 100) / 100;
+  }
+  return legacy ?? fallback;
+}
+
+/**
+ * Penalty charged when a member is marked late. `lateMinutes` is the
+ * raw minutes-late figure; anything under 15 minutes rounds down to
+ * zero blocks and charges nothing.
+ */
+export function computeLatePenalty(
+  group: Group | null | undefined,
+  lateMinutes: number | null | undefined,
+): number {
+  const minutes = Number(lateMinutes) || 0;
+  if (minutes <= 0) return 0;
+
+  const blocks = Math.floor(minutes / 15);
+  if (blocks <= 0) return 0;
+
+  const contributionBase = group?.contributionAmount ?? 0;
+  const ratePct = group?.latePenaltyRatePct;
+
+  if (ratePct !== undefined && ratePct > 0 && contributionBase > 0) {
+    return Math.round(contributionBase * (ratePct / 100) * blocks * 100) / 100;
+  }
+  return blocks * (group?.latePenaltyAmount ?? 500);
+}

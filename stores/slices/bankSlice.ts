@@ -13,7 +13,7 @@
 import type { SetFn, GetFn, StoreState } from "../storeTypes";
 import type { BankAccount } from "../../types";
 import * as FS from "../../lib/firestore";
-import { recalcGroupTotals } from "../recalcGroupTotals";
+import { recalcGroupTotals , withRecalc} from "../recalcGroupTotals";
 
 export const createBankSlice = (
   set: SetFn,
@@ -149,7 +149,7 @@ export const createBankSlice = (
             : g,
         ),
       }));
-      set((s) => recalcGroupTotals(s));
+      set(withRecalc());
 
       get().setSyncStatus("synced");
       return { difference: result.difference };

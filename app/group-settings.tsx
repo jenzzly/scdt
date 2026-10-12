@@ -2240,134 +2240,6 @@ They won't be able to sign in or participate in group activities, and any new la
     );
   };
 
-  // ─── Small reusable pieces for the detail modal ────────────────────────
-  const DetailRow = ({
-    icon,
-    label,
-    value,
-    muted,
-  }: {
-    icon: string;
-    label: string;
-    value: string;
-    muted?: boolean;
-  }) => (
-    <View style={detailStyles.row}>
-      <Text style={detailStyles.rowIcon}>{icon}</Text>
-      <Text style={detailStyles.rowLabel}>{label}</Text>
-      <Text
-        style={[
-          detailStyles.rowValue,
-          muted && { color: C.text3, fontStyle: "italic" },
-        ]}
-        numberOfLines={2}
-      >
-        {value}
-      </Text>
-    </View>
-  );
-
-  const DetailAction = ({
-    icon,
-    label,
-    description,
-    tone = "neutral",
-    onPress,
-  }: {
-    icon: string;
-    label: string;
-    description?: string;
-    tone?: "primary" | "warning" | "danger" | "neutral";
-    onPress: () => void;
-  }) => {
-    const labelColor =
-      tone === "danger"
-        ? C.error
-        : tone === "warning"
-        ? C.gold
-        : tone === "primary"
-        ? C.primary
-        : C.text;
-
-    const iconBg =
-      tone === "danger"
-        ? "rgba(220,38,38,0.10)"
-        : tone === "warning"
-        ? "rgba(217,119,6,0.10)"
-        : tone === "primary"
-        ? "rgba(13,148,136,0.10)"
-        : C.elevated;
-
-    return (
-      <TouchableOpacity
-        style={detailStyles.action}
-        onPress={onPress}
-        activeOpacity={0.7}
-      >
-        <View
-          style={[detailStyles.actionIcon, { backgroundColor: iconBg }]}
-        >
-          <Text style={detailStyles.actionIconText}>{icon}</Text>
-        </View>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text
-            style={[detailStyles.actionLabel, { color: labelColor }]}
-            numberOfLines={1}
-          >
-            {label}
-          </Text>
-          {description ? (
-            <Text style={detailStyles.actionDesc} numberOfLines={2}>
-              {description}
-            </Text>
-          ) : null}
-        </View>
-        <Text style={[detailStyles.actionChevron, { color: labelColor }]}>
-          ›
-        </Text>
-      </TouchableOpacity>
-    );
-  };
-
-  const RolePicker = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
-    <View>
-      <Text style={{ fontSize: 12, fontWeight: "600", color: C.text2, marginBottom: 6 }}>Role</Text>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {roleAssignmentOptions.map((r) => {
-          const isSelected = value === r.value;
-          return (
-            <TouchableOpacity
-              key={r.value}
-              onPress={() => onChange(r.value)}
-              style={{
-                paddingHorizontal: 12,
-                paddingVertical: 8,
-                borderRadius: 8,
-                borderWidth: 1.5,
-                borderColor: isSelected ? C.primary : C.border,
-                backgroundColor: isSelected ? (C.primary + "18") : C.surface,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <Text style={{
-                fontSize: 13,
-                fontWeight: isSelected ? "700" : "500",
-                color: isSelected ? C.primary : C.text,
-              }}>
-                {r.label}
-              </Text>
-              {isSelected && (
-                <Text style={{ fontSize: 12, color: C.primary, fontWeight: "700" }}>✓</Text>
-              )}
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-    </View>
-  );
-
   return (
     <View style={styles.root}>
       {/* ─── Header ──────────────────────────────────────────────────────
@@ -4170,6 +4042,7 @@ They won't be able to sign in or participate in group activities, and any new la
           <RolePicker
             value={createForm.role}
             onChange={(v) => setCreateForm((p) => ({ ...p, role: v }))}
+            options={roleAssignmentOptions}
           />
           <Button
             label="Create User"
@@ -4202,7 +4075,7 @@ They won't be able to sign in or participate in group activities, and any new la
             onChangeText={(t) => setEditForm(p => ({ ...p, phone: t }))}
             placeholder="Phone number"
           />
-          <RolePicker value={editForm.role} onChange={(v) => setEditForm(p => ({ ...p, role: v }))} />
+          <RolePicker value={editForm.role} onChange={(v) => setEditForm(p => ({ ...p, role: v }))} options={roleAssignmentOptions} />
           <Button
             label="Save Changes"
             onPress={handleSaveEditMember}
@@ -4603,6 +4476,177 @@ const makeDetailStyles = (C: Palette) => StyleSheet.create({
 });
 const detailStylesLight = makeDetailStyles(LightPalette);
 const detailStylesDark = makeDetailStyles(DarkPalette);
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// Detail-modal helpers (module scope)
+//
+// Moved out of GroupSettingsScreen so MemberDetailModal — also at
+// module scope — can use them, and so React keeps a stable component
+// identity across parent renders.
+// ─────────────────────────────────────────────────────────────────────────
+
+function DetailRow({
+  icon,
+  label,
+  value,
+  muted,
+}: {
+  icon: string;
+  label: string;
+  value: string;
+  muted?: boolean;
+}) {
+  const C = useTheme();
+  const isDark = useThemeMode() === "dark";
+  const ds = isDark ? detailStylesDark : detailStylesLight;
+  return (
+    <View style={ds.row}>
+      <Text style={ds.rowIcon}>{icon}</Text>
+      <Text style={ds.rowLabel}>{label}</Text>
+      <Text
+        style={[
+          ds.rowValue,
+          muted && { color: C.text3, fontStyle: "italic" },
+        ]}
+        numberOfLines={2}
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function DetailAction({
+  icon,
+  label,
+  description,
+  tone = "neutral",
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  description?: string;
+  tone?: "primary" | "warning" | "danger" | "neutral";
+  onPress: () => void;
+}) {
+  const C = useTheme();
+  const isDark = useThemeMode() === "dark";
+  const ds = isDark ? detailStylesDark : detailStylesLight;
+
+  const labelColor =
+    tone === "danger"
+      ? C.error
+      : tone === "warning"
+      ? C.gold
+      : tone === "primary"
+      ? C.primary
+      : C.text;
+
+  const iconBg =
+    tone === "danger"
+      ? "rgba(220,38,38,0.10)"
+      : tone === "warning"
+      ? "rgba(217,119,6,0.10)"
+      : tone === "primary"
+      ? "rgba(13,148,136,0.10)"
+      : C.elevated;
+
+  return (
+    <TouchableOpacity
+      style={ds.action}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      <View style={[ds.actionIcon, { backgroundColor: iconBg }]}>
+        <Text style={ds.actionIconText}>{icon}</Text>
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text
+          style={[ds.actionLabel, { color: labelColor }]}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+        {description ? (
+          <Text style={ds.actionDesc} numberOfLines={2}>
+            {description}
+          </Text>
+        ) : null}
+      </View>
+      <Text style={[ds.actionChevron, { color: labelColor }]}>›</Text>
+    </TouchableOpacity>
+  );
+}
+
+function RolePicker({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { label: string; value: string }[];
+}) {
+  const C = useTheme();
+  return (
+    <View>
+      <Text
+        style={{
+          fontSize: 12,
+          fontWeight: "600",
+          color: C.text2,
+          marginBottom: 6,
+        }}
+      >
+        Role
+      </Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        {options.map((r) => {
+          const isSelected = value === r.value;
+          return (
+            <TouchableOpacity
+              key={r.value}
+              onPress={() => onChange(r.value)}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 8,
+                borderWidth: 1.5,
+                borderColor: isSelected ? C.primary : C.border,
+                backgroundColor: isSelected ? C.primary + "18" : C.surface,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 13,
+                  fontWeight: isSelected ? "700" : "500",
+                  color: isSelected ? C.primary : C.text,
+                }}
+              >
+                {r.label}
+              </Text>
+              {isSelected && (
+                <Text
+                  style={{
+                    fontSize: 12,
+                    color: C.primary,
+                    fontWeight: "700",
+                  }}
+                >
+                  ✓
+                </Text>
+              )}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
 
 // ─────────────────────────────────────────────
 // Delete Confirmation Styles

@@ -3,7 +3,11 @@ import type { SetFn, GetFn, StoreState } from "../storeTypes";
 import type { ID, Meeting, MeetingAttendee, WalletTransaction, Member } from "../../types";
 import * as FS from "../../lib/firestore";
 import { uid, round2 } from "../../utils/theme";
-import { recalcGroupTotals } from "../recalcGroupTotals";
+import { recalcGroupTotals , withRecalc} from "../recalcGroupTotals";
+import {
+  computeAbsencePenalty,
+  computeLatePenalty,
+} from "../../utils/meetingFees";
 
 export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addMeetingLocal" | "cancelMeeting" | "clearAllMemberPenalties" | "clearMeetingPenalty" | "deleteMeeting" | "deleteMeetingLocal" | "recordAttendance" | "scheduleMeeting" | "setMeetings" | "settleMeetingPenalties" | "updateMeeting" | "updateMeetingLocal"> => ({
       setMeetings: (ms) => set({ meetings: ms }),
@@ -231,38 +235,17 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
         const member = members.find((m: Member) => m.id === memberId);
         const group = groups.find((g) => g.id === activeGroupId);
 
-        // Interest-based penalties: a percentage of the group's standard
-        // contribution amount, configured in Group Settings → Meeting
-        // Penalties. Falls back to the legacy fixed-amount fields only if
-        // the group hasn't been migrated to percentage-based penalties yet.
-        const contributionBase = group?.contributionAmount ?? 0;
-        const pctToAmount = (pct: number | undefined, legacyFixed: number | undefined, legacyDefault: number) => {
-          if (pct !== undefined && pct > 0 && contributionBase > 0) {
-            return round2(contributionBase * (pct / 100));
-          }
-          return legacyFixed ?? legacyDefault;
-        };
-
-        const pMember  = pctToAmount(group?.absencePenaltyMemberRatePct,  group?.absencePenaltyMember,  2000);
-        const pOfficer = pctToAmount(group?.absencePenaltyOfficerRatePct, group?.absencePenaltyOfficer, 5000);
-        const lateRatePct = group?.latePenaltyRatePct;
-
+        // Penalty math lives in utils/meetingFees.ts so the same
+        // formulas are used by the attendance preview modal. See
+        // computeAbsencePenalty / computeLatePenalty there.
         let penaltyAmount = 0;
         let status: MeetingAttendee["status"] = "present";
 
         if (!attended) {
-          penaltyAmount = member?.role === "member" ? pMember : pOfficer;
+          penaltyAmount = computeAbsencePenalty(group, member?.role ?? "member");
           status = "absent";
         } else if (lateMinutes && lateMinutes > 0) {
-          // Late penalty: percentage-per-15-minutes-late of the contribution
-          // amount, if a rate is configured; otherwise fall back to the old
-          // fixed RWF 500 per 15 minutes.
-          const lateBlocks = Math.floor(lateMinutes / 15);
-          if (lateRatePct !== undefined && lateRatePct > 0 && contributionBase > 0) {
-            penaltyAmount = round2(contributionBase * (lateRatePct / 100) * lateBlocks);
-          } else {
-            penaltyAmount = lateBlocks * (group?.latePenaltyAmount ?? 500);
-          }
+          penaltyAmount = computeLatePenalty(group, lateMinutes);
           status = "late";
         }
 
@@ -417,7 +400,7 @@ export const createMeetingSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
           });
         }
 
-        set((s: StoreState) => recalcGroupTotals(s));
+        set(withRecalc());
       },
 
 

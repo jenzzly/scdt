@@ -26,7 +26,11 @@ import {
 import { Layout } from "../../utils/theme";
 import { useTheme } from "../../hooks/useTheme";
 import type { WalletTransaction } from "../../types";
-import { useCurrentMemberPermissions, useMyMemberIds } from "../../stores/selectors";
+import {
+  useCurrentMemberPermissions,
+  useMyMemberIds,
+  findMemberByAnyId,
+} from "../../stores/selectors";
 import { KpiCard } from "../../components/ui/KpiCard";
 import {
   FINANCIAL_EDIT_ROLES,
@@ -156,7 +160,7 @@ export default function WalletScreen() {
   }, [isPersonal]);
 
   const getMemberName = (id?: string) =>
-    id ? (members.find(m => m.id === id)?.fullName ?? "") : "";
+    id ? (findMemberByAnyId(members, id)?.fullName ?? "") : "";
 
   const filtered = useMemo(() => {
     let list = [...txs];

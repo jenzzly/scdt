@@ -3,7 +3,7 @@ import type { SetFn, GetFn, StoreState } from "../storeTypes";
 import type { ID, Investment, WalletTransaction, InvestmentApprovals } from "../../types";
 import * as FS from "../../lib/firestore";
 import { uid, round2, fmtCurrency } from "../../utils/theme";
-import { recalcGroupTotals } from "../recalcGroupTotals";
+import { recalcGroupTotals , withRecalc} from "../recalcGroupTotals";
 import {
   findInvestmentWalletTx,
   buildLinkedTxPatch,
@@ -95,7 +95,7 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
             date: inv.startDate, investmentId: inv.id, createdAt: new Date().toISOString(),
           };
           get().addWalletTxLocal(tx);
-          set((s: StoreState) => recalcGroupTotals(s));
+          set(withRecalc());
           FS.addWalletTx(activeGroupId, tx).catch(console.warn);
         }
 
@@ -223,7 +223,7 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
           get().updateWalletTxLocal(linkedTx.id, txPatch);
         }
 
-        set((s: StoreState) => recalcGroupTotals(s));
+        set(withRecalc());
 
         try {
           get().setSyncStatus("pending");
@@ -242,7 +242,7 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
           if (linkedTx && previousTx) {
             get().updateWalletTxLocal(linkedTx.id, previousTx);
           }
-          set((s: StoreState) => recalcGroupTotals(s));
+          set(withRecalc());
 
           get().setSyncStatus(
             "failed",
@@ -290,7 +290,7 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
         get().addWalletTxLocal(tx);
         
         // Recalculate totals
-        set((s: StoreState) => recalcGroupTotals(s));
+        set(withRecalc());
         
         // Sync to Firebase
         try {
@@ -332,7 +332,7 @@ export const createInvestmentSlice = (set: SetFn, get: GetFn): Pick<StoreState, 
             updatedAt: inv.updatedAt 
           });
           get().deleteWalletTxLocal(tx.id);
-          set((s: StoreState) => recalcGroupTotals(s));
+          set(withRecalc());
           throw error;
         }
       },

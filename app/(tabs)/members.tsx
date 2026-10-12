@@ -54,6 +54,10 @@ import {
   Toast,
   InfoRow,
 } from "../../components/ui";
+import {
+  EditMemberModal,
+  type EditMemberFormValues,
+} from "../../components/members/EditMemberModal";
 import { PendingWaiversCard } from "../../components/ui/PendingWaiversCard";
 import {
   C as LightPalette,
@@ -698,12 +702,6 @@ export default function MembersScreen() {
   // the action modal can close with its animation intact while
   // the edit modal opens on top of the same member.
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editForm, setEditForm] = useState({
-    fullName: "",
-    email: "",
-    phone: "",
-    role: "member",
-  });
   const [savingEdit, setSavingEdit] = useState(false);
 
   const [createForm, setCreateForm] = useState({
@@ -1066,32 +1064,26 @@ export default function MembersScreen() {
   // group-settings edit flow if not handled.
   const handleEditPress = () => {
     if (!selectedMember) return;
-    setEditForm({
-      fullName: selectedMember.fullName,
-      email: selectedMember.email || "",
-      phone: selectedMember.phone || "",
-      role: selectedMember.role,
-    });
     setShowActionModal(false);
     setTimeout(() => setShowEditModal(true), 260);
   };
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = async (values: EditMemberFormValues) => {
     if (!selectedMember || !activeGroupId) return;
-    if (!editForm.fullName.trim()) {
+    if (!values.fullName.trim()) {
       show("Name is required", "error");
       return;
     }
     setSavingEdit(true);
     try {
       await FS.updateMember(activeGroupId, selectedMember.id, {
-        fullName: editForm.fullName.trim(),
-        email: editForm.email.trim() || undefined,
-        phone: editForm.phone.trim() || undefined,
-        role: editForm.role as any,
+        fullName: values.fullName.trim(),
+        email: values.email?.trim() || undefined,
+        phone: values.phone?.trim() || undefined,
+        role: values.role as any,
         userId: selectedMember.userId,
       });
-      show(`${editForm.fullName.trim()} updated`);
+      show(`${values.fullName.trim()} updated`);
       setShowEditModal(false);
       setSelectedMember(null);
     } catch (e: any) {
@@ -2069,59 +2061,26 @@ export default function MembersScreen() {
           )}
         </BottomModal>
 
-        <BottomModal
-          visible={showEditModal}
-          onClose={() => {
-            setShowEditModal(false);
-            setSelectedMember(null);
-          }}
-          title="Edit Member"
-        >
-          <View style={{ gap: 12, paddingHorizontal: 16, paddingBottom: 20 }}>
-            <Input
-              label="Full Name *"
-              value={editForm.fullName}
-              onChangeText={(t) =>
-                setEditForm((p) => ({ ...p, fullName: t }))
-              }
-              placeholder="Full name"
-            />
-            <Input
-              label="Email"
-              value={editForm.email}
-              onChangeText={(t) =>
-                setEditForm((p) => ({ ...p, email: t }))
-              }
-              placeholder="Email address"
-              keyboardType="email-address"
-            />
-            <Input
-              label="Phone"
-              value={editForm.phone}
-              onChangeText={(t) =>
-                setEditForm((p) => ({ ...p, phone: t }))
-              }
-              placeholder="Phone number"
-            />
-            <Select
-              label="Role"
-              value={editForm.role}
-              options={USER_ROLES.map((r) => ({
-                label: ROLE_LABELS[r],
-                value: r,
-              }))}
-              onChange={(v) =>
-                setEditForm((p) => ({ ...p, role: v }))
-              }
-            />
-            <Button
-              label="Save Changes"
-              onPress={handleSaveEdit}
-              loading={savingEdit}
-              fullWidth
-            />
-          </View>
-        </BottomModal>
+        <EditMemberModal
+        visible={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setSelectedMember(null);
+        }}
+        mode="admin"
+        initialValues={{
+          fullName: selectedMember?.fullName ?? "",
+          email: selectedMember?.email ?? "",
+          phone: selectedMember?.phone ?? "",
+          role: selectedMember?.role ?? "member",
+        }}
+        roleOptions={USER_ROLES.map((r) => ({
+          label: ROLE_LABELS[r],
+          value: r,
+        }))}
+        saving={savingEdit}
+        onSave={handleSaveEdit}
+      />
 
         <BottomModal
           visible={showDeleteModal}
@@ -2337,57 +2296,26 @@ export default function MembersScreen() {
         )}
       </BottomModal>
 
-      <BottomModal
+      <EditMemberModal
         visible={showEditModal}
         onClose={() => {
           setShowEditModal(false);
           setSelectedMember(null);
         }}
-        title="Edit Member"
-      >
-        <View style={{ gap: 12, paddingHorizontal: 16, paddingBottom: 20 }}>
-          <Input
-            label="Full Name *"
-            value={editForm.fullName}
-            onChangeText={(t) =>
-              setEditForm((p) => ({ ...p, fullName: t }))
-            }
-            placeholder="Full name"
-          />
-          <Input
-            label="Email"
-            value={editForm.email}
-            onChangeText={(t) =>
-              setEditForm((p) => ({ ...p, email: t }))
-            }
-            placeholder="Email address"
-            keyboardType="email-address"
-          />
-          <Input
-            label="Phone"
-            value={editForm.phone}
-            onChangeText={(t) =>
-              setEditForm((p) => ({ ...p, phone: t }))
-            }
-            placeholder="Phone number"
-          />
-          <Select
-            label="Role"
-            value={editForm.role}
-            options={USER_ROLES.map((r) => ({
-              label: ROLE_LABELS[r],
-              value: r,
-            }))}
-            onChange={(v) => setEditForm((p) => ({ ...p, role: v }))}
-          />
-          <Button
-            label="Save Changes"
-            onPress={handleSaveEdit}
-            loading={savingEdit}
-            fullWidth
-          />
-        </View>
-      </BottomModal>
+        mode="admin"
+        initialValues={{
+          fullName: selectedMember?.fullName ?? "",
+          email: selectedMember?.email ?? "",
+          phone: selectedMember?.phone ?? "",
+          role: selectedMember?.role ?? "member",
+        }}
+        roleOptions={USER_ROLES.map((r) => ({
+          label: ROLE_LABELS[r],
+          value: r,
+        }))}
+        saving={savingEdit}
+        onSave={handleSaveEdit}
+      />
 
       <BottomModal
         visible={showDeleteModal}

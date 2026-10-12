@@ -11,7 +11,7 @@ import {
   daysBetweenYmd,
 } from "../../utils/theme";
 import { projectAccruedInterest } from "../../utils/accrual";
-import { recalcGroupTotals } from "../recalcGroupTotals";
+import { recalcGroupTotals , withRecalc} from "../recalcGroupTotals";
 import {
   findLoanDisbursementWalletTx,
   buildLinkedTxPatch,
@@ -575,7 +575,7 @@ export const createLoanSlice = (
       get().updateWalletTxLocal(linkedTx.id, txPatch);
     }
 
-    set((s) => recalcGroupTotals(s));
+    set(withRecalc());
 
     try {
       get().setSyncStatus("pending");
@@ -594,7 +594,7 @@ export const createLoanSlice = (
       if (linkedTx && previousTx) {
         get().updateWalletTxLocal(linkedTx.id, previousTx);
       }
-      set((s) => recalcGroupTotals(s));
+      set(withRecalc());
 
       get().setSyncStatus(
         "failed",
@@ -792,7 +792,7 @@ export const createLoanSlice = (
       get().updateLoanLocal(loanId, result.loan);
       get().addWalletTxLocal(result.walletTx);
 
-      set((s: StoreState) => recalcGroupTotals(s));
+      set(withRecalc());
 
       get().setSyncStatus("synced");
 
@@ -847,7 +847,7 @@ export const createLoanSlice = (
       if (result.interestTx) get().addWalletTxLocal(result.interestTx);
       if (result.principalTx) get().addWalletTxLocal(result.principalTx);
       if (result.creditTx) get().addWalletTxLocal(result.creditTx);
-      set((s: StoreState) => recalcGroupTotals(s));
+      set(withRecalc());
       get().setSyncStatus("synced");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

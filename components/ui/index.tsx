@@ -102,33 +102,6 @@ export function HeroCard({
   );
 }
 
-// ── Stat Grid ─────────────────────────────────────────────────────────────────
-export function StatGrid({ children }: { children: React.ReactNode }) {
-  const { styles } = useUIStyles();
-  return <View style={styles.statGrid}>{children}</View>;
-}
-
-export function StatCard({
-  label, value, sub, color = "teal",
-}: { label: string; value: string; sub?: string; color?: "teal" | "gold" | "green" | "red" }) {
-  const { C, styles } = useUIStyles();
-  const accent = { teal: C.accent, gold: C.gold, green: C.success, red: C.error };
-  const accentFaint = {
-    teal: C.accentFaint, gold: "rgba(217,119,6,0.08)",
-    green: "rgba(5,150,105,0.08)", red: "rgba(220,38,38,0.08)"
-  };
-  return (
-    <View style={[styles.statCard, { borderTopColor: accent[color] }]}>
-      <View style={[styles.statDot, { backgroundColor: accentFaint[color] }]}>
-        <View style={[styles.statDotInner, { backgroundColor: accent[color] }]} />
-      </View>
-      <Text style={[styles.statValue, { color: accent[color] }]}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-      {sub && <Text style={styles.statSub}>{sub}</Text>}
-    </View>
-  );
-}
-
 // ── Card ──────────────────────────────────────────────────────────────────────
 export function Card({
   children, style, onPress, activeOpacity = 0.7,

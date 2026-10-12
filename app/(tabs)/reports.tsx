@@ -29,7 +29,7 @@ import {
   useIsGroupView,
 } from "../../stores/useStore";
 
-import { useMyMemberIds } from "../../stores/selectors";
+import { useMyMemberIds, findMemberByAnyId } from "../../stores/selectors";
 
 import {
   Card,
@@ -1625,7 +1625,7 @@ export default function ReportsScreen() {
   };
 
   const getMemberName = (id?: string) =>
-    allMembers.find((m) => m.id === id)?.fullName ?? "Unknown";
+    findMemberByAnyId(allMembers, id)?.fullName ?? "Unknown";
 
   // ───────────────────────────────────────────────────────────────────────
   // Late fees (contributions)

@@ -3,7 +3,7 @@ import type { SetFn, GetFn, StoreState } from "../storeTypes";
 import type { Expense, WalletTransaction } from "../../types";
 import * as FS from "../../lib/firestore";
 import { uid } from "../../utils/theme";
-import { recalcGroupTotals } from "../recalcGroupTotals";
+import { recalcGroupTotals , withRecalc} from "../recalcGroupTotals";
 
 export const createExpenseSlice = (set: SetFn, get: GetFn): Pick<StoreState, "addExpense" | "addExpenseLocal" | "deleteExpense" | "deleteExpenseLocal" | "setExpenses" | "updateExpenseLocal"> => ({
       setExpenses: (es) => set({ expenses: es }),
@@ -34,7 +34,7 @@ export const createExpenseSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
           expenseCategory: data.category,
         };
         get().addWalletTxLocal(tx);
-        set((s) => recalcGroupTotals(s));
+        set(withRecalc());
         FS.addExpense(activeGroupId, expense).catch(console.warn);
         FS.addWalletTx(activeGroupId, tx).catch(console.warn);
 

@@ -23,6 +23,7 @@ import {
   useActiveGroup,
   useGroupWallet,
 } from "../../stores/useStore";
+import { findMemberByAnyId } from "../../stores/selectors";
 
 import {
   SearchBar,
@@ -161,7 +162,7 @@ export default function ContributionsScreen() {
   const canEditContribution = FINANCIAL_EDIT_ROLES.includes(role);
 
   const getMemberName = (id: string) =>
-    allMembers.find((m) => m.id === id)?.fullName ?? "Unknown";
+    findMemberByAnyId(allMembers, id)?.fullName ?? "Unknown";
 
   const handleDelete = (id: string) => {
     let msg = `⚠️ This will cascade delete the linked contribution and update member savings.\n\n${id}`;

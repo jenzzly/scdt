@@ -59,18 +59,29 @@ export function useFirebaseSync(
 
     store.setSyncStatus("syncing");
 
-    // ── FIX A: only mark synced after every subscription has fired once ──────
-    // Calculate total subscriptions based on permissions
-    const totalSubs = BASE_SUBS + (viewWallet ? 1 : 0) + (viewInvestments ? 1 : 0);
+    // ── Subscription accounting ────────────────────────────────────
+    // Total is derived from the same flags that gate the conditional
+    // subscriptions below, so the two can't drift. Once any sub
+    // reports a real failure, `hasFailed` latches true and later
+    // subscriptions can't overwrite the error status with "synced".
+    const includeWallet = viewWallet;
+    const includeInvestments = viewInvestments;
+    const totalSubs =
+      BASE_SUBS +
+      (includeWallet ? 1 : 0) +
+      (includeInvestments ? 1 : 0);
     let firedCount = 0;
+    let hasFailed = false;
+
     const markSynced = () => {
       firedCount += 1;
-      if (firedCount >= totalSubs) {
+      if (!hasFailed && firedCount >= totalSubs) {
         store.setSyncStatus("synced");
       }
     };
 
     const handleSyncError = (err: unknown) => {
+      hasFailed = true;
       store.setSyncStatus(
         "failed",
         err instanceof Error ? err.message : "Failed to sync",
@@ -163,7 +174,7 @@ export function useFirebaseSync(
 
         // ── Investments ───────────────────────────────────────────────────
         // Only fetch investments if user has permission
-        ...(viewInvestments ? [
+        ...(includeInvestments ? [
           FS.subscribeInvestments(
             groupId,
             (items) => { store.setInvestments(items); markSynced(); },
@@ -173,7 +184,7 @@ export function useFirebaseSync(
 
         // ── Wallet transactions ───────────────────────────────────────────
         // Only fetch wallet if user has permission
-        ...(viewWallet ? [
+        ...(includeWallet ? [
           FS.subscribeWalletTxs(
             groupId,
             (items) => { store.setWalletTxs(items); markSynced(); },

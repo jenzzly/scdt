@@ -32,6 +32,10 @@ import {
   Toast,
   InfoRow,
 } from "../../components/ui";
+import {
+  EditMemberModal,
+  type EditMemberFormValues,
+} from "../../components/members/EditMemberModal";
 import { useAuth } from "../../hooks/useAuth";
 import { type Palette, R, S, fmtCurrency, fmtDate, round2, showConfirm, Layout } from "../../utils/theme";
 import { useTheme, useThemeMode } from "../../hooks/useTheme";
@@ -91,15 +95,6 @@ export default function MoreScreen() {
   const [editOpen, setEditOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
-  const [editForm, setEditForm] = useState({
-    fullName: "",
-    email: "",
-    phone: "",
-    languagePreference: "en",
-    nationalId: "",
-    physicalAddress: "",
-    role: "member",
-  });
 
   // ── Profile edit ────────────────────────────────────────────────────
   const openProfileEdit = useCallback(() => {
@@ -107,35 +102,26 @@ export default function MoreScreen() {
       show("Profile not loaded yet. Please wait a moment.", "error");
       return;
     }
-    setEditForm({
-      fullName: currentMember.fullName ?? authName ?? "",
-      email: currentMember.email ?? "",
-      phone: currentMember.phone ?? "",
-      languagePreference: currentMember.languagePreference ?? "en",
-      nationalId: currentMember.nationalId ?? "",
-      physicalAddress: currentMember.physicalAddress ?? "",
-      role: currentMember.role,
-    });
     setEditOpen(true);
-  }, [currentMember, authName, show]);
+  }, [currentMember, show]);
 
-  const handleSaveProfile = async () => {
+  const handleSaveProfile = async (values: EditMemberFormValues) => {
     if (!currentMember) {
       show("Profile not loaded. Please try again.", "error");
       return;
     }
-    if (!editForm.fullName.trim()) {
+    if (!values.fullName.trim()) {
       show("Name is required", "error");
       return;
     }
     setSaving(true);
     try {
       await updateOwnProfile(currentMember.id, {
-        fullName: editForm.fullName.trim(),
-        phone: editForm.phone.trim() || undefined,
-        languagePreference: editForm.languagePreference,
-        nationalId: editForm.nationalId.trim() || undefined,
-        physicalAddress: editForm.physicalAddress.trim() || undefined,
+        fullName: values.fullName.trim(),
+        phone: values.phone?.trim() || undefined,
+        languagePreference: values.languagePreference,
+        nationalId: values.nationalId?.trim() || undefined,
+        physicalAddress: values.physicalAddress?.trim() || undefined,
       });
       show("Profile updated");
       setEditOpen(false);
@@ -404,68 +390,21 @@ export default function MoreScreen() {
       </ScrollView>
 
       {/* ── Edit Profile Modal ── */}
-      <BottomModal
+      <EditMemberModal
         visible={editOpen}
         onClose={() => setEditOpen(false)}
-        title="Edit My Profile"
-      >
-        <View style={st.modalContent}>
-          <Input
-            label="Full Name *"
-            value={editForm.fullName}
-            onChangeText={(v) => setEditForm((f) => ({ ...f, fullName: v }))}
-            placeholder="Full name"
-          />
-          <Input
-            label="Phone"
-            value={editForm.phone}
-            onChangeText={(v) => setEditForm((f) => ({ ...f, phone: v }))}
-            placeholder="+250 7XX XXX XXX"
-            keyboardType="phone-pad"
-          />
-          <Input
-            label="Email"
-            value={editForm.email}
-            onChangeText={(v) => setEditForm((f) => ({ ...f, email: v }))}
-            placeholder="Email address"
-            keyboardType="email-address"
-            editable={false}
-            hint="Email can only be changed by an admin"
-          />
-          <Input
-            label="National ID"
-            value={editForm.nationalId}
-            onChangeText={(v) => setEditForm((f) => ({ ...f, nationalId: v }))}
-            placeholder="National ID"
-          />
-          <Input
-            label="Physical Address"
-            value={editForm.physicalAddress}
-            onChangeText={(v) =>
-              setEditForm((f) => ({ ...f, physicalAddress: v }))
-            }
-            placeholder="Address"
-          />
-          <Select
-            label="Language"
-            value={editForm.languagePreference}
-            options={LANGUAGE_OPTIONS}
-            onChange={(v) =>
-              setEditForm((f) => ({ ...f, languagePreference: v }))
-            }
-          />
-
-          <View style={st.modalSpacer} />
-          <Button
-            label="Save Changes"
-            onPress={handleSaveProfile}
-            fullWidth
-            loading={saving}
-            size="lg"
-          />
-          <View style={st.modalBottomSpacer} />
-        </View>
-      </BottomModal>
+        mode="self"
+        initialValues={{
+          fullName: currentMember?.fullName ?? authName ?? "",
+          email: currentMember?.email ?? "",
+          phone: currentMember?.phone ?? "",
+          nationalId: currentMember?.nationalId ?? "",
+          physicalAddress: currentMember?.physicalAddress ?? "",
+          languagePreference: currentMember?.languagePreference ?? "en",
+        }}
+        saving={saving}
+        onSave={handleSaveProfile}
+      />
     </View>
   );
 }

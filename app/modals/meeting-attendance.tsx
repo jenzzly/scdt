@@ -39,6 +39,10 @@ import {
   useGroupMeetings,
 } from "../../stores/useStore";
 import { type Palette, R, S, fmtCurrency, round2, showConfirm } from "../../utils/theme";
+import {
+  computeAbsencePenalty,
+  computeLatePenalty,
+} from "../../utils/meetingFees";
 import { useTheme } from "../../hooks/useTheme";
 import { useToast, Toast } from "../../components/ui";
 import { KeyboardAwareScrollView } from "../../components/ui/KeyboardAwareScrollView";
@@ -102,48 +106,16 @@ export default function MeetingAttendanceModal() {
   // ── Penalty preview ─────────────────────────────────────────────────
   // Mirrors recordAttendance in meetingSlice.ts exactly.
 
-  const contributionBase = group?.contributionAmount ?? 0;
-
+  // Penalty math lives in utils/meetingFees.ts so this preview
+  // cannot drift from what meetingSlice.recordAttendance saves.
   const absencePenaltyFor = useCallback(
-    (role: string): number => {
-      const isOfficer = role !== "member";
-      const pct = isOfficer
-        ? group?.absencePenaltyOfficerRatePct
-        : group?.absencePenaltyMemberRatePct;
-      const legacy = isOfficer
-        ? group?.absencePenaltyOfficer
-        : group?.absencePenaltyMember;
-      const fallback = isOfficer ? 5000 : 2000;
-      if (pct !== undefined && pct > 0 && contributionBase > 0) {
-        return round2(contributionBase * (pct / 100));
-      }
-      return legacy ?? fallback;
-    },
-    [
-      group?.absencePenaltyOfficerRatePct,
-      group?.absencePenaltyMemberRatePct,
-      group?.absencePenaltyOfficer,
-      group?.absencePenaltyMember,
-      contributionBase,
-    ],
+    (role: string): number => computeAbsencePenalty(group, role),
+    [group],
   );
 
   const latePenaltyFor = useCallback(
-    (lateMinutes: number): number => {
-      if (lateMinutes <= 0) return 0;
-      const blocks = Math.floor(lateMinutes / 15);
-      if (blocks <= 0) return 0;
-      const ratePct = group?.latePenaltyRatePct;
-      if (ratePct !== undefined && ratePct > 0 && contributionBase > 0) {
-        return round2(contributionBase * (ratePct / 100) * blocks);
-      }
-      return blocks * (group?.latePenaltyAmount ?? 500);
-    },
-    [
-      group?.latePenaltyRatePct,
-      group?.latePenaltyAmount,
-      contributionBase,
-    ],
+    (lateMinutes: number): number => computeLatePenalty(group, lateMinutes),
+    [group],
   );
 
   const penaltyForRow = useCallback(

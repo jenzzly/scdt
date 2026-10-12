@@ -10,7 +10,7 @@ import type {
 } from "../../types";
 import * as FS from "../../lib/firestore";
 import { uid } from "../../utils/theme";
-import { recalcGroupTotals } from "../recalcGroupTotals";
+import { recalcGroupTotals , withRecalc} from "../recalcGroupTotals";
 import {
   findContributionWalletTx,
   buildLinkedTxPatch,
@@ -274,7 +274,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
         const contribution: Contribution = { ...data, id: uid(), status, createdAt: now };
 
         get().addContributionLocal(contribution);
-        set((s) => recalcGroupTotals(s));
+        set(withRecalc());
 
         try {
           get().setSyncStatus("pending");
@@ -366,7 +366,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
           get().setSyncStatus("synced");
         } catch (e) {
           get().updateContributionLocal(contribution.id, { status: "pending" });
-          set((s) => recalcGroupTotals(s));
+          set(withRecalc());
           get().setSyncStatus("failed", e instanceof Error ? e.message : "Failed to record contribution");
           throw e;
         }
@@ -394,7 +394,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
           createdAt: new Date().toISOString(),
         };
         get().addWalletTxLocal(tx);
-        set((s) => recalcGroupTotals(s));
+        set(withRecalc());
         FS.updateContribution(activeGroupId, contributionId, { status: "approved" }).catch(console.warn);
         FS.addWalletTx(activeGroupId, tx).catch(console.warn);
 
@@ -522,7 +522,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
           get().updateWalletTxLocal(linkedTx.id, txPatch);
         }
 
-        set((s) => recalcGroupTotals(s));
+        set(withRecalc());
 
         try {
           get().setSyncStatus("pending");
@@ -542,7 +542,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
           if (linkedTx && previousTx) {
             get().updateWalletTxLocal(linkedTx.id, previousTx);
           }
-          set((s) => recalcGroupTotals(s));
+          set(withRecalc());
 
           get().setSyncStatus(
             "failed",
@@ -717,7 +717,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
         }
 
         if (toInsert.length === 0) {
-          set((s) => recalcGroupTotals(s));
+          set(withRecalc());
           get().recalcTotals();
 
           if (updated > 0) {
@@ -747,7 +747,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
         for (const { walletTx } of toInsert) {
           if (walletTx) get().addWalletTxLocal(walletTx);
         }
-        set((s) => recalcGroupTotals(s));
+        set(withRecalc());
 
         // ── 3. Push to Firestore in parallel ───────────────────────────
         get().setSyncStatus("pending");
@@ -795,7 +795,7 @@ export const createContributionSlice = (set: SetFn, get: GetFn): Pick<StoreState
           }
         }
 
-        set((s) => recalcGroupTotals(s));
+        set(withRecalc());
         get().recalcTotals();
 
         if (skipped > 0 && created === 0 && updated === 0) {
