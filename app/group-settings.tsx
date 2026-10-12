@@ -23,10 +23,12 @@ import {
   resetUserPasswordAsAdmin,
 } from "../lib/auth/adminUsers";
 import {
-  findMembershipDrift,
+  scanMembershipDrift,
   fixMembershipDrift,
   repairOwnMembershipIfDrifted,
+  repairMembershipDocForMember,
   type MembershipDrift,
+  type MembershipScanIssue,
 } from "../lib/firestore/reconcileMemberships";
 
 // ─────────────────────────────────────────────
@@ -86,7 +88,7 @@ const PERM_KEYS: (keyof MemberPermissions)[] = [
   "approveContributions", "approveLoans", "approveInvestments",
   "manageContributions", "manageLoans", "manageInvestments",
   "applyLateFees", "waiveLateFees",
-  "viewAllReports", "downloadReports",
+  "viewAllReports", "downloadReports", "viewWallet",
   "manageMeetings", "recordAttendance", "editMembers",
   "viewAuditLogs", "revertAuditLogs",
   "manageRoles", "manageBackup",
@@ -106,6 +108,7 @@ const PERM_LABELS: Record<keyof MemberPermissions, string> = {
   waiveLateFees: "Waive / Clear Late Fees",
   viewAllReports: "View All Reports",
   downloadReports: "Export Reports",
+  viewWallet: "View Wallet & Balance Sheet",
   manageMeetings: "Manage Meetings",
   recordAttendance: "Record Attendance",
   editMembers: "Edit Members",
@@ -121,7 +124,7 @@ const PERM_GROUPS = [
   { label: "Approvals", keys: ["approveContributions", "approveLoans", "approveInvestments"] as (keyof MemberPermissions)[] },
   { label: "Operations", keys: ["manageContributions", "manageLoans", "manageInvestments"] as (keyof MemberPermissions)[] },
   { label: "Late Fees", keys: ["applyLateFees", "waiveLateFees"] as (keyof MemberPermissions)[] },
-  { label: "Reports & Visibility", keys: ["viewAllReports", "downloadReports"] as (keyof MemberPermissions)[] },
+  { label: "Reports & Visibility", keys: ["viewAllReports", "downloadReports", "viewWallet"] as (keyof MemberPermissions)[] },
   { label: "Meetings & Members", keys: ["manageMeetings", "recordAttendance", "editMembers"] as (keyof MemberPermissions)[] },
   { label: "Audit & Security", keys: ["viewAuditLogs", "revertAuditLogs", "manageRoles", "manageBackup"] as (keyof MemberPermissions)[] },
   { label: "Full Control", keys: ["deleteRecords", "manageSettings"] as (keyof MemberPermissions)[] },
@@ -716,8 +719,10 @@ export default function GroupSettingsScreen() {
   // ─── Membership Reconciliation State ────────────────────────────────────
   const [checkingDrift, setCheckingDrift] = useState(false);
   const [driftResults, setDriftResults] = useState<MembershipDrift[] | null>(null);
+  const [driftIssues, setDriftIssues] = useState<MembershipScanIssue[]>([]);
   const [showDriftModal, setShowDriftModal] = useState(false);
   const [fixingDriftId, setFixingDriftId] = useState<string | null>(null);
+  const [repairingIssueId, setRepairingIssueId] = useState<string | null>(null);
 
   const [createForm, setCreateForm] = useState({
     fullName: "",
@@ -1129,6 +1134,7 @@ export default function GroupSettingsScreen() {
     let list = [...members];
     if (memberTab === "Active") list = list.filter(m => m.status === "active");
     else if (memberTab === "Pending") list = list.filter(m => m.status === "pending");
+    else if (memberTab === "No Login") list = list.filter(m => !m.userId && !!m.email);
     else if (memberTab === "Inactive") list = list.filter(m => !["active", "pending"].includes(m.status));
 
     if (memberSearch) {
@@ -1552,7 +1558,7 @@ They won't be able to sign in or participate in group activities, and any new la
       // Uses the delete + recreate path the rules allow for a
       // user's own membership doc. See
       // reconcileMemberships.ts for the full rationale.
-      if (currentMember?.userId) {
+      if (currentMember) {
         try {
           const fixed = await repairOwnMembershipIfDrifted(
             activeGroupId,
@@ -1568,16 +1574,20 @@ They won't be able to sign in or participate in group activities, and any new la
             );
           }
         } catch (selfErr: any) {
-          console.warn(
-            "[drift] self-heal failed:",
-            selfErr,
-          );
+          console.warn("[drift] self-heal failed:", selfErr);
         }
+      } else {
+        console.warn(
+          "[drift] no currentMember in store — skipping self-heal",
+        );
       }
 
-      // Step 2 — the drift check on everyone else.
-      const drift = await findMembershipDrift(activeGroupId, members);
-      setDriftResults(drift);
+      // Step 2 — scan every member's membership doc. Unreadable
+      // docs (missing, or with a bad groupId/userId) come back as
+      // `issues` instead of aborting the whole scan, so a single
+      // broken doc no longer blocks detection of the others.
+      const scan = await scanMembershipDrift(activeGroupId, members);
+      const drift = scan.drift;
       setShowDriftModal(true);
       if (drift.length === 0) {
         show("All member roles are in sync", "success");
@@ -1586,6 +1596,29 @@ They won't be able to sign in or participate in group activities, and any new la
       show(e.message || "Failed to check member roles", "error");
     } finally {
       setCheckingDrift(false);
+    }
+  };
+
+  const handleRepairIssue = async (issue: MembershipScanIssue) => {
+    if (!activeGroupId) return;
+    const member = members.find((m) => m.id === issue.memberId);
+    if (!member) {
+      show("Member not found", "error");
+      return;
+    }
+    setRepairingIssueId(issue.memberId);
+    try {
+      const result = await repairMembershipDocForMember(activeGroupId, member);
+      if (result.repaired) {
+        show(`Recreated membership for ${issue.memberFullName}`, "success");
+        setDriftIssues((prev) => prev.filter((i) => i.memberId !== issue.memberId));
+      } else {
+        show(result.reason || "Could not repair from the app", "error");
+      }
+    } catch (e: any) {
+      show(e?.message || "Repair failed", "error");
+    } finally {
+      setRepairingIssueId(null);
     }
   };
 
@@ -2347,7 +2380,7 @@ They won't be able to sign in or participate in group activities, and any new la
           primary button on screen at a time. */}
       <View style={[styles.header, isWide && styles.headerWide]}>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => router.push("/more")}
           style={styles.backBtn}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           accessibilityRole="button"
@@ -3387,7 +3420,7 @@ They won't be able to sign in or participate in group activities, and any new la
               placeholder="Search members..."
             />
             <TabRow
-              tabs={["All", "Active", "Pending", "Inactive"]}
+              tabs={["All", "Active", "Pending", "No Login", "Inactive"]}
               active={memberTab}
               onChange={setMemberTab}
             />
@@ -4182,41 +4215,95 @@ They won't be able to sign in or participate in group activities, and any new la
       {/* Member Access Check Modal */}
       <BottomModal visible={showDriftModal} onClose={() => setShowDriftModal(false)} title="Member Access Check">
         <View style={{ padding: 16, gap: 12 }}>
-          {!driftResults || driftResults.length === 0 ? (
+          {(!driftResults || driftResults.length === 0) && driftIssues.length === 0 ? (
             <Text style={{ fontSize: 13, color: C.text3, textAlign: "center", paddingVertical: 20 }}>
               ✓ Every member's access is correctly in sync.
             </Text>
           ) : (
             <>
-              <Text style={{ fontSize: 13, color: C.text2, lineHeight: 18 }}>
-                {driftResults.length} member{driftResults.length === 1 ? " has" : "s have"} a mismatch between their
-                shown role and their actual access. This can happen after a manual data edit. Fixing it re-syncs their
-                access to match their shown role.
-              </Text>
-              {driftResults.map((d) => (
-                <View key={d.memberId} style={{
-                  borderWidth: 1, borderColor: C.border, borderRadius: 10, padding: 12, gap: 6,
-                }}>
-                  <Text style={{ fontSize: 13, fontWeight: "700", color: C.text }}>{d.memberFullName}</Text>
-                  <Text style={{ fontSize: 11, color: C.text3 }}>
-                    Shows as: {d.memberRole} / {d.memberStatus}{"\n"}
-                    Actual access: {d.membershipRole ?? "no access record"} / {d.membershipStatus ?? "—"}
+              {driftIssues.length > 0 && (
+                <>
+                  <Text style={{ fontSize: 13, fontWeight: "800", color: C.error }}>
+                    Unreadable membership docs ({driftIssues.length})
                   </Text>
+                  <Text style={{ fontSize: 12, color: C.text2, lineHeight: 18 }}>
+                    These members' access records could not be read — the
+                    doc is either missing or has a groupId/userId that
+                    doesn't match this group. Tap Try repair to recreate
+                    the doc from the member's own fields.
+                  </Text>
+                  {driftIssues.map((issue) => (
+                    <View key={issue.memberId} style={{
+                      borderWidth: 1, borderColor: C.error, borderRadius: 10, padding: 12, gap: 6,
+                      backgroundColor: C.redBg,
+                    }}>
+                      <Text style={{ fontSize: 13, fontWeight: "700", color: C.text }}>
+                        {issue.memberFullName}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: C.text3 }}>
+                        {issue.kind === "missing-doc"
+                          ? "No membership doc"
+                          : issue.kind === "permission-denied"
+                          ? "Permission denied reading doc"
+                          : issue.kind === "no-userId"
+                          ? "Member has no linked account"
+                          : issue.message || "Unknown error"}
+                      </Text>
+                      {issue.membershipId && (
+                        <Text style={{ fontSize: 10, color: C.text3, fontFamily: "monospace" }} numberOfLines={2}>
+                          groupMemberships/{issue.membershipId}
+                        </Text>
+                      )}
+                      {issue.kind !== "no-userId" && (
+                        <Button
+                          label="Try repair"
+                          onPress={() => handleRepairIssue(issue)}
+                          loading={repairingIssueId === issue.memberId}
+                          size="sm"
+                          variant="warning"
+                        />
+                      )}
+                    </View>
+                  ))}
+                </>
+              )}
+
+              {driftResults && driftResults.length > 0 && (
+                <>
+                  <Text style={{ fontSize: 13, fontWeight: "800", color: C.text }}>
+                    Role mismatches ({driftResults.length})
+                  </Text>
+                  <Text style={{ fontSize: 12, color: C.text2, lineHeight: 18 }}>
+                    These members' access records were readable, but their
+                    role or status disagrees with their member doc. Tap
+                    Fix to re-sync each one.
+                  </Text>
+                  {driftResults.map((d) => (
+                    <View key={d.memberId} style={{
+                      borderWidth: 1, borderColor: C.border, borderRadius: 10, padding: 12, gap: 6,
+                    }}>
+                      <Text style={{ fontSize: 13, fontWeight: "700", color: C.text }}>{d.memberFullName}</Text>
+                      <Text style={{ fontSize: 11, color: C.text3 }}>
+                        Shows as: {d.memberRole} / {d.memberStatus}{"\n"}
+                        Actual access: {d.membershipRole ?? "no access record"} / {d.membershipStatus ?? "—"}
+                      </Text>
+                      <Button
+                        label="Fix This Member"
+                        onPress={() => handleFixDrift(d)}
+                        loading={fixingDriftId === d.memberId}
+                        size="sm"
+                      />
+                    </View>
+                  ))}
                   <Button
-                    label="Fix This Member"
-                    onPress={() => handleFixDrift(d)}
-                    loading={fixingDriftId === d.memberId}
-                    size="sm"
+                    label={`Fix All (${driftResults.length})`}
+                    onPress={handleFixAllDrift}
+                    loading={fixingDriftId === "__all__"}
+                    fullWidth
+                    variant="success"
                   />
-                </View>
-              ))}
-              <Button
-                label={`Fix All (${driftResults.length})`}
-                onPress={handleFixAllDrift}
-                loading={fixingDriftId === "__all__"}
-                fullWidth
-                variant="success"
-              />
+                </>
+              )}
             </>
           )}
         </View>

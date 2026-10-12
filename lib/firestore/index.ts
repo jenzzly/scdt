@@ -36,6 +36,7 @@ export * from "./meetings";
 export * from "./notifications";
 export * from "./groupInit";
 export * from "./deletions";
+export * from "./bank";
 // tokenRequests is a stub module — see lib/firestore/tokenRequests.ts.
 // Account creation now goes through lib/auth/adminUsers.ts
 // (createUserAsAdmin / resetUserPasswordAsAdmin). The stubs exist

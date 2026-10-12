@@ -76,7 +76,7 @@ export const SYSTEM_ROLE_DEFAULT_PERMISSIONS: Record<
   admin: {
     addContribution: true, addLoan: true, addInvestment: true,
     approveContributions: true, approveLoans: true, approveInvestments: true,
-    viewAllReports: true, downloadReports: true,
+    viewAllReports: true, downloadReports: true, viewWallet: true,
     manageMeetings: true, editMembers: true, deleteRecords: true, manageSettings: true,
     manageContributions: true, manageLoans: true, manageInvestments: true,
     applyLateFees: true, waiveLateFees: true, recordAttendance: true,
@@ -85,7 +85,7 @@ export const SYSTEM_ROLE_DEFAULT_PERMISSIONS: Record<
   },
   accountant: {
     ...DEFAULT_MEMBER_PERMISSIONS,
-    approveContributions: true, viewAllReports: true, downloadReports: true,
+    approveContributions: true, viewAllReports: true, downloadReports: true, viewWallet: true,
     manageContributions: true, manageLoans: true, manageInvestments: true,
     applyLateFees: true, waiveLateFees: true, recordAttendance: true,
     viewAuditLogs: true, manageBackup: true,

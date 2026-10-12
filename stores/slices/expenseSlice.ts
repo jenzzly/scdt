@@ -29,6 +29,9 @@ export const createExpenseSlice = (set: SetFn, get: GetFn): Pick<StoreState, "ad
           description: data.description,
           date: data.date,
           createdAt: now,
+          // Category comes from the expense form so the Wallet's
+          // Expenses tab can group by it. Not used anywhere else.
+          expenseCategory: data.category,
         };
         get().addWalletTxLocal(tx);
         set((s) => recalcGroupTotals(s));

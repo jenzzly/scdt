@@ -9,6 +9,7 @@ import type {
   Group, Member, Contribution, Loan, Investment,
   WalletTransaction, Expense, Meeting, AppNotification,
   SyncStatus, ID, DeletionRecord, AuditLog, LateFeeExemption,
+  BankAccount,
 } from "../types";
 import type {
   OverdueContribution,
@@ -327,6 +328,29 @@ export interface StoreState {
    * actually transacting — meetings themselves never touch the wallet.
    */
   settleMeetingPenalties: (memberId: ID) => Promise<void>;
+  // ── Bank account (Balance Sheet) ───────────────────────────────────
+  /**
+   * Create or update the group's single bank account. Fields:
+   * bankName, accountNumber?, currentBalance. Reconciliation
+   * metadata (lastReconciledAt/By/ByName) is set by
+   * reconcileBankBalance and preserved across setBankAccount calls.
+   */
+  setBankAccount: (data: BankAccount) => Promise<void>;
+  /** Remove the group's bank account configuration entirely. */
+  clearBankAccount: () => Promise<void>;
+  /**
+   * Reconcile the wallet ledger against the actual bank balance.
+   * Records a bank_reconciliation wallet tx for the difference,
+   * updates the group's bankAccount.currentBalance, and refreshes
+   * the reconciliation metadata. After this call, wallet balance
+   * and bank balance will be equal.
+   */
+  reconcileBankBalance: (
+    actualBankBalance: number,
+    reason: string,
+    notes?: string,
+  ) => Promise<{ difference: number }>;
+
   reset: () => void;
 }
 

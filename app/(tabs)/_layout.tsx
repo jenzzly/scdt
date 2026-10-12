@@ -81,7 +81,11 @@ const PAGE_TITLES: Record<string, string> = {
 
 const MOBILE_HIDDEN_ROUTES = new Set<string>([
   "/(tabs)/investments",
-  "/(tabs)/wallet",
+  // Wallet is NOT in this list. Its visibility on mobile is governed
+  // entirely by the viewWallet permission bit through
+  // getWebNavForRole — an admin/accountant sees it, a member only
+  // sees it if the permission is explicitly granted. Hiding it here
+  // unconditionally was hiding it from everyone.
   // Meetings — the tab still exists and still works on web/desktop.
   // Hiding it on mobile keeps the bottom tab bar to a manageable count
   // and matches how the group actually uses the app on phones

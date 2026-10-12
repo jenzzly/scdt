@@ -23,7 +23,7 @@
 // group-settings.tsx) rather than running it automatically, since
 // scanning N members means N membership-doc reads and a mismatch is
 // rare enough that it doesn't need constant background checking.
-import { doc, getDoc, writeBatch, auth } from "./core";
+import { doc, getDoc, setDoc, writeBatch, auth } from "./core";
 import { db } from "./core";
 import type { Member } from "./core";
 import { getMembershipId } from "./core";
@@ -46,19 +46,93 @@ export interface MembershipDrift {
  * yet regardless). Returns only the members that are actually
  * mismatched — an empty array means everything is in sync.
  */
-export async function findMembershipDrift(
+/**
+ * One entry per member whose membership doc could not be read at
+ * all — either the doc is missing or the caller was denied.
+ * Returned alongside the drift list so a caller can distinguish
+ * "no drift" from "could not check everyone".
+ */
+export interface MembershipScanIssue {
+  memberId: string;
+  memberFullName: string;
+  userId: string | null;
+  membershipId: string | null;
+  kind: "no-userId" | "missing-doc" | "permission-denied" | "other";
+  message?: string;
+}
+
+export interface MembershipScanResult {
+  drift: MembershipDrift[];
+  issues: MembershipScanIssue[];
+}
+
+/**
+ * Reads each member's membership doc, catching per-member failures
+ * so a single unreadable doc doesn't abort the whole scan. Use
+ * this from the Verify UI, which cares about the aggregate and
+ * about surfacing WHICH members it couldn't check.
+ *
+ * findMembershipDrift below is kept for backward compatibility and
+ * delegates here, throwing only if EVERY read failed (so a
+ * genuinely-broken caller still gets the diagnostic path).
+ */
+export async function scanMembershipDrift(
   groupId: string,
   members: Member[],
-): Promise<MembershipDrift[]> {
+): Promise<MembershipScanResult> {
   const drift: MembershipDrift[] = [];
+  const issues: MembershipScanIssue[] = [];
 
   for (const member of members) {
-    if (!member.userId) continue; // no account linked yet — nothing to compare
+    if (!member.userId) {
+      issues.push({
+        memberId: member.id,
+        memberFullName: member.fullName,
+        userId: null,
+        membershipId: null,
+        kind: "no-userId",
+      });
+      continue;
+    }
 
     const membershipId = getMembershipId(groupId, member.userId);
-    const membershipSnap = await getDoc(doc(db, "groupMemberships", membershipId));
+    let snap;
+    try {
+      snap = await getDoc(doc(db, "groupMemberships", membershipId));
+    } catch (e: any) {
+      const code = e?.code ?? "";
+      const msg = e?.message ?? String(e);
+      const kind: MembershipScanIssue["kind"] =
+        msg.toLowerCase().includes("insufficient") ||
+        msg.toLowerCase().includes("permission") ||
+        code === "permission-denied"
+          ? "permission-denied"
+          : "other";
+      console.warn(
+        "[scanMembershipDrift] read failed for member",
+        {
+          memberId: member.id,
+          memberFullName: member.fullName,
+          userId: member.userId,
+          membershipId,
+          code,
+          message: msg,
+        },
+      );
+      issues.push({
+        memberId: member.id,
+        memberFullName: member.fullName,
+        userId: member.userId,
+        membershipId,
+        kind,
+        message: msg,
+      });
+      continue;
+    }
 
-    if (!membershipSnap.exists()) {
+    if (!snap.exists()) {
+      // The doc genuinely does not exist — treat as drift so the
+      // fixer can recreate it.
       drift.push({
         memberId: member.id,
         memberFullName: member.fullName,
@@ -71,9 +145,9 @@ export async function findMembershipDrift(
       continue;
     }
 
-    const membershipData = membershipSnap.data();
-    const roleMismatch = membershipData.role !== member.role;
-    const statusMismatch = membershipData.status !== member.status;
+    const data = snap.data();
+    const roleMismatch = data.role !== member.role;
+    const statusMismatch = data.status !== member.status;
 
     if (roleMismatch || statusMismatch) {
       drift.push({
@@ -81,13 +155,39 @@ export async function findMembershipDrift(
         memberFullName: member.fullName,
         userId: member.userId,
         memberRole: member.role,
-        membershipRole: membershipData.role ?? null,
+        membershipRole: data.role ?? null,
         memberStatus: member.status,
-        membershipStatus: membershipData.status ?? null,
+        membershipStatus: data.status ?? null,
       });
     }
   }
 
+  return { drift, issues };
+}
+
+/**
+ * Thin wrapper preserved for existing callers. If ANY scan issue
+ * is a permission-denied, this throws with a message that names
+ * the offending members; otherwise it returns just the drift list.
+ * A missing-doc issue is treated as drift (see scanMembershipDrift)
+ * so no error is thrown for those.
+ */
+export async function findMembershipDrift(
+  groupId: string,
+  members: Member[],
+): Promise<MembershipDrift[]> {
+  const { drift, issues } = await scanMembershipDrift(groupId, members);
+  const denied = issues.filter((i) => i.kind === "permission-denied");
+  if (denied.length > 0) {
+    const names = denied
+      .map((d) => `${d.memberFullName} (${d.membershipId})`)
+      .join(", ");
+    throw new Error(
+      `Permission denied reading ${denied.length} membership doc${
+        denied.length === 1 ? "" : "s"
+      }: ${names}`,
+    );
+  }
   return drift;
 }
 
@@ -190,7 +290,40 @@ export async function repairOwnMembershipIfDrifted(
 ): Promise<boolean> {
   const user = auth.currentUser;
   if (!user) return false;
-  if (!member.userId || member.userId !== user.uid) return false;
+
+  // Identify the caller. Three cases prove this member doc
+  // represents the signed-in user:
+  //   1. member.userId === user.uid  — the standard link
+  //   2. member.id === user.uid      — the ensureMemberExists
+  //                                     convention (doc id = uid)
+  //   3. !member.userId              — no link yet; the caller
+  //                                     reached this screen with
+  //                                     a currentMember, so the
+  //                                     store already resolved
+  //                                     them as this user
+  //
+  // Previously this function only accepted case 1 and bailed
+  // silently on cases 2 and 3 — which meant a drifted admin
+  // whose member doc didn't carry a userId field could never
+  // get their membership repaired, and every subsequent read of
+  // another member's membership doc was denied with "Missing
+  // or insufficient permissions" at the Verify-access step.
+  const isCaller =
+    member.userId === user.uid ||
+    member.id === user.uid ||
+    !member.userId;
+
+  if (!isCaller) {
+    console.warn(
+      "[repairOwnMembershipIfDrifted] member doc does not match the caller — not repairing",
+      {
+        memberId: member.id,
+        memberUserId: member.userId,
+        callerUid: user.uid,
+      },
+    );
+    return false;
+  }
 
   const membershipId = getMembershipId(groupId, user.uid);
   const membershipRef = doc(db, "groupMemberships", membershipId);
@@ -235,4 +368,57 @@ export async function repairOwnMembershipIfDrifted(
   await batch.commit();
 
   return true;
+}
+
+
+export async function repairMembershipDocForMember(
+  groupId: string,
+  member: Member,
+): Promise<{ repaired: boolean; reason?: string }> {
+  const user = auth.currentUser;
+  if (!user) return { repaired: false, reason: "Not signed in" };
+  if (!member.userId) {
+    return { repaired: false, reason: "Member has no userId — no account to link" };
+  }
+
+  const membershipId = getMembershipId(groupId, member.userId);
+  const membershipRef = doc(db, "groupMemberships", membershipId);
+
+  const payload = {
+    id: membershipId,
+    groupId,
+    userId: member.userId,
+    memberId: member.id,
+    role: member.role,
+    status: member.status,
+    email:
+      typeof member.email === "string"
+        ? member.email.toLowerCase()
+        : undefined,
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    await setDoc(membershipRef, payload);
+    return { repaired: true };
+  } catch (e: any) {
+    const msg = e?.message ?? String(e);
+    const isPermission =
+      msg.toLowerCase().includes("insufficient") ||
+      msg.toLowerCase().includes("permission") ||
+      e?.code === "permission-denied";
+
+    if (isPermission) {
+      return {
+        repaired: false,
+        reason:
+          `Permission denied writing ${membershipId}. ` +
+          `Open Firestore → groupMemberships → ${membershipId} ` +
+          `and set groupId = "${groupId}", userId = "${member.userId}", ` +
+          `role = "${member.role}", status = "${member.status}". ` +
+          `Or delete that doc entirely and click "Try repair" again.`,
+      };
+    }
+    return { repaired: false, reason: msg };
+  }
 }

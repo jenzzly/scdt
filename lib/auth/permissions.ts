@@ -127,6 +127,27 @@ export function getWebNavForRole(
       items = [...items, { label: "Reports", route: "/(tabs)/reports" }];
     }
   }
+
+  // Wallet is gated by the viewWallet permission bit — not by role.
+  // Inserted before Settings so it sits alongside the other
+  // financial views rather than dangling at the end. Admins and
+  // accountants already have it via their nav lists; this branch
+  // covers any role granted viewWallet through the Permissions tab.
+  if (canViewWallet(role, perms)) {
+    if (!items.some((i) => i.route === "/(tabs)/wallet")) {
+      const settingsIdx = items.findIndex((i) => i.route === "/(tabs)/more");
+      if (settingsIdx >= 0) {
+        items = [
+          ...items.slice(0, settingsIdx),
+          { label: "Wallet", route: "/(tabs)/wallet" },
+          ...items.slice(settingsIdx),
+        ];
+      } else {
+        items = [...items, { label: "Wallet", route: "/(tabs)/wallet" }];
+      }
+    }
+  }
+
   return items;
 }
 
@@ -225,9 +246,13 @@ export function canViewInvestments(role: UserRole, permissions?: MemberPermissio
 // the answer is the same for every role that has reached this code
 // path (pending/suspended users are intercepted before mount).
 export function canViewWallet(role: UserRole, permissions?: MemberPermissions): boolean {
-  void role;
-  void permissions;
-  return true;
+  // Admin and accountant always have wallet access — this is the
+  // group's ledger and they're the two roles that own group money.
+  if (role === "admin" || role === "accountant") return true;
+  // Everyone else needs the explicit grant. Off for members by
+  // default; an admin can turn it on per-role from the Permissions
+  // tab, which cascades to every member of that role.
+  return permissions?.viewWallet === true;
 }
 
 export function canViewReports(role: UserRole, permissions?: MemberPermissions): boolean {

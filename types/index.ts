@@ -32,7 +32,12 @@ export type WalletTxType =
   | "interest"
   | "late_fee"
   | "investment_disbursement" | "investment_return"
-  | "bank_fee" | "other_credit" | "other_debit" | "withdrawal";
+  | "bank_fee" | "other_credit" | "other_debit" | "withdrawal"
+  // Manual adjustment recorded when the group reconciles the wallet
+  // ledger against the actual bank balance. Signed: > 0 when the bank
+  // had more than the ledger, < 0 when it had less. Description
+  // carries the reason ("Bank reconciliation: <category> — <notes>").
+  | "bank_reconciliation";
 
 export type WalletTxSourceType = "loan" | "contribution" | "investment" | "manual";
 export type SyncStatus = "synced" | "pending" | "syncing" | "failed" | "offline";
@@ -59,6 +64,13 @@ export interface MemberPermissions {
   // View & Access
   viewAllReports: boolean;
   downloadReports: boolean;
+  /**
+   * Can open the Wallet screen — the group's transaction ledger,
+   * categorized expenses, and the bank balance sheet. Off by
+   * default for members; admins and accountants have it, and any
+   * role can be granted it via the Permissions tab.
+   */
+  viewWallet?: boolean;
 
   // Management & Edits
   manageMeetings: boolean;
@@ -213,6 +225,15 @@ export interface Group {
   totalInterestEarned: number;
   memberCount: number;
   rolePermissions?: Partial<Record<MemberRole, MemberPermissions>>; // per-system-role permission sets, editable
+
+  /**
+   * The group's single bank account. Optional — a group with no
+   * bank account configured simply doesn't see the Balance Sheet
+   * tab in the wallet. When set, `currentBalance` is what the
+   * ledger should reconcile to; the difference between it and
+   * `availableBalance` is shown on the Balance Sheet.
+   */
+  bankAccount?: BankAccount;
   customRoles?: GroupRole[]; // group-defined roles beyond the 5 built-in ones
   customRolePermissions?: Record<string, MemberPermissions>; // per-custom-role permission sets, keyed by roleId
 
@@ -223,6 +244,20 @@ export interface Group {
   /** How many days before a contribution is due to nudge the
    *  member. 0 or unset disables reminders. */
   contributionReminderDaysBefore?: number;
+}
+
+export interface BankAccount {
+  bankName: string;
+  accountNumber?: string;
+  /**
+   * The bank balance as of the last reconciliation. Should equal the
+   * group's availableBalance when in sync; when they differ, the
+   * difference is the amount awaiting reconciliation.
+   */
+  currentBalance: number;
+  lastReconciledAt?: string;
+  lastReconciledBy?: string;
+  lastReconciledByName?: string;
 }
 
 export interface ContributionGoalConfig {
@@ -452,6 +487,13 @@ export interface WalletTransaction {
   description: string;
   date: string;
   memberId?: ID;
+  /**
+   * For expenses only: the category chosen in the expense form
+   * (bank_charges, meeting, transport, administrative, …).
+   * Lets the Wallet's Expenses tab group and subtotal by category
+   * instead of showing every expense as a flat `other_debit` row.
+   */
+  expenseCategory?: string;
   loanId?: ID;
   investmentId?: ID;
   contributionId?: ID;

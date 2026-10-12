@@ -24,6 +24,7 @@ import type { StoreState, SetFn, GetFn } from "./storeTypes";
 import { recalcGroupTotals } from "./recalcGroupTotals";
 import type { MemberRole, MemberPermissions } from "../types";
 import { DEFAULT_MEMBER_PERMISSIONS } from "../types";
+import { SYSTEM_ROLE_DEFAULT_PERMISSIONS } from "../types/roles";
 
 // Load native storage only on native platforms. AsyncStorage's web adapter
 // accesses window as soon as Zustand hydrates, which also runs during SSR.
@@ -49,6 +50,7 @@ import { createNotificationSlice } from "./slices/notificationSlice";
 import { createAuditSlice } from "./slices/auditSlice";
 import { createSyncSlice } from "./slices/syncSlice";
 import { createLateFeeExemptionSlice } from "./slices/lateFeeExemptionSlice";
+import { createBankSlice } from "./slices/bankSlice";
 import { createThemeSlice } from "./slices/themeSlice";
 
 export const useStore = create<StoreState>()(
@@ -93,6 +95,7 @@ export const useStore = create<StoreState>()(
       ...createAuditSlice(set, get),
       ...createSyncSlice(set, get),
       ...createLateFeeExemptionSlice(set, get),
+      ...createBankSlice(set, get),
       ...createThemeSlice(set, get),
 
       // ── Cross-cutting (touches every slice's state, stays here) ────────
@@ -503,13 +506,14 @@ export const useCurrentMemberPermissions = (): MemberPermissions => {
   // First check currentMember
   const member = currentMember || members.find((m) => m.userId === authUid);
 
-  // Admins always have full permissions
+  // Admins always have full permissions. Return the canonical admin
+  // template from types/roles.ts rather than synthesizing one here —
+  // that way a new permission field (like viewWallet) is automatically
+  // granted to admins by virtue of being in the template, instead of
+  // silently defaulting to false because the loop below only saw the
+  // required (non-optional) keys.
   if (!member || member.role === "admin") {
-    const allTrue: Record<string, boolean> = {};
-    (Object.keys(DEFAULT_MEMBER_PERMISSIONS) as (keyof MemberPermissions)[]).forEach((k) => {
-      allTrue[k] = true;
-    });
-    return allTrue as unknown as MemberPermissions;
+    return SYSTEM_ROLE_DEFAULT_PERMISSIONS.admin;
   }
 
   // Explicit per-member permissions win outright.

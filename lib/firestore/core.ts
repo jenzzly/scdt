@@ -12,6 +12,7 @@ import { db, auth } from "../firebase";
 import type {
   Group, Member, Contribution, Loan, Investment,
   WalletTransaction, Expense, Meeting, MeetingAttendee, AppNotification, AuditLog, DeletionRecord,
+  BankAccount,
 } from "../../types";
 
 // Re-export the firestore primitives + db/auth so domain modules can do
@@ -25,6 +26,7 @@ export {
 export type {
   Group, Member, Contribution, Loan, Investment,
   WalletTransaction, Expense, Meeting, MeetingAttendee, AppNotification, AuditLog, DeletionRecord,
+  BankAccount,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
